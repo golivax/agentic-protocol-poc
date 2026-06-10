@@ -7,7 +7,7 @@ PASS=0; FAIL=0
 # assert_check <script> <expected_pass:true|false> <feedback_substring> <evidence> [diff] [files]
 assert_check() {
   local script="$1" expect="$2" substr="$3" ev="$4" diff="${5:-$FX/diff-pr1.txt}" files="${6:-$FX/changed-files-pr1.txt}"
-  local out; out=$("protocols/grumpy/checks/$script" "$ev" "$diff" "$files")
+  local out; out=$("protocols/grumpy/checks/$script" "$ev" "$diff" "$files") || true
   local got; got=$(jq -r .pass <<<"$out")
   local fb; fb=$(jq -r .feedback <<<"$out")
   if [ "$got" = "$expect" ] && { [ -z "$substr" ] || [[ "$fb" == *"$substr"* ]]; }; then
@@ -26,6 +26,10 @@ echo '{"files":[{"path":"a.js","verdicts":[{"category":"vibes","verdict":"none-f
 assert_check schema-valid.sh false "illegal category"       /tmp/ev-badcat.json
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"none-found"}]}]}' > /tmp/ev-noexam.json
 assert_check schema-valid.sh false "no examined"            /tmp/ev-noexam.json
+echo '{"files":["a.js"]}' > /tmp/ev-strfile.json
+assert_check schema-valid.sh false "not an object" /tmp/ev-strfile.json
+echo '{"files":[{"path":"a.js","verdicts":"oops"}]}' > /tmp/ev-badverdicts.json
+assert_check schema-valid.sh false "verdicts" /tmp/ev-badverdicts.json
 
 echo "-----"
 echo "checks tests: $PASS passed, $FAIL failed"

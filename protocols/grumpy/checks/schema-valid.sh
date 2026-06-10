@@ -13,6 +13,9 @@ fi
 if ! jq -e '.files | type == "array"' "$EV" >/dev/null 2>&1; then
   emit false "top-level .files array is missing"; exit 0
 fi
+if ! jq -e '[.files[] | type == "object" and (.verdicts | type == "array")] | all' "$EV" >/dev/null 2>&1; then
+  emit false "a .files entry is not an object with a verdicts array; check that every file is an object and verdicts is an array"; exit 0
+fi
 
 CATS_JSON=$(jq -c '.categories' "$PROTO")
 ERR=$(jq -r --argjson valid "$CATS_JSON" '
