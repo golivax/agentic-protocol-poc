@@ -1,0 +1,196 @@
+name: Grumpy Orchestrator
+run-name: "grumpy-review · pr-${{ github.event.issue.number || github.event.client_payload.pr }}"
+
+on:
+  issue_comment:
+    types: [created]
+  repository_dispatch:
+    types: [grumpy-continue]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: grumpy-${{ github.event.issue.number || github.event.client_payload.pr }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Zone 1: engine-pre. Holds state credentials; never runs agent code. ──
+  plan:
+    if: >
+      github.event_name == 'repository_dispatch' ||
+      (github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/grumpy'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      pr: ${{ steps.ctx.outputs.pr }}
+      action: ${{ steps.plan.outputs.action }}
+      iteration: ${{ steps.plan.outputs.iteration }}
+      feedback: ${{ steps.plan.outputs.feedback }}
+      sabotage: ${{ steps.sabotage.outputs.sabotage }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure yq
+        run: |
+          command -v yq >/dev/null || {
+            sudo wget -qO /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          }
+      - id: ctx
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "pr=${{ github.event.client_payload.pr }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "pr=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+      - id: plan
+        env:
+          STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
+          PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          .github/engine/next.sh /tmp/state "${{ steps.ctx.outputs.pr }}" \
+            protocols/grumpy/protocol.json > /tmp/action.json
+          cat /tmp/action.json
+          echo "action=$(jq -r .action /tmp/action.json)" >> "$GITHUB_OUTPUT"
+          echo "iteration=$(jq -r .iteration /tmp/action.json)" >> "$GITHUB_OUTPUT"
+          { echo "feedback<<GH_EOF"; jq -r .feedback /tmp/action.json; echo "GH_EOF"; } >> "$GITHUB_OUTPUT"
+      - id: sabotage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          HAS=$(gh api "repos/${{ github.repository }}/issues/${{ steps.ctx.outputs.pr }}/labels" \
+            --jq 'any(.[]; .name == "poc:sabotage")')
+          if [ "$HAS" = "true" ] && [ "${{ steps.plan.outputs.iteration }}" = "1" ]; then
+            echo "sabotage=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sabotage=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Zone 2: the sandboxed agent, as a separately dispatched gh-aw workflow. ──
+  dispatch:
+    needs: plan
+    if: needs.plan.outputs.action == 'run-agent'
+    runs-on: ubuntu-latest
+    outputs:
+      agent_run_id: ${{ steps.wait.outputs.agent_run_id }}
+      agent_ok: ${{ steps.wait.outputs.agent_ok }}
+    env:
+      GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
+    steps:
+      - id: wait
+        run: |
+          CTX=$(jq -nc \
+            --arg pr "${{ needs.plan.outputs.pr }}" \
+            --arg iteration "${{ needs.plan.outputs.iteration }}" \
+            --arg feedback "${{ needs.plan.outputs.feedback }}" \
+            --argjson sabotage "${{ needs.plan.outputs.sabotage }}" \
+            '{pr: $pr, iteration: $iteration, feedback: $feedback, sabotage: $sabotage}')
+          T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run grumpy-agent.lock.yml --repo "${{ github.repository }}" \
+            -f aw_context="$CTX"
+          # Resolve the run id (PoC simplification: newest dispatch run since T0;
+          # the per-PR concurrency group makes collisions unlikely).
+          RID=""
+          for i in $(seq 1 24); do
+            sleep 5
+            RID=$(gh run list --repo "${{ github.repository }}" \
+              --workflow grumpy-agent.lock.yml --event workflow_dispatch \
+              --created ">=$T0" --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "$RID" ] && break
+          done
+          [ -n "$RID" ] || { echo "agent run never appeared"; exit 1; }
+          echo "agent_run_id=$RID" >> "$GITHUB_OUTPUT"
+          if gh run watch "$RID" --repo "${{ github.repository }}" --exit-status; then
+            echo "agent_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "agent_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Zone 3: checks. No secrets beyond default read token; independent ground truth. ──
+  checks:
+    needs: [plan, dispatch]
+    if: always() && needs.dispatch.result != 'skipped' && needs.plan.outputs.action == 'run-agent'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      verdicts: ${{ steps.run.outputs.verdicts }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download evidence artifact
+        run: |
+          mkdir -p /tmp/agent
+          if [ -n "${{ needs.dispatch.outputs.agent_run_id }}" ]; then
+            gh run download "${{ needs.dispatch.outputs.agent_run_id }}" \
+              --repo "${{ github.repository }}" -n evidence -D /tmp/agent \
+              || echo "no evidence artifact"
+          fi
+      - name: Fetch independent ground truth
+        run: |
+          gh pr diff "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" > /tmp/diff.txt
+          gh pr diff "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" --name-only > /tmp/files.txt
+      - id: run
+        run: |
+          EV=/tmp/agent/evidence.json
+          RESULTS="[]"
+          for c in schema-valid rubric-coverage traces-exist-in-diff; do
+            if [ ! -f "$EV" ]; then
+              V=$(jq -nc --arg c "$c" --arg r "${{ needs.dispatch.outputs.agent_run_id }}" --arg ok "${{ needs.dispatch.outputs.agent_ok }}" \
+                '{check:$c, pass:false, feedback:("agent run produced no evidence artifact (run " + $r + ", ok=" + $ok + ")")}')
+            else
+              V=$("protocols/grumpy/checks/$c.sh" "$EV" /tmp/diff.txt /tmp/files.txt)
+            fi
+            echo "$V"
+            RESULTS=$(jq -c --argjson v "$V" '. + [$v]' <<<"$RESULTS")
+          done
+          echo "verdicts=$(jq -c '{results: .}' <<<"$RESULTS")" >> "$GITHUB_OUTPUT"
+
+  # ── Zone 4: engine-post. Reads check verdicts only; sole writer of state. ──
+  advance:
+    needs: [plan, dispatch, checks]
+    if: always() && needs.plan.outputs.action == 'run-agent' && needs.checks.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure yq
+        run: |
+          command -v yq >/dev/null || {
+            sudo wget -qO /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          }
+      - name: Re-download evidence (for publication only)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/agent
+          if [ -n "${{ needs.dispatch.outputs.agent_run_id }}" ]; then
+            gh run download "${{ needs.dispatch.outputs.agent_run_id }}" \
+              --repo "${{ github.repository }}" -n evidence -D /tmp/agent || true
+          fi
+          [ -f /tmp/agent/evidence.json ] || echo '{"files":[]}' > /tmp/agent/evidence.json
+      - name: Advance
+        env:
+          STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
+          GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
+          PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AGENT_RUN_ID: ${{ needs.dispatch.outputs.agent_run_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          printf '%s' '${{ needs.checks.outputs.verdicts }}' > /tmp/verdicts.json
+          jq . /tmp/verdicts.json
+          .github/engine/advance.sh /tmp/state "${{ needs.plan.outputs.pr }}" \
+            protocols/grumpy/protocol.json /tmp/verdicts.json /tmp/agent/evidence.json
