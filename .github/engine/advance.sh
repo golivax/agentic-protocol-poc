@@ -74,23 +74,41 @@ publish_review() {
   fi
 }
 
+# Render the status-comment body as a projection of state.history: one checklist
+# line per iteration (rebuilt every transition, so it can't drift), a headline,
+# and a link to the durable state file. The comment is a PR-specific view; the
+# authoritative record is always agentic-state:grumpy/pr-<N>.yaml.
+render_status_body() {
+  local sf="$1" pr="$2" headline="$3"
+  local link="https://github.com/$GITHUB_REPOSITORY/blob/agentic-state/grumpy/pr-$pr.yaml"
+  # yq → JSON, then jq for the logic (mikefarah yq has no if/then/else or //).
+  local lines
+  lines=$(yq -o=json '.history' "$sf" | jq -r --arg max "$MAX" '.[] |
+    if (.feedback // "") == ""
+    then "- ✅ iteration \(.iteration)/\($max) — all checks passed"
+    else "- ✗ iteration \(.iteration)/\($max) — \(.feedback)"
+    end')
+  printf '🔍 **grumpy-review · pr-%s**\n\n%s\n\n%s\n\n[Full state & audit trail](%s)\n' \
+    "$pr" "$lines" "$headline" "$link"
+}
+
 # Branch ordering: mutate state → publish/side-effects that don't touch state →
 # upsert_status_comment → cas_push LAST → dispatch.
 # upsert before push: it may write status_comment_id into state.
 if [ "$ALL_PASS" = "true" ]; then
   yq -i '.state = "done"' "$SF"
   publish_review
-  upsert_status_comment "$DIR" "$PR" "🔍 **grumpy-review · pr-$PR** — ✅ done (iteration $ITER/$MAX). Review published."
+  upsert_status_comment "$DIR" "$PR" "$(render_status_body "$SF" "$PR" "✅ **done** — review published.")"
   cas_push "$DIR" "pr-$PR: checks passed at iteration $ITER → published, done"
 elif [ "$ITER" -lt "$MAX" ]; then
   NEXT=$((ITER + 1))
   N="$NEXT" yq -i '.iteration = env(N)' "$SF"
-  upsert_status_comment "$DIR" "$PR" "🔍 **grumpy-review · pr-$PR** — ✗ iteration $ITER/$MAX failed checks: $FB — retrying."
+  upsert_status_comment "$DIR" "$PR" "$(render_status_body "$SF" "$PR" "⏳ iteration $ITER failed checks — retrying as iteration $NEXT/$MAX…")"
   cas_push "$DIR" "pr-$PR: iteration $ITER failed checks → iteration $NEXT"
   gh_api api "repos/$GITHUB_REPOSITORY/dispatches" \
     -f event_type="grumpy-continue" -F "client_payload[pr]=$PR"
 else
   yq -i '.state = "failed"' "$SF"
-  upsert_status_comment "$DIR" "$PR" "🔍 **grumpy-review · pr-$PR** — ❌ failed after $MAX iterations. Last feedback: $FB"
+  upsert_status_comment "$DIR" "$PR" "$(render_status_body "$SF" "$PR" "❌ **failed** after $MAX iterations.")"
   cas_push "$DIR" "pr-$PR: iterations exhausted → failed"
 fi
