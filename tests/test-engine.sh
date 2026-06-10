@@ -93,6 +93,14 @@ OUT=$(AGENT_RUN_ID=202 .github/engine/advance.sh "$W10" 8 protocols/grumpy/proto
 git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify9"
 check "advance: exhausted → failed" '[ "$(yq -r .state "$WORK/verify9/grumpy/pr-8.yaml")" = failed ]'
 
+# --- advance.sh: empty verdicts (checks produced nothing) must NOT publish
+W11="$WORK/w11"; rm -rf "$W11"
+echo '{"results":[]}' > "$WORK/verdicts-empty.json"
+OUT=$(AGENT_RUN_ID=203 .github/engine/advance.sh "$W11" 9 protocols/grumpy/protocol.json "$WORK/verdicts-empty.json" tests/fixtures/evidence-lazy.json 2>&1) || bad "advance(empty) exited nonzero"
+git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify11"
+check "advance: empty verdicts → not done"   '[ "$(yq -r .state "$WORK/verify11/grumpy/pr-9.yaml")" != done ]'
+check "advance: empty verdicts → no publish" '! grep -q "pulls/9/reviews" <<<"$OUT"'
+
 echo "-----"
 echo "engine tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

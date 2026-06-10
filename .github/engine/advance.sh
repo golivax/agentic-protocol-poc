@@ -28,8 +28,9 @@ if [ ! -f "$SF" ]; then
 fi
 ITER=$(yq -r '.iteration' "$SF")
 
-ALL_PASS=$(jq -r '[.results[].pass] | all' "$VERDICTS")
+ALL_PASS=$(jq -r '(.results | length) > 0 and ([.results[].pass] | all)' "$VERDICTS")
 FB=$(jq -r '[.results[] | select(.pass | not) | .feedback] | join("; ")' "$VERDICTS")
+[ -n "$FB" ] || FB=$(jq -r 'if (.results|length)==0 then "no check verdicts produced (checks job failure?)" else "" end' "$VERDICTS")
 CHECKS_MAP=$(jq -c '[.results[] | {(.check): (if .pass then "pass" else "fail" end)}] | add' "$VERDICTS")
 
 # history entry for this iteration (always recorded)
