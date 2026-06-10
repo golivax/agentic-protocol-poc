@@ -3,24 +3,21 @@ name: "Grumpy Agent (protocol state: review)"
 on:
   workflow_dispatch:
 strict: false
+sandbox:
+  agent: false
 engine:
   id: claude
-  api-target: bmc-bz1.tail22da2e.ts.net
+  model: claude-sonnet-4-6
   env:
     ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net
     ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
-# PoC config: custom Anthropic-compatible endpoint.
-# - engine.api-target + network.allowed carry the endpoint HOSTNAME as a compile-time
-#   literal so AWF's egress firewall can allow it (a secret cannot go in network.allowed).
-# - The auth TOKEN stays a secret (ANTHROPIC_API_KEY). strict:false permits the secret
-#   in engine.env so the Bearer token reaches the claude CLI.
+# Custom Anthropic-compatible endpoint (public, Funnel-exposed). The endpoint
+# accepts Bearer auth and needs no token-steering, so we bypass AWF's api-proxy
+# (sandbox.agent: false) and let the claude CLI call it directly. engine.env is
+# used (not top-level env) because gh-aw forwards engine.env to the CLI subprocess.
 permissions:
   contents: read
   pull-requests: read
-network:
-  allowed:
-    - defaults
-    - bmc-bz1.tail22da2e.ts.net
 tools:
   cli-proxy: true
   edit: true
