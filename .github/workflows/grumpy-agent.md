@@ -3,21 +3,24 @@ name: "Grumpy Agent (protocol state: review)"
 on:
   workflow_dispatch:
 strict: false
-sandbox:
-  agent: false
-engine: claude
-# PoC trade-offs (documented deliberately):
-# - strict: false  → LLM credentials must reach the agent process (it calls the endpoint).
-# - sandbox.agent: false → the Anthropic base URL is itself a secret, so AWF's static
-#   egress allowlist can't carry it. Mitigations: read-only job token, read-only MCP,
-#   private repo. Do NOT copy this pattern to production without restoring the firewall.
-env:
-  ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
-  ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
+engine:
+  id: claude
+  api-target: bmc-bz1.tail22da2e.ts.net
+  env:
+    ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net
+    ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
+# PoC config: custom Anthropic-compatible endpoint.
+# - engine.api-target + network.allowed carry the endpoint HOSTNAME as a compile-time
+#   literal so AWF's egress firewall can allow it (a secret cannot go in network.allowed).
+# - The auth TOKEN stays a secret (ANTHROPIC_API_KEY). strict:false permits the secret
+#   in engine.env so the Bearer token reaches the claude CLI.
 permissions:
   contents: read
   pull-requests: read
-network: defaults
+network:
+  allowed:
+    - defaults
+    - bmc-bz1.tail22da2e.ts.net
 tools:
   cli-proxy: true
   edit: true
