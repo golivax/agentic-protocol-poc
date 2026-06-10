@@ -1,0 +1,24 @@
+# Demo 2 transcript — negative control: clean code → checks pass (PR #7)
+
+## State branch audit trail
+c5a8129 pr-7: checks passed at iteration 1 → published, done
+7f6b055 init grumpy/pr-7
+
+## Final state (grumpy/pr-7.yaml)
+protocol: grumpy-review
+instance: pr-7
+state: done
+iteration: 1
+gates: {}
+history:
+  - iteration: 1
+    agent_run_id: "27300345420"
+    checks:
+      "schema-valid": "pass"
+      "rubric-coverage": "pass"
+      "traces-exist-in-diff": "pass"
+    feedback: ""
+status_comment_id: 4673673650
+
+## Note
+Agent returned 4 none-found + 1 legitimate issue (NaN guard); none-found verdicts passed rubric-coverage and traces checks (no fabrication). Published REQUEST_CHANGES at iteration 1.
