@@ -7,7 +7,8 @@ PROTO="$(cd "$(dirname "$0")/.." && pwd)/protocol.json"
 
 mapfile -t CATS < <(jq -r '.categories[]' "$PROTO")
 BAD=()
-while IFS= read -r f; do
+while IFS= read -r f || [ -n "$f" ]; do
+  f="${f%$'\r'}"
   case "$f" in *.js) ;; *) continue ;; esac
   for c in "${CATS[@]}"; do
     n=$(jq --arg p "$f" --arg c "$c" \

@@ -38,6 +38,10 @@ assert_check rubric-coverage.sh false "duplication × src/report.js" "$FX/eviden
 jq '.files[0].verdicts += [.files[0].verdicts[0]]' "$FX/evidence-complete.json" > /tmp/ev-dup.json
 assert_check rubric-coverage.sh false "naming × src/auth.js" /tmp/ev-dup.json
 
+# changed-files without trailing newline must not exempt the last file:
+printf 'src/auth.js\nsrc/report.js' > /tmp/files-nonewline.txt
+assert_check rubric-coverage.sh false "src/report.js" "$FX/evidence-lazy.json" "$FX/diff-pr1.txt" /tmp/files-nonewline.txt
+
 echo "-----"
 echo "checks tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
