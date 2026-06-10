@@ -78,33 +78,40 @@ jobs:
     outputs:
       agent_run_id: ${{ steps.wait.outputs.agent_run_id }}
       agent_ok: ${{ steps.wait.outputs.agent_ok }}
-    env:
-      GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
     steps:
       - id: wait
+        env:
+          GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
+          PR: ${{ needs.plan.outputs.pr }}
+          ITERATION: ${{ needs.plan.outputs.iteration }}
+          FEEDBACK: ${{ needs.plan.outputs.feedback }}
+          SABOTAGE: ${{ needs.plan.outputs.sabotage }}
+          REPO: ${{ github.repository }}
         run: |
           CTX=$(jq -nc \
-            --arg pr "${{ needs.plan.outputs.pr }}" \
-            --arg iteration "${{ needs.plan.outputs.iteration }}" \
-            --arg feedback "${{ needs.plan.outputs.feedback }}" \
-            --argjson sabotage "${{ needs.plan.outputs.sabotage }}" \
+            --arg pr "$PR" \
+            --arg iteration "$ITERATION" \
+            --arg feedback "$FEEDBACK" \
+            --argjson sabotage "$SABOTAGE" \
             '{pr: $pr, iteration: $iteration, feedback: $feedback, sabotage: $sabotage}')
           T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          gh workflow run grumpy-agent.lock.yml --repo "${{ github.repository }}" \
-            -f aw_context="$CTX"
-          # Resolve the run id (PoC simplification: newest dispatch run since T0;
-          # the per-PR concurrency group makes collisions unlikely).
+          gh workflow run grumpy-agent.lock.yml --repo "$REPO" -f aw_context="$CTX"
+          # PoC simplification (documented limitation): resolve the agent run as the
+          # newest workflow_dispatch run since T0. Safe only when one PR is reviewed at
+          # a time — the agent workflow's concurrency group is global, so concurrent PRs
+          # could misattribute runs. A production fix stamps a correlation id into the
+          # evidence artifact and matches on it.
           RID=""
           for i in $(seq 1 24); do
             sleep 5
-            RID=$(gh run list --repo "${{ github.repository }}" \
+            RID=$(gh run list --repo "$REPO" \
               --workflow grumpy-agent.lock.yml --event workflow_dispatch \
               --created ">=$T0" --json databaseId --jq '.[0].databaseId // empty')
             [ -n "$RID" ] && break
           done
           [ -n "$RID" ] || { echo "agent run never appeared"; exit 1; }
           echo "agent_run_id=$RID" >> "$GITHUB_OUTPUT"
-          if gh run watch "$RID" --repo "${{ github.repository }}" --exit-status; then
+          if gh run watch "$RID" --repo "$REPO" --exit-status; then
             echo "agent_ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "agent_ok=false" >> "$GITHUB_OUTPUT"
@@ -138,12 +145,15 @@ jobs:
           gh pr diff "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" > /tmp/diff.txt
           gh pr diff "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" --name-only > /tmp/files.txt
       - id: run
+        env:
+          RID: ${{ needs.dispatch.outputs.agent_run_id }}
+          OK: ${{ needs.dispatch.outputs.agent_ok }}
         run: |
           EV=/tmp/agent/evidence.json
           RESULTS="[]"
           for c in schema-valid rubric-coverage traces-exist-in-diff; do
             if [ ! -f "$EV" ]; then
-              V=$(jq -nc --arg c "$c" --arg r "${{ needs.dispatch.outputs.agent_run_id }}" --arg ok "${{ needs.dispatch.outputs.agent_ok }}" \
+              V=$(jq -nc --arg c "$c" --arg r "$RID" --arg ok "$OK" \
                 '{check:$c, pass:false, feedback:("agent run produced no evidence artifact (run " + $r + ", ok=" + $ok + ")")}')
             else
               V=$("protocols/grumpy/checks/$c.sh" "$EV" /tmp/diff.txt /tmp/files.txt)
@@ -156,7 +166,7 @@ jobs:
   # ── Zone 4: engine-post. Reads check verdicts only; sole writer of state. ──
   advance:
     needs: [plan, dispatch, checks]
-    if: always() && needs.plan.outputs.action == 'run-agent' && needs.checks.result == 'success'
+    if: always() && needs.plan.outputs.action == 'run-agent' && needs.dispatch.result != 'skipped' && (needs.checks.result == 'success' || needs.checks.result == 'failure')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -189,8 +199,13 @@ jobs:
           PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AGENT_RUN_ID: ${{ needs.dispatch.outputs.agent_run_id }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          PR: ${{ needs.plan.outputs.pr }}
+          VERDICTS: ${{ needs.checks.outputs.verdicts }}
         run: |
-          printf '%s' '${{ needs.checks.outputs.verdicts }}' > /tmp/verdicts.json
+          if [ -z "$VERDICTS" ]; then
+            VERDICTS='{"results":[{"check":"checks-job","pass":false,"feedback":"checks job did not complete; treating as failed iteration"}]}'
+          fi
+          printf '%s' "$VERDICTS" > /tmp/verdicts.json
           jq . /tmp/verdicts.json
-          .github/engine/advance.sh /tmp/state "${{ needs.plan.outputs.pr }}" \
+          .github/engine/advance.sh /tmp/state "$PR" \
             protocols/grumpy/protocol.json /tmp/verdicts.json /tmp/agent/evidence.json
