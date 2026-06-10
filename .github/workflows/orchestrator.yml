@@ -60,10 +60,12 @@ jobs:
           { echo "feedback<<GH_EOF"; jq -r .feedback /tmp/action.json; echo "GH_EOF"; } >> "$GITHUB_OUTPUT"
       - id: sabotage
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
         run: |
+          # PAT (not default GITHUB_TOKEN) avoids "Resource not accessible by
+          # integration" on the label read; tolerate any error as not-sabotaged.
           HAS=$(gh api "repos/${{ github.repository }}/issues/${{ steps.ctx.outputs.pr }}/labels" \
-            --jq 'any(.[]; .name == "poc:sabotage")')
+            --jq 'any(.[]; .name == "poc:sabotage")' 2>/dev/null || echo false)
           if [ "$HAS" = "true" ] && [ "${{ steps.plan.outputs.iteration }}" = "1" ]; then
             echo "sabotage=true" >> "$GITHUB_OUTPUT"
           else
