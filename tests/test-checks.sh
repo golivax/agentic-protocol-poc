@@ -42,6 +42,10 @@ assert_check rubric-coverage.sh false "naming × src/auth.js" /tmp/ev-dup.json
 printf 'src/auth.js\nsrc/report.js' > /tmp/files-nonewline.txt
 assert_check rubric-coverage.sh false "src/report.js" "$FX/evidence-lazy.json" "$FX/diff-pr1.txt" /tmp/files-nonewline.txt
 
+assert_check traces-exist-in-diff.sh true  ""                          "$FX/evidence-complete.json"
+assert_check traces-exist-in-diff.sh false "authenticateUser"          "$FX/evidence-fabricated.json"
+assert_check traces-exist-in-diff.sh false "renderDashboard"           "$FX/evidence-fabricated.json"
+
 echo "-----"
 echo "checks tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
