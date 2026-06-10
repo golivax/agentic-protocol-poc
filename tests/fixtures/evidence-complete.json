@@ -1,0 +1,18 @@
+{ "files": [
+  { "path": "src/auth.js", "verdicts": [
+    { "category": "naming", "verdict": "issues-found", "findings": [
+      { "existing_code": "function f(x, y) {", "comment": "Seriously? 'f', 'x', 'y'? In 2026?" } ] },
+    { "category": "error-handling", "verdict": "issues-found", "findings": [
+      { "existing_code": "fetch(\"https://api.example.com/login?token=\" + token);", "comment": "Unawaited fetch, no error handling. What happens when this fails? Magic?" } ] },
+    { "category": "performance", "verdict": "none-found", "examined": ["login", "f"] },
+    { "category": "duplication", "verdict": "none-found", "examined": ["login", "f"] },
+    { "category": "security", "verdict": "issues-found", "findings": [
+      { "existing_code": "fetch(\"https://api.example.com/login?token=\" + token);", "comment": "Credentials in a URL query string. They end up in every proxy log on Earth." } ] } ] },
+  { "path": "src/report.js", "verdicts": [
+    { "category": "naming", "verdict": "none-found", "examined": ["findDuplicates", "formatHeader", "formatFooter"] },
+    { "category": "error-handling", "verdict": "none-found", "examined": ["findDuplicates"] },
+    { "category": "performance", "verdict": "issues-found", "findings": [
+      { "existing_code": "for (let j = 0; j < items.length; j++) {", "comment": "Nested full scan. O(n²) duplicate detection. Ever heard of a Set?" } ] },
+    { "category": "duplication", "verdict": "issues-found", "findings": [
+      { "existing_code": "function formatFooter(title) {", "comment": "Copy-pasted from formatHeader. *Sighs in DRY principle*" } ] },
+    { "category": "security", "verdict": "none-found", "examined": ["findDuplicates", "formatHeader"] } ] } ] }
