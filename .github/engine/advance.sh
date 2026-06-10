@@ -58,8 +58,20 @@ publish_review() {
     echo "$body" >&2
     return 0
   fi
-  GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
-    -f event="$event" -f body="$body" >/dev/null
+  # APPROVE requires the repo's "Allow GitHub Actions to approve pull requests"
+  # setting; if it's off (or the bot otherwise can't approve), fall back to a
+  # COMMENT review so a clean result still publishes and the state still advances.
+  if ! GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
+       -f event="$event" -f body="$body" >/dev/null 2>&1; then
+    if [ "$event" = "APPROVE" ]; then
+      echo "[advance] APPROVE rejected (repo setting?); falling back to COMMENT" >&2
+      GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
+        -f event="COMMENT" -f body="$body" >/dev/null
+    else
+      echo "[advance] review submission failed for event=$event" >&2
+      return 1
+    fi
+  fi
 }
 
 # Branch ordering: mutate state → publish/side-effects that don't touch state →
