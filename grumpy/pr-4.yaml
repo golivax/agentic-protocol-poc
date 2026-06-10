@@ -1,6 +1,14 @@
 protocol: grumpy-review
 instance: pr-4
 state: review
-iteration: 1
+iteration: 2
 gates: {}
-history: []
+history:
+  - iteration: 1
+    agent_run_id: "27299696105"
+    checks:
+      "schema-valid": "pass"
+      "rubric-coverage": "fail"
+      "traces-exist-in-diff": "pass"
+    feedback: 'Missing or duplicated rubric cells: duplication × src/auth.js (verdicts: 0);security × src/auth.js (verdicts: 0);duplication × src/report.js (verdicts: 0);security × src/report.js (verdicts: 0)'
+status_comment_id: 4673576645
