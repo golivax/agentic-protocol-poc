@@ -37,6 +37,7 @@ state_checkout() {
 cas_push() {
   local dir="$1" msg="$2"
   git -C "$dir" add -A
+  # An empty commit here means the engine pushed without changing state — a bug; fail loudly.
   git -C "$dir" "${GIT_ID[@]}" commit -qm "$msg"
   if ! git -C "$dir" push -q origin "$STATE_BRANCH" 2>/dev/null; then
     echo "[engine] CAS push rejected, rebasing once" >&2
@@ -50,6 +51,7 @@ state_file() { echo "$1/grumpy/pr-$2.yaml"; }
 
 # upsert_status_comment <state_dir> <pr> <body>
 # Single engine-owned PR comment, edited in place; id persisted in state.
+# NOTE: mutates the state file but does NOT push — callers must cas_push afterwards.
 upsert_status_comment() {
   local dir="$1" pr="$2" body="$3"
   local sf; sf=$(state_file "$dir" "$pr")

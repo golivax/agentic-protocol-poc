@@ -39,6 +39,30 @@ check "cas push survives concurrent writer" \
    grep -q 'state: publish' '$WORK/verify2/grumpy/pr-1.yaml' && \
    grep -q 'state: review' '$WORK/verify2/grumpy/pr-2.yaml'"
 
+# --- next.sh: first call initializes state and emits run-agent iter 1
+S3="$WORK/s3"
+A=$(.github/engine/next.sh "$S3" 7 protocols/grumpy/protocol.json)
+check "next: initial action is run-agent" '[ "$(jq -r .action <<<"$A")" = run-agent ]'
+check "next: initial iteration is 1"      '[ "$(jq -r .iteration <<<"$A")" = 1 ]'
+check "next: state file pushed"           "git clone -q --branch agentic-state '$STATE_REMOTE' '$WORK/verify3' && grep -q 'state: review' '$WORK/verify3/grumpy/pr-7.yaml'"
+
+# --- next.sh: feedback from history is surfaced
+FB="Missing: security × src/auth.js" yq -i \
+  '.iteration = 2 | .history += [{"iteration": 1, "agent_run_id": "100", "feedback": strenv(FB)}]' \
+  "$S3/grumpy/pr-7.yaml"
+cas_push "$S3" "simulate failed iteration"
+S4="$WORK/s4"
+A=$(.github/engine/next.sh "$S4" 7 protocols/grumpy/protocol.json)
+check "next: resumes at iteration 2"   '[ "$(jq -r .iteration <<<"$A")" = 2 ]'
+check "next: carries feedback"         'jq -r .feedback <<<"$A" | grep -q "security × src/auth.js"'
+
+# --- next.sh: terminal state halts
+S5="$WORK/s5"; state_checkout "$S5"
+yq -i '.state = "done"' "$S5/grumpy/pr-7.yaml" && cas_push "$S5" "simulate done"
+S6="$WORK/s6"
+A=$(.github/engine/next.sh "$S6" 7 protocols/grumpy/protocol.json)
+check "next: terminal state halts" '[ "$(jq -r .action <<<"$A")" = halt ]'
+
 echo "-----"
 echo "engine tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
