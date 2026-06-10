@@ -46,6 +46,15 @@ assert_check traces-exist-in-diff.sh true  ""                          "$FX/evid
 assert_check traces-exist-in-diff.sh false "authenticateUser"          "$FX/evidence-fabricated.json"
 assert_check traces-exist-in-diff.sh false "renderDashboard"           "$FX/evidence-fabricated.json"
 
+# multi-line snippet quoted verbatim from the source must verify:
+jq '.files[0].verdicts[0].findings[0].existing_code = "const q = x + \":\" + y;\n  return q;"' \
+  "$FX/evidence-complete.json" > /tmp/ev-multiline.json
+assert_check traces-exist-in-diff.sh true "" /tmp/ev-multiline.json
+# path must not be treated as a regex (src/auth.js must NOT match a src/authXjs section):
+sed 's|b/src/auth.js|b/src/authXjs|; s|a/src/auth.js|a/src/authXjs|' "$FX/diff-pr1.txt" > /tmp/diff-xjs.txt
+jq '{files:[{path:"src/auth.js",verdicts:[{category:"naming",verdict:"none-found",examined:["login"]}]}]}' -n > /tmp/ev-regexpath.json
+assert_check traces-exist-in-diff.sh false "login" /tmp/ev-regexpath.json /tmp/diff-xjs.txt
+
 echo "-----"
 echo "checks tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

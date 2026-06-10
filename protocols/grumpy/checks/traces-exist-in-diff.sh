@@ -6,11 +6,15 @@ set -euo pipefail
 EV="$1"; DIFF="$2"
 
 norm() { tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'; }
-DIFF_NORM=$(norm < "$DIFF")
+# Strip the +/- prefix from diff content lines so multi-line snippets quoted
+# verbatim from the source match after normalization.
+DIFF_NORM=$(sed -E 's/^[+-]//' "$DIFF" | norm)
 
 # file_section <path> — the diff lines belonging to one file
 file_section() {
-  awk -v p="$1" '/^diff --git /{on = ($0 ~ (" b/" p "$"))} on' "$DIFF"
+  awk -v p="$1" '
+    /^diff --git /{ tail = " b/" p; on = (substr($0, length($0)-length(tail)+1) == tail) } on
+  ' "$DIFF"
 }
 
 BAD=()
