@@ -40,7 +40,7 @@ post-steps:
       name: evidence
       path: /tmp/gh-aw/evidence.json
       if-no-files-found: warn
-timeout-minutes: 4
+timeout-minutes: 10
 ---
 
 # Grumpy Code Reviewer — Evidence Mode
