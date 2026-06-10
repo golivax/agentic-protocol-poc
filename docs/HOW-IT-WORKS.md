@@ -257,16 +257,160 @@ When a check fails, its `feedback` string is what gets injected into the next
 iteration's prompt, so make it specific and actionable ("Missing: security ×
 src/auth.js"), not "evidence invalid".
 
-The three shipped checks:
+The three shipped checks, in full. They are deliberately small (~30–40 lines of
+`bash` + `jq`) and share the contract above.
 
-- **`schema-valid`** — the evidence parses and matches the structural shape
-  (legal category/verdict, `issues-found` has ≥1 finding with non-empty
-  `existing_code`, `none-found` has ≥1 `examined`).
-- **`rubric-coverage`** — every changed `.js` file × every category has
-  exactly one verdict. Ground truth: `gh pr diff --name-only`.
-- **`traces-exist-in-diff`** — every `existing_code` snippet (whitespace-
-  normalized, with diff `+`/`-` markers stripped so multi-line snippets verify)
-  and every `examined` identifier appears in that file's diff section.
+#### `schema-valid.sh` — does the evidence have the right shape?
+
+It guards three layers (parseable JSON → `.files` is an array → every entry is
+an object with a `verdicts` array) so a malformed file produces a verdict
+instead of crashing the main pass. Then one `jq` program collects *all* shape
+violations (not just the first) and joins them into the feedback. The legal
+categories come from `protocol.json`, never hardcoded.
+
+```bash
+#!/usr/bin/env bash
+# Check: evidence file parses and matches the structural shape.
+# Usage: schema-valid.sh <evidence.json> <diff.txt> <changed-files.txt>
+set -euo pipefail
+EV="$1"
+PROTO="$(cd "$(dirname "$0")/.." && pwd)/protocol.json"
+
+emit() { jq -n --argjson p "$1" --arg f "$2" '{check:"schema-valid", pass:$p, feedback:$f}'; }
+
+if ! jq -e . "$EV" >/dev/null 2>&1; then
+  emit false "evidence file is missing or not valid JSON"; exit 0
+fi
+if ! jq -e '.files | type == "array"' "$EV" >/dev/null 2>&1; then
+  emit false "top-level .files array is missing"; exit 0
+fi
+if ! jq -e '[.files[] | type == "object" and (.verdicts | type == "array")] | all' "$EV" >/dev/null 2>&1; then
+  emit false "a .files entry is not an object with a verdicts array; check that every file is an object and verdicts is an array"; exit 0
+fi
+
+CATS_JSON=$(jq -c '.categories' "$PROTO")
+ERR=$(jq -r --argjson valid "$CATS_JSON" '
+  [ .files[] | .path as $p | .verdicts[]? |
+    if (.category as $c | $valid | index($c) | not)
+      then "illegal category \(.category) in \($p)"
+    elif (.verdict != "issues-found" and .verdict != "none-found")
+      then "illegal verdict \(.verdict) for \(.category) × \($p)"
+    elif .verdict == "issues-found" and ((.findings // []) | length) == 0
+      then "issues-found with no findings: \(.category) × \($p)"
+    elif .verdict == "issues-found" and ([(.findings // [])[] | ((.existing_code // "") | length) > 0 and ((.comment // "") | length) > 0] | all | not)
+      then "finding with empty existing_code or comment: \(.category) × \($p)"
+    elif .verdict == "none-found" and ((.examined // []) | length) == 0
+      then "none-found with no examined identifiers: \(.category) × \($p)"
+    else empty end
+  ] | join("; ")' "$EV")
+
+if [ -n "$ERR" ]; then emit false "$ERR"; else emit true ""; fi
+```
+
+#### `rubric-coverage.sh` — is every cell of the rubric filled exactly once?
+
+Ground truth is the changed-files list (the orchestrator fetches it with
+`gh pr diff --name-only`), filtered to `.js`. For every file × every category it
+counts verdicts and demands **exactly one** — so `0` (the agent skipped it,
+e.g. under sabotage) *and* `2+` (padding/duplication) both fail. The `read`
+loop tolerates a missing trailing newline and strips `\r`, so a file is never
+silently dropped from coverage.
+
+```bash
+#!/usr/bin/env bash
+# Check: every reviewable changed file × every category has exactly one verdict.
+# Usage: rubric-coverage.sh <evidence.json> <diff.txt> <changed-files.txt>
+set -euo pipefail
+EV="$1"; FILES="$3"
+PROTO="$(cd "$(dirname "$0")/.." && pwd)/protocol.json"
+
+mapfile -t CATS < <(jq -r '.categories[]' "$PROTO")
+BAD=()
+while IFS= read -r f || [ -n "$f" ]; do
+  f="${f%$'\r'}"
+  case "$f" in *.js) ;; *) continue ;; esac
+  for c in "${CATS[@]}"; do
+    n=$(jq --arg p "$f" --arg c "$c" \
+      '[.files[]? | select(.path==$p) | .verdicts[]? | select(.category==$c)] | length' "$EV")
+    if [ "$n" != "1" ]; then BAD+=("$c × $f (verdicts: $n)"); fi
+  done
+done < "$FILES"
+
+if [ "${#BAD[@]}" -gt 0 ]; then
+  FB="Missing or duplicated rubric cells: $(IFS='; '; echo "${BAD[*]}")"
+  jq -n --arg f "$FB" '{check:"rubric-coverage", pass:false, feedback:$f}'
+else
+  jq -n '{check:"rubric-coverage", pass:true, feedback:""}'
+fi
+```
+
+#### `traces-exist-in-diff.sh` — does every claim point at something real?
+
+This is what makes "I found nothing" cost more than a sentence. A `jq` pass
+flattens the evidence into a stream of claims — each `existing_code` snippet and
+each `examined` identifier, tagged with its file — and the shell verifies each
+against the diff *the check itself was handed*:
+
+- **snippets** are matched as a whitespace-normalized substring against the
+  whole diff, after stripping the leading `+`/`-` so a multi-line snippet copied
+  verbatim from the source still matches;
+- **identifiers** must appear within the claimed file's own diff section, where
+  the section is delimited by the `diff --git … b/<path>` header (matched as a
+  literal suffix, not a regex, so a path like `src/a.js` can't match
+  `src/aXjs`).
+
+```bash
+#!/usr/bin/env bash
+# Check: every positive claim (existing_code) and negative-attestation trace
+# (examined identifier) verifiably exists in the independently fetched diff.
+# Usage: traces-exist-in-diff.sh <evidence.json> <diff.txt> <changed-files.txt>
+set -euo pipefail
+EV="$1"; DIFF="$2"
+
+norm() { tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'; }
+# Strip the +/- prefix from diff content lines so multi-line snippets quoted
+# verbatim from the source match after normalization.
+DIFF_NORM=$(sed -E 's/^[+-]//' "$DIFF" | norm)
+
+# file_section <path> — the diff lines belonging to one file
+file_section() {
+  awk -v p="$1" '
+    /^diff --git /{ tail = " b/" p; on = (substr($0, length($0)-length(tail)+1) == tail) } on
+  ' "$DIFF"
+}
+
+BAD=()
+while IFS= read -r row; do
+  path=$(jq -r '.path' <<<"$row")
+  cat=$(jq -r '.category' <<<"$row")
+  kind=$(jq -r '.kind' <<<"$row")
+  val=$(jq -r '.value' <<<"$row")
+  if [ "$kind" = "snippet" ]; then
+    v=$(norm <<<"$val")
+    case "$DIFF_NORM" in *"$v"*) ;; *) BAD+=("existing_code not in diff ($cat × $path): \"$val\"") ;; esac
+  else
+    if ! file_section "$path" | grep -qF -- "$val"; then
+      BAD+=("examined identifier not in $path's diff ($cat): \"$val\"")
+    fi
+  fi
+done < <(jq -c '
+  .files[]? | .path as $p | .verdicts[]? | .category as $c |
+  ( (.findings // [])[] | {path:$p, category:$c, kind:"snippet", value:.existing_code} ),
+  ( (.examined // [])[] | {path:$p, category:$c, kind:"identifier", value:.} )' "$EV")
+
+if [ "${#BAD[@]}" -gt 0 ]; then
+  FB="Unverifiable claims: $(IFS='; '; echo "${BAD[*]}")"
+  jq -n --arg f "$FB" '{check:"traces-exist-in-diff", pass:false, feedback:$f}'
+else
+  jq -n '{check:"traces-exist-in-diff", pass:true, feedback:""}'
+fi
+```
+
+Together these three implement the principle from §2.7: `schema-valid` and
+`rubric-coverage` enforce that the agent *addressed every cell*, and
+`traces-exist-in-diff` enforces that each cell's claim — positive or negative —
+is *anchored in code that actually changed*. None of them judge whether a
+finding is correct; that's substance, reserved for a future judge/gate.
 
 ### 4.4 The agent workflow (`grumpy-agent.md`)
 
