@@ -63,6 +63,36 @@ S6="$WORK/s6"
 A=$(.github/engine/next.sh "$S6" 7 protocols/grumpy/protocol.json)
 check "next: terminal state halts" '[ "$(jq -r .action <<<"$A")" = halt ]'
 
+# --- advance.sh: failed checks → iteration bump + feedback + re-dispatch intent
+W7="$WORK/w7"; rm -rf "$W7"
+FAILV='{"results":[{"check":"rubric-coverage","pass":false,"feedback":"Missing: duplication × src/report.js"},{"check":"schema-valid","pass":true,"feedback":""}]}'
+echo "$FAILV" > "$WORK/verdicts-fail.json"
+OUT=$(AGENT_RUN_ID=200 .github/engine/advance.sh "$W7" 8 protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1) || bad "advance(fail) exited nonzero"
+git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify7"
+check "advance: iteration bumped"     '[ "$(yq -r .iteration "$WORK/verify7/grumpy/pr-8.yaml")" = 2 ]'
+check "advance: feedback in history"  'yq -r ".history[-1].feedback" "$WORK/verify7/grumpy/pr-8.yaml" | grep -q "duplication × src/report.js"'
+check "advance: re-dispatch intended" 'grep -q "grumpy-continue" <<<"$OUT"'
+
+# --- advance.sh: all pass → publish + state done
+W8="$WORK/w8"; rm -rf "$W8"
+PASSV='{"results":[{"check":"schema-valid","pass":true,"feedback":""},{"check":"rubric-coverage","pass":true,"feedback":""},{"check":"traces-exist-in-diff","pass":true,"feedback":""}]}'
+echo "$PASSV" > "$WORK/verdicts-pass.json"
+OUT=$(AGENT_RUN_ID=201 .github/engine/advance.sh "$W8" 8 protocols/grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(pass) exited nonzero"
+git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify8"
+check "advance: state done"              '[ "$(yq -r .state "$WORK/verify8/grumpy/pr-8.yaml")" = done ]'
+check "advance: publish intended"        'grep -q "pulls/8/reviews" <<<"$OUT"'
+check "advance: verdict REQUEST_CHANGES" 'grep -q "REQUEST_CHANGES" <<<"$OUT"'
+
+# --- advance.sh: exhaustion → state failed
+W9="$WORK/w9"; rm -rf "$W9"
+state_checkout "$W9"
+yq -i '.iteration = 3 | .state = "review"' "$W9/grumpy/pr-8.yaml"
+cas_push "$W9" "simulate iteration 3"
+W10="$WORK/w10"; rm -rf "$W10"
+OUT=$(AGENT_RUN_ID=202 .github/engine/advance.sh "$W10" 8 protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1) || bad "advance(exhaust) exited nonzero"
+git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify9"
+check "advance: exhausted → failed" '[ "$(yq -r .state "$WORK/verify9/grumpy/pr-8.yaml")" = failed ]'
+
 echo "-----"
 echo "engine tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
