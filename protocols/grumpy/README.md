@@ -98,13 +98,21 @@ complexity.
 
 ### Why C's weakness is small here
 
-C's only real cost is that a miscounted line burns an iteration. That is blunted
-by **not making the agent eyeball line numbers**: it runs in a sandbox with shell
-access, and a PR's `RIGHT` line number *is* the new-file line number, so the
-agent is told to derive anchors mechanically — e.g. `grep -n` against the file at
-the PR head (and the base file for `LEFT` side) — instead of counting hunk lines
-by hand. Mechanical derivation + the snippet cross-check makes a wrong anchor
-rare and, when it happens, self-correcting.
+C's only real cost is that a miscounted line burns an iteration — and that cost
+is **self-correcting**: a wrong line fails the snippet cross-check and comes back
+with specific feedback (`existing_code does not match RIGHT line(s) 8 …`), so the
+agent fixes it on the next pass. That backstop holds no matter how the agent
+arrives at the number.
+
+The lever for making miscounts *rare* in the first place is to have the agent
+**derive line numbers mechanically rather than eyeball them**. A PR's `RIGHT`
+line number *is* the new-file line number, so a tool like `grep -n` against the
+file at the PR head (or the base file for `LEFT`) computes the anchor exactly.
+Whether that is available depends on the agent's sandbox allowlist (today the
+agent's bash is limited to `gh pr diff *`); widening it for read-only line
+computation is the first knob to turn if live runs show frequent miscount
+iterations. The deterministic check re-verifies every anchor regardless, so
+broader agent tooling never weakens the guarantee.
 
 ## The anchor, concretely
 
