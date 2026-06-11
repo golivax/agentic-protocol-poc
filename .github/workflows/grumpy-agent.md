@@ -94,8 +94,9 @@ Read `/tmp/gh-aw/task-context.json`. It contains:
   the same `side` and inside the same diff hunk. Omit `start_line` for a single
   line.
 - How to find line numbers: each diff hunk starts with `@@ -OLD,c +NEW,d @@`.
-  Counting from there, `+` and context (unprefixed) lines advance the RIGHT
-  (new-file) number; `-` and context lines advance the LEFT (old-file) number.
+  Counting from there: `+` lines advance only the RIGHT (new-file) number; `-`
+  lines advance only the LEFT (old-file) number; context (unprefixed) lines
+  advance BOTH.
   Your `line` is the RIGHT number for `side: RIGHT`, the LEFT number for
   `side: LEFT`. The traces-exist-in-diff check rejects any finding whose
   `existing_code` does not sit exactly at the claimed line(s) — a wrong anchor is
