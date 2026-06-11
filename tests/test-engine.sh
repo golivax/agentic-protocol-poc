@@ -158,8 +158,12 @@ chmod +x "$STUB_HOOK"
 jq '.states |= map(if .kind=="deterministic" then .action="stub-publish" else . end)' \
   protocols/grumpy/protocol.json > "$STUB_PROTO"
 echo '{"results":[{"check":"x","pass":true,"feedback":""}]}' > "$WORK/verdicts-stub.json"
-OUT=$(PR=8 AGENT_RUN_ID=400 .github/engine/advance.sh "$WORK/relay" pr-8 "$STUB_PROTO" "$WORK/verdicts-stub.json" tests/fixtures/evidence-complete.json 2>&1)
-rm -f "$STUB_HOOK" "$STUB_PROTO"
+# Clean up the stub files on EXIT too: if advance.sh ever exits nonzero, set -e
+# would abort before the rm and leave stub-publish.sh in protocols/grumpy/publish/,
+# which then makes resolve_executable see two matches (ambiguous) for every later run.
+trap 'rm -f "$STUB_HOOK" "$STUB_PROTO"' EXIT
+OUT=$(PR=8 AGENT_RUN_ID=400 .github/engine/advance.sh "$WORK/relay" pr-8 "$STUB_PROTO" "$WORK/verdicts-stub.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(relay) exited nonzero"
+rm -f "$STUB_HOOK" "$STUB_PROTO"; trap - EXIT
 check "advance: relays hook conclusion" 'grep -q "conclusion=success" <<<"$OUT"'
 check "advance: relays hook summary"    'grep -q "STUB-RELAYED-OK" <<<"$OUT"'
 

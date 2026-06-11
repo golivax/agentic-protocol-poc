@@ -6,7 +6,7 @@
 # to the grumpy-review check run.
 # Env: ENGINE_LOCAL, GITHUB_REPOSITORY, PUBLISH_TOKEN, PR.
 set -euo pipefail
-EVID="$1"; INSTANCE="${2:-}"
+EVID="$1"; INSTANCE="${2:-}"   # INSTANCE accepted for calling-convention symmetry (unused today)
 
 event=$(jq -r 'if any(.files[]?.verdicts[]?; .verdict=="issues-found")
                then "REQUEST_CHANGES" else "APPROVE" end' "$EVID")

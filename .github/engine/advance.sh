@@ -70,7 +70,10 @@ run_publish_hook() {
     echo "[advance] publish hook not executable: $path" >&2
     echo '{"conclusion":"neutral","summary":"publish hook not executable"}'; return 0
   fi
-  out=$("$path" "$EVID" "$INSTANCE") || { echo "[advance] publish hook exited nonzero" >&2; echo '{"conclusion":"neutral","summary":"publish hook failed"}'; return 0; }
+  if ! out=$("$path" "$EVID" "$INSTANCE"); then
+    echo "[advance] publish hook exited nonzero" >&2
+    echo '{"conclusion":"neutral","summary":"publish hook failed"}'; return 0
+  fi
   if jq -e 'type=="object" and has("conclusion") and has("summary")' <<<"$out" >/dev/null 2>&1; then
     echo "$out"
   else
