@@ -18,6 +18,7 @@ state_checkout "$DIR"
 SF=$(state_file "$DIR" "$PID" "$INSTANCE")
 MAX=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .max_iterations' "$PROTO")
 PR="${PR:-$INSTANCE}"   # GitHub chrome (review/comment/check-run) targets the PR number from env; instance-key fallback keeps local ENGINE_LOCAL runs working
+CR_NAME="$PID"         # check-run name derives from the protocol id
 
 if [ ! -f "$SF" ]; then
   # advance on missing state = recover from lost init
@@ -95,8 +96,8 @@ render_status_body() {
     then "- ✅ iteration \(.iteration)/\($max) — all checks passed"
     else "- ✗ iteration \(.iteration)/\($max) — \(.feedback)"
     end')
-  printf '🔍 **grumpy-review · pr-%s**\n\n%s\n\n%s\n\n[Full state & audit trail](%s)\n' \
-    "$pr" "$lines" "$headline" "$link"
+  printf '🔍 **%s · %s**\n\n%s\n\n%s\n\n[Full state & audit trail](%s)\n' \
+    "$PID" "$INSTANCE" "$lines" "$headline" "$link"
 }
 
 # Branch ordering: mutate state → publish/side-effects that don't touch state →
@@ -108,20 +109,22 @@ if [ "$ALL_PASS" = "true" ]; then
   HOOK=$(run_publish_hook)
   CONCL=$(jq -r '.conclusion' <<<"$HOOK")
   CSUM=$(jq -r '.summary' <<<"$HOOK")
-  set_check_run "$SHA" completed "$CONCL" "Review complete" "$CSUM"
+  set_check_run "$CR_NAME" "$SHA" completed "$CONCL" "Review complete" "$CSUM"
   upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "✅ done — published.")"
   cas_push "$DIR" "$INSTANCE: checks passed at iteration $ITER → published, done"
 elif [ "$ITER" -lt "$MAX" ]; then
   NEXT=$((ITER + 1))
   N="$NEXT" yq -i '.iteration = env(N)' "$SF"
-  set_check_run "$SHA" in_progress "" "Grumpy review in progress" "Iteration $ITER failed checks; retrying as iteration $NEXT/$MAX."
+  set_check_run "$CR_NAME" "$SHA" in_progress "" "Review in progress" "Iteration $ITER failed checks; retrying as iteration $NEXT/$MAX."
   upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "⏳ iteration $ITER failed checks — retrying as iteration $NEXT/$MAX…")"
-  cas_push "$DIR" "pr-$PR: iteration $ITER failed checks → iteration $NEXT"
+  cas_push "$DIR" "$INSTANCE: iteration $ITER failed checks → iteration $NEXT"
   gh_api api "repos/$GITHUB_REPOSITORY/dispatches" \
-    -f event_type="grumpy-continue" -F "client_payload[pr]=$PR"
+    -f event_type="protocol-continue" \
+    -F "client_payload[protocol]=$PID" \
+    -F "client_payload[instance]=$INSTANCE"
 else
   yq -i '.state = "failed"' "$SF"
-  set_check_run "$SHA" completed failure "Review failed" "Could not produce a valid review after $MAX iterations."
+  set_check_run "$CR_NAME" "$SHA" completed failure "Review failed" "Could not produce a valid review after $MAX iterations."
   upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "❌ **failed** after $MAX iterations.")"
-  cas_push "$DIR" "pr-$PR: iterations exhausted → failed"
+  cas_push "$DIR" "$INSTANCE: iterations exhausted → failed"
 fi

@@ -97,24 +97,24 @@ upsert_status_comment() {
   fi
 }
 
-# set_check_run <head_sha> <status> <conclusion-or-empty> <title> <summary>
-# Emit a "grumpy-review" check run on the PR's head commit so branch protection
-# can gate the merge on protocol state. status is queued|in_progress|completed;
-# conclusion (success|failure|action_required|…) is required iff status=completed
-# and must be empty otherwise. A fresh run each call — GitHub uses the latest per
-# name for the merge gate, so no id needs persisting.
+# set_check_run <name> <head_sha> <status> <conclusion-or-empty> <title> <summary>
+# Emit a check run on the PR's head commit so branch protection can gate the merge
+# on protocol state. status is queued|in_progress|completed; conclusion
+# (success|failure|action_required|…) is required iff status=completed and must be
+# empty otherwise. A fresh run each call — GitHub uses the latest per name for the
+# merge gate, so no id needs persisting.
 #
-# Uses the Actions GITHUB_TOKEN ($PUBLISH_TOKEN) with checks:write — the Checks
-# API is App/Actions-token only (a PAT cannot create check runs). Best-effort:
-# a failure here never breaks a transition.
+# Uses the Actions GITHUB_TOKEN ($PUBLISH_TOKEN) with checks:write — the Checks API
+# is App/Actions-token only (a PAT cannot create check runs). Best-effort: a failure
+# here never breaks a transition.
 set_check_run() {
-  local sha="$1" status="$2" conclusion="$3" title="$4" summary="$5"
+  local name="$1" sha="$2" status="$3" conclusion="$4" title="$5" summary="$6"
   if [ "${ENGINE_LOCAL:-0}" = "1" ]; then
-    echo "[ENGINE_LOCAL] check-run grumpy-review sha=$sha status=$status conclusion=${conclusion:-none} title=$title summary=$summary" >&2
+    echo "[ENGINE_LOCAL] check-run $name sha=$sha status=$status conclusion=${conclusion:-none} title=$title summary=$summary" >&2
     return 0
   fi
   [ -n "$sha" ] || { echo "[engine] no head sha; skipping check run" >&2; return 0; }
-  local args=(-f name="grumpy-review" -f head_sha="$sha" -f status="$status"
+  local args=(-f name="$name" -f head_sha="$sha" -f status="$status"
               -f "output[title]=$title" -f "output[summary]=$summary")
   [ -n "$conclusion" ] && args+=(-f conclusion="$conclusion")
   GH_TOKEN="$PUBLISH_TOKEN" gh api -X POST "repos/$GITHUB_REPOSITORY/check-runs" "${args[@]}" >/dev/null 2>&1 \

@@ -106,7 +106,7 @@ OUT=$(PR=8 AGENT_RUN_ID=200 .github/engine/advance.sh "$W7" pr-8 protocols/grump
 git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify7"
 check "advance: iteration bumped"     '[ "$(yq -r .iteration "$WORK/verify7/grumpy-review/pr-8.yaml")" = 2 ]'
 check "advance: feedback in history"  'yq -r ".history[-1].feedback" "$WORK/verify7/grumpy-review/pr-8.yaml" | grep -q "duplication × src/report.js"'
-check "advance: re-dispatch intended" 'grep -q "grumpy-continue" <<<"$OUT"'
+check "advance: re-dispatch intended" 'grep -q "protocol-continue" <<<"$OUT"'
 
 # --- advance.sh: all pass → publish + state done
 W8="$WORK/w8"; rm -rf "$W8"
