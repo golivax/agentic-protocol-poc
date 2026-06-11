@@ -40,6 +40,12 @@ echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issue
 assert_check schema-valid.sh false "anchor" /tmp/ev-badside.json
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":3,"start_line":"two"}]}]}]}' > /tmp/ev-strstart.json
 assert_check schema-valid.sh false "anchor" /tmp/ev-strstart.json
+# integer start_line must be accepted:
+echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":5,"start_line":3}]}]}]}' > /tmp/ev-okstart.json
+assert_check schema-valid.sh true "" /tmp/ev-okstart.json
+# line=0 must be rejected (minimum is 1):
+echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":0}]}]}]}' > /tmp/ev-zeroline.json
+assert_check schema-valid.sh false "anchor" /tmp/ev-zeroline.json
 
 assert_check rubric-coverage.py true  ""                     "$FX/evidence-complete.json"
 assert_check rubric-coverage.py false "security × src/auth.js" "$FX/evidence-lazy.json"
