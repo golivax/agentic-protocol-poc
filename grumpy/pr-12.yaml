@@ -1,6 +1,14 @@
 protocol: grumpy-review
 instance: pr-12
 state: review
-iteration: 1
+iteration: 2
 gates: {}
-history: []
+history:
+  - iteration: 1
+    agent_run_id: "27314736731"
+    checks:
+      "schema-valid": "pass"
+      "rubric-coverage": "pass"
+      "traces-exist-in-diff": "fail"
+    feedback: 'Unverifiable claims: existing_code not in diff (error-handling × src/util.js): "+  if (min > max) {"'
+status_comment_id: 4675923376
