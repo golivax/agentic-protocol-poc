@@ -126,7 +126,7 @@ jobs:
           # integration" on the label read; tolerate any error as not-sabotaged.
           HAS=$(gh api "repos/${{ github.repository }}/issues/${{ steps.ctx.outputs.pr }}/labels" \
             --jq 'any(.[]; .name == "poc:sabotage")' 2>/dev/null || echo false)
-          if [ "$HAS" = "true" ] && [ "${{ steps.plan.outputs.iteration }}" = "1" ]; then
+          if [ "$HAS" = "true" ]; then
             echo "sabotage=true" >> "$GITHUB_OUTPUT"
           else
             echo "sabotage=false" >> "$GITHUB_OUTPUT"

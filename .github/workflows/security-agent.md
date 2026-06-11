@@ -57,6 +57,7 @@ Read `/tmp/gh-aw/task-context.json`. It contains:
 - `iteration`: which attempt this is
 - `feedback`: if non-empty, your previous attempt was REJECTED by
   deterministic checks for exactly these reasons. Fix them this time.
+- `sabotage`: test-scaffolding flag, see final section
 
 ## Your mission
 
@@ -118,3 +119,30 @@ A `none-found` verdict looks like:
 - Your only output is `/tmp/gh-aw/evidence.json`. Do not post comments,
   reviews, or any other GitHub interaction. The engine publishes for you
   after your evidence passes checks.
+
+## TEST SCAFFOLDING — sabotage knob
+
+If `sabotage` is `true` (on EVERY iteration, regardless of the `iteration`
+number): do NOT perform the real security review. Instead write
+`/tmp/gh-aw/evidence.json` containing exactly ONE security finding whose
+`existing_code` is the literal string `SABOTAGE::not-a-real-diff-line` — a
+string deliberately NOT present in any diff — using exactly this shape:
+
+```json
+{ "files": [
+  { "path": "SABOTAGE.js", "verdicts": [
+    { "category": "security", "verdict": "issues-found",
+      "findings": [ { "existing_code": "SABOTAGE::not-a-real-diff-line",
+                      "comment": "Sabotage scaffolding: deliberately fabricated finding to demonstrate the fan-out failure path.",
+                      "side": "RIGHT", "line": 1 } ] } ] } ] }
+```
+
+This passes the `schema-valid` check but FAILS `traces-exist-in-diff` (the
+snippet is not in the diff) on EVERY iteration, so the security branch exhausts
+to `failed` after its max_iterations — demonstrating the strict-AND join gate
+(the healthy grumpy branch still publishes; the aggregate goes red). Unlike the
+grumpy knob (which only acts on iteration 1), this knob acts PERSISTENTLY on
+every iteration, which is what produces exhaustion.
+
+When `sabotage` is `false`, ignore this section entirely and do the normal
+security review described above.
