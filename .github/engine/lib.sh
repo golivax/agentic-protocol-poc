@@ -85,6 +85,57 @@ state_file() {
 # (head_sha, status_comment_id, joined flag) for a fan-out instance.
 instance_file() { echo "$1/$2/$3/_instance.yaml"; }
 
+# render_fanout_status_body <state_dir> <pid> <instance> <protocol.json>
+# Pure projection of ALL fan-out branch state files into ONE combined PR-comment
+# body: a "**<branch>**" section per branch (its per-iteration checklist), an
+# overall headline derived from the branches' .state values, and a link to the
+# state DIRECTORY (the fan-out state lives in <pid>/<instance>/, not a single file,
+# so the link is tree/… not blob/…yaml). A missing branch file renders "_pending_"
+# and an empty history renders "_no iterations yet_" so partial / early / local
+# state never aborts under `set -e`. Echoes the body; performs no API calls.
+render_fanout_status_body() {
+  local dir="$1" pid="$2" instance="$3" proto="$4"
+  local link="https://github.com/$GITHUB_REPOSITORY/tree/$STATE_BRANCH/$pid/$instance"
+  local sections="" states="" b sf max lines st
+  while IFS= read -r b; do
+    sf=$(state_file "$dir" "$pid" "$instance" "$b")
+    if [ -f "$sf" ]; then
+      max=$(jq -r --arg b "$b" '.states[] | select(.kind=="fanout") | .branches[] | select(.id==$b) | .max_iterations' "$proto")
+      # yq → JSON then jq for the logic (mikefarah yq has no if/then/else or //).
+      lines=$(yq -o=json '.history' "$sf" | jq -r --arg max "$max" '.[] |
+        if (.feedback // "") == ""
+        then "- ✅ iteration \(.iteration)/\($max) — all checks passed"
+        else "- ✗ iteration \(.iteration)/\($max) — \(.feedback)"
+        end')
+      [ -n "$lines" ] || lines="_no iterations yet_"
+      st=$(yq -r '.state // ""' "$sf")
+    else
+      lines="_pending_"; st="pending"
+    fi
+    states="$states $st"
+    sections="${sections}**${b}**"$'\n\n'"${lines}"$'\n\n'
+  done < <(jq -r '.states[] | select(.kind=="fanout") | .branches[].id' "$proto")
+
+  # Headline from the collected branch states: any non-terminal → in progress;
+  # else all terminal and ≥1 failed → incomplete; else all done → complete.
+  local any_active=false any_failed=false
+  for st in $states; do
+    case "$st" in
+      done)   : ;;
+      failed) any_failed=true ;;
+      *)      any_active=true ;;
+    esac
+  done
+  local headline
+  if   [ "$any_active" = true ]; then headline="⏳ Review in progress…"
+  elif [ "$any_failed" = true ]; then headline="❌ Review incomplete — a branch could not complete; merge is gated."
+  else                                headline="✅ Review complete — published."
+  fi
+
+  printf '🔍 **%s · %s**\n\n%s%s\n\n[Full state & audit trail](%s)\n' \
+    "$pid" "$instance" "$sections" "$headline" "$link"
+}
+
 # upsert_status_comment <state_file> <pr> <body>
 # Single engine-owned PR comment, edited in place; id persisted in state.
 # NOTE: mutates the state file but does NOT push — callers must cas_push afterwards.
