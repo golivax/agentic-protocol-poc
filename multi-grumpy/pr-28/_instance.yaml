@@ -1,4 +1,4 @@
 protocol: multi-grumpy
 instance: pr-28
 head_sha: bfa242f6b25b018500007f7dcb75e5765aa62571
-joined: false
+joined: true
