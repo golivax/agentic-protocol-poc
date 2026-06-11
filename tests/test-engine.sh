@@ -125,7 +125,7 @@ check "check-run: iterate → in_progress" 'grep -q "check-run grumpy-review sha
 OUT=$(PR=20 AGENT_RUN_ID=301 .github/engine/advance.sh "$WORK/c2" pr-20 protocols/grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1)
 check "check-run: changes requested → failure" 'grep -q "Changes requested" <<<"$OUT" && grep -q "status=completed conclusion=failure" <<<"$OUT"'
 # exhausted (fail at iter==max) → failure
-W12="$WORK/c3"; state_checkout "$W12"; yq -i '.iteration = 3 | .state = "review"' "$W12/grumpy-review/pr-21.yaml" 2>/dev/null || { mkdir -p "$W12/grumpy-review"; PR=21 yq -n '.protocol="grumpy-review"|.instance="pr-21"|.state="review"|.iteration=3|.gates={}|.history=[]' > "$W12/grumpy-review/pr-21.yaml"; }
+W12="$WORK/c3"; state_checkout "$W12"; yq -i '.iteration = 3 | .state = "review"' "$W12/grumpy-review/pr-21.yaml" 2>/dev/null || { mkdir -p "$W12/grumpy-review"; yq -n '.protocol="grumpy-review"|.instance="pr-21"|.state="review"|.iteration=3|.gates={}|.history=[]' > "$W12/grumpy-review/pr-21.yaml"; }
 cas_push "$W12" "seed pr-21 iter3"
 OUT=$(PR=21 AGENT_RUN_ID=302 .github/engine/advance.sh "$WORK/c4" pr-21 protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1)
 check "check-run: exhausted → failure" 'grep -q "status=completed conclusion=failure" <<<"$OUT"'

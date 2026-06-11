@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# advance.sh <state_workdir> <pr> <protocol.json> <verdicts.json> <evidence.json>
+# advance.sh <state_workdir> <instance-key> <protocol.json> <verdicts.json> <evidence.json>
 # The ONLY writer of non-initial state. Reads check verdicts (never agent files,
 # except evidence for publication AFTER checks passed), mutates state, CAS-pushes,
 # and performs the consequent action: publish / re-dispatch / fail loudly.
@@ -13,6 +13,7 @@ source "$(dirname "$0")/lib.sh"
 DIR="$1"; INSTANCE="$2"; PROTO="$3"; VERDICTS="$4"; EVID="$5"
 PID=$(protocol_id "$PROTO")
 AGENT_STATE=$(jq -r '.states[] | select(.kind=="agent") | .id' "$PROTO")
+[ -n "$AGENT_STATE" ] || { echo "[engine] protocol has no agent state" >&2; exit 1; }
 state_checkout "$DIR"
 SF=$(state_file "$DIR" "$PID" "$INSTANCE")
 MAX=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .max_iterations' "$PROTO")
@@ -80,10 +81,10 @@ publish_review() {
 # Render the status-comment body as a projection of state.history: one checklist
 # line per iteration (rebuilt every transition, so it can't drift), a headline,
 # and a link to the durable state file. The comment is a PR-specific view; the
-# authoritative record is always agentic-state:grumpy/pr-<N>.yaml.
+# authoritative record is always agentic-state:<protocol-id>/<instance-key>.yaml.
 render_status_body() {
   local sf="$1" pr="$2" headline="$3"
-  local link="https://github.com/$GITHUB_REPOSITORY/blob/agentic-state/grumpy/pr-$pr.yaml"
+  local link="https://github.com/$GITHUB_REPOSITORY/blob/agentic-state/$PID/$INSTANCE.yaml"
   # yq → JSON, then jq for the logic (mikefarah yq has no if/then/else or //).
   local lines
   lines=$(yq -o=json '.history' "$sf" | jq -r --arg max "$MAX" '.[] |
