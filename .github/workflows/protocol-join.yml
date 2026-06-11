@@ -1,0 +1,50 @@
+name: Protocol Join
+run-name: "join · ${{ github.event.client_payload.instance }}"
+
+on:
+  repository_dispatch:
+    types: [protocol-join]
+
+permissions:
+  contents: read
+
+# Serialize all join evaluations for one instance so the barrier is race-free.
+concurrency:
+  group: join-${{ github.event.client_payload.instance }}
+  cancel-in-progress: false
+
+jobs:
+  join:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure yq
+        run: |
+          command -v yq >/dev/null || {
+            sudo wget -qO /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          }
+      - id: head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INSTANCE: ${{ github.event.client_payload.instance }}
+        run: |
+          PR="${INSTANCE#pr-}"
+          SHA=$(gh pr view "$PR" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+      - name: Evaluate join
+        env:
+          STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
+          PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR: ${{ steps.head.outputs.pr }}
+          PR_HEAD_SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          PROTO="protocols/${{ github.event.client_payload.protocol }}/protocol.json"
+          .github/engine/join.sh /tmp/state "${{ github.event.client_payload.instance }}" "$PROTO"
