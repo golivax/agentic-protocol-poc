@@ -197,7 +197,7 @@ status_comment_id: 4673907543   # the single PR comment the engine re-renders
 ```
 
 Every transition is a commit to this file on the `agentic-state` branch, so
-`git log agentic-state -- grumpy/pr-<N>.yaml` is a complete, auditable history.
+`git log agentic-state -- grumpy-review/pr-<N>.yaml` is a complete, auditable history.
 
 ---
 
@@ -609,14 +609,14 @@ repo setting is off), and returns `{"conclusion":"failure"|"success","summary":"
      - ✗ iteration 1/3 — Missing: security × src/auth.js; duplication × src/report.js
      - ✅ iteration 2/3 — all checks passed
      ✅ done — review published.
-     [Full state & audit trail](…/blob/agentic-state/grumpy/pr-9.yaml)
+     [Full state & audit trail](…/blob/agentic-state/grumpy-review/pr-9.yaml)
      ```
    - The final **review** (REQUEST_CHANGES / APPROVE) is the deliverable.
 4. **If checks fail**, you don't see half-baked output — the agent silently
    iterates (a second run), and only checked output is ever published. After
    `max_iterations`, the engine posts a clear failure instead of going quiet.
 5. **Inspect the record** any time: the status-comment link, the `agentic-state`
-   branch (`git log agentic-state -- grumpy/pr-<N>.yaml`), or the Actions tab
+   branch (`git log agentic-state -- grumpy-review/pr-<N>.yaml`), or the Actions tab
    (one orchestrator run + one agent run per iteration).
 
 The mental-model shift from plain gh-aw: **the PR/issue is the unit of
