@@ -100,9 +100,12 @@ if [ "$ALL_PASS" = "true" ]; then
   yq -i '.state = "done"' "$SF"
   publish_review
   # Check run mirrors the review verdict so branch protection can gate the merge:
-  # issues-found → action_required (changes must be addressed); clean → success.
+  # issues-found → failure (changes must be addressed); clean → success.
+  # NB: use `failure`, not `action_required` — the latter makes GitHub render a
+  # phantom "workflow awaiting approval" prompt on the PR (it's meant for "the App
+  # needs you to authorize something", not "the review failed").
   if jq -e 'any(.files[]?.verdicts[]?; .verdict=="issues-found")' "$EVID" >/dev/null 2>&1; then
-    set_check_run "$SHA" completed action_required "Changes requested" "Grumpy requested changes — resolve them before merging. See the review."
+    set_check_run "$SHA" completed failure "Changes requested" "Grumpy requested changes — resolve them before merging. See the review."
   else
     set_check_run "$SHA" completed success "Approved" "Grumpy examined every file × category and found nothing to fix."
   fi

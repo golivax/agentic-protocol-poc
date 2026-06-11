@@ -86,6 +86,19 @@ before extending the system so you know which "missing" pieces are deliberate.
   rulesets (needs a public repo or a paid plan for private). `lib.sh`
   `set_check_run`; engine tests assert the three outcomes (50 local tests total).
 
+- **Auto-review on open/push (`pull_request` trigger).** The orchestrator now
+  triggers on `pull_request` `opened`/`synchronize`/`reopened`, so every PR is
+  reviewed on open and re-reviewed on each push (not only on `/grumpy`). A new
+  head SHA makes `next.sh` reset the instance to a fresh review (the prior
+  review stays in the state branch's git history). Required for the check-run
+  merge gate to be coherent (otherwise un-`/grumpy`'d PRs would block forever).
+  **Same-repo PRs only** — fork PRs get no secrets and need
+  `pull_request_target` + sandboxing, deliberately out of scope.
+- **Check-run conclusion is `failure` (not `action_required`) for
+  changes-requested.** `action_required` made GitHub render a phantom "workflow
+  awaiting approval" prompt on the PR with a broken "Approve workflows to run"
+  button; `failure` blocks the merge identically without the confusion.
+
 ## Known engine couplings to generalise (not redesign)
 
 The engine scripts are meant to be protocol-agnostic and mostly are

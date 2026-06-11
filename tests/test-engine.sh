@@ -63,6 +63,21 @@ S6="$WORK/s6"
 A=$(.github/engine/next.sh "$S6" 7 protocols/grumpy/protocol.json)
 check "next: terminal state halts" '[ "$(jq -r .action <<<"$A")" = halt ]'
 
+# --- next.sh: a new head commit resets a terminal instance to a fresh review ---
+S7="$WORK/s7"; state_checkout "$S7"; mkdir -p "$S7/grumpy"
+yq -n '.protocol="grumpy-review"|.instance="pr-77"|.state="done"|.iteration=2|.gates={}|.head_sha="aaa111"|.history=[{"iteration":1,"feedback":"old"}]' > "$S7/grumpy/pr-77.yaml"
+cas_push "$S7" "seed pr-77 done@aaa111"
+A=$(.github/engine/next.sh "$WORK/s8" 77 protocols/grumpy/protocol.json bbb222)
+check "next: new head → run-agent iter 1" '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
+state_checkout "$WORK/s9"
+check "next: new head recorded + reset to review" '[ "$(yq -r .head_sha "$WORK/s9/grumpy/pr-77.yaml")" = bbb222 ] && [ "$(yq -r .state "$WORK/s9/grumpy/pr-77.yaml")" = review ]'
+# same head + terminal → halt (no spurious reset)
+S11="$WORK/s11"; state_checkout "$S11"; mkdir -p "$S11/grumpy"
+yq -n '.protocol="grumpy-review"|.instance="pr-78"|.state="done"|.iteration=1|.gates={}|.head_sha="ccc333"|.history=[]' > "$S11/grumpy/pr-78.yaml"
+cas_push "$S11" "seed pr-78 done@ccc333"
+A=$(.github/engine/next.sh "$WORK/s12" 78 protocols/grumpy/protocol.json ccc333)
+check "next: same head + terminal → halt" '[ "$(jq -r .action <<<"$A")" = halt ]'
+
 # --- advance.sh: failed checks → iteration bump + feedback + re-dispatch intent
 W7="$WORK/w7"; rm -rf "$W7"
 FAILV='{"results":[{"check":"rubric-coverage","pass":false,"feedback":"Missing: duplication × src/report.js"},{"check":"schema-valid","pass":true,"feedback":""}]}'
@@ -108,7 +123,7 @@ OUT=$(AGENT_RUN_ID=300 .github/engine/advance.sh "$WORK/c1" 20 protocols/grumpy/
 check "check-run: iterate → in_progress" 'grep -q "check-run grumpy-review sha=testsha123 status=in_progress" <<<"$OUT"'
 # pass with issues-found (evidence-complete has issues) → action_required
 OUT=$(AGENT_RUN_ID=301 .github/engine/advance.sh "$WORK/c2" 20 protocols/grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1)
-check "check-run: changes requested → action_required" 'grep -q "status=completed conclusion=action_required" <<<"$OUT"'
+check "check-run: changes requested → failure" 'grep -q "Changes requested" <<<"$OUT" && grep -q "status=completed conclusion=failure" <<<"$OUT"'
 # exhausted (fail at iter==max) → failure
 W12="$WORK/c3"; state_checkout "$W12"; yq -i '.iteration = 3 | .state = "review"' "$W12/grumpy/pr-21.yaml" 2>/dev/null || { mkdir -p "$W12/grumpy"; PR=21 yq -n '.protocol="grumpy-review"|.instance="pr-21"|.state="review"|.iteration=3|.gates={}|.history=[]' > "$W12/grumpy/pr-21.yaml"; }
 cas_push "$W12" "seed pr-21 iter3"

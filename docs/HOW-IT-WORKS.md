@@ -522,8 +522,11 @@ job that holds the state PAT.
 
 ## 5. Using a protocol through GitHub (developer's-eye view)
 
-1. **Open a PR** as usual.
-2. **Comment `/grumpy`.** That `issue_comment` wakes the orchestrator.
+1. **Open a PR** as usual. The orchestrator triggers automatically on
+   `pull_request` `opened`/`synchronize`/`reopened`, so the review runs on open
+   **and re-runs on every push** (a new commit resets the instance to a fresh
+   review of the new head — see §5.1). `/grumpy` remains a manual re-trigger.
+2. *(optional)* **Comment `/grumpy`** to re-run on demand.
 3. **Watch it work.** On the happy path you get one workflow run and a review
    appears — same UX as plain gh-aw. The protocol machinery only becomes
    visible when it has something to say:
@@ -559,16 +562,26 @@ reflecting protocol state:
 | protocol state | check run | merge box |
 |---|---|---|
 | reviewing / iterating | `in_progress` | pending — blocks |
-| changes requested (issues found) | `completed` / `action_required` | ❌ blocks |
+| changes requested (issues found) | `completed` / `failure` | ❌ blocks |
 | clean | `completed` / `success` | ✅ |
 | failed after max iterations | `completed` / `failure` | ❌ blocks |
 
-The check run binds to the head SHA, so a push mid-review naturally invalidates
-the old verdict (the engine re-reports on the next event). It's emitted with the
-Actions `GITHUB_TOKEN` (the Checks API is App/Actions-token only — a PAT can't
-create check runs), via `set_check_run` in `lib.sh`, from the `plan` job (initial
-`in_progress`) and `advance.sh` (terminal/iterate states). The relevant jobs
-carry `checks: write`.
+The check run binds to the head SHA. A push mid-review invalidates the old
+verdict, and the `synchronize` trigger re-runs the protocol: `next.sh` notices
+the head SHA changed from the one recorded in state and **resets the instance to
+a fresh review** of the new commit (the prior review stays in the state branch's
+git history). So the gate can never go green on un-reviewed code. The check is
+emitted with the Actions `GITHUB_TOKEN` (the Checks API is App/Actions-token
+only — a PAT can't create check runs), via `set_check_run` in `lib.sh`, from the
+`plan` job (initial `in_progress`) and `advance.sh` (terminal/iterate states).
+The relevant jobs carry `checks: write`.
+
+> **Fork PRs are out of scope.** `pull_request` runs from forks get no secrets
+> and a read-only token, so the orchestrator (which needs the state-branch PAT)
+> can't run — and GitHub gates them behind first-time-contributor approval
+> anyway. This PoC targets same-repo PRs. Supporting forks safely would need
+> `pull_request_target` with careful sandboxing (the classic "pwn-request"
+> surface), which is deliberately not attempted here.
 
 **Emitting the check is not the same as enforcing it.** The check appears in the
 merge box on any repo, but it only *blocks* merge once you make it a **required

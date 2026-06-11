@@ -1,17 +1,19 @@
 name: Grumpy Orchestrator
-run-name: "grumpy-review · pr-${{ github.event.issue.number || github.event.client_payload.pr }}"
+run-name: "grumpy-review · pr-${{ github.event.issue.number || github.event.pull_request.number || github.event.client_payload.pr }}"
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]   # auto-review on open and on every push
   issue_comment:
-    types: [created]
+    types: [created]                          # manual re-trigger via /grumpy
   repository_dispatch:
-    types: [grumpy-continue]
+    types: [grumpy-continue]                  # internal iterate re-entry
 
 permissions:
   contents: read
 
 concurrency:
-  group: grumpy-${{ github.event.issue.number || github.event.client_payload.pr }}
+  group: grumpy-${{ github.event.issue.number || github.event.pull_request.number || github.event.client_payload.pr }}
   cancel-in-progress: false
 
 jobs:
@@ -19,7 +21,8 @@ jobs:
   plan:
     if: >
       github.event_name == 'repository_dispatch' ||
-      (github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/grumpy'))
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/grumpy'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,19 +46,27 @@ jobs:
           }
       - id: ctx
         run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "pr=${{ github.event.client_payload.pr }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "pr=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
-          fi
+          case "${{ github.event_name }}" in
+            repository_dispatch) echo "pr=${{ github.event.client_payload.pr }}" >> "$GITHUB_OUTPUT" ;;
+            pull_request)        echo "pr=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT" ;;
+            *)                   echo "pr=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - id: head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.ctx.outputs.pr }}
+        run: |
+          SHA=$(gh pr view "$PR" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
       - id: plan
         env:
           STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
           PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
           .github/engine/next.sh /tmp/state "${{ steps.ctx.outputs.pr }}" \
-            protocols/grumpy/protocol.json > /tmp/action.json
+            protocols/grumpy/protocol.json "$HEAD_SHA" > /tmp/action.json
           cat /tmp/action.json
           echo "action=$(jq -r .action /tmp/action.json)" >> "$GITHUB_OUTPUT"
           echo "iteration=$(jq -r .iteration /tmp/action.json)" >> "$GITHUB_OUTPUT"
@@ -73,13 +84,6 @@ jobs:
           else
             echo "sabotage=false" >> "$GITHUB_OUTPUT"
           fi
-      - id: head
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ steps.ctx.outputs.pr }}
-        run: |
-          SHA=$(gh pr view "$PR" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
       - name: Mark review in progress (check run)
         if: steps.plan.outputs.action == 'run-agent'
         env:
