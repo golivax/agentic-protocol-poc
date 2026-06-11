@@ -44,16 +44,23 @@ else
   # Pin comments to the reviewed head so positions resolve against that commit.
   COMMIT=$(GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)
   payload=$(jq -nc --argjson b "$base" --arg c "$COMMIT" '$b + {commit_id:$c}')
-  if ! GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
-       --method POST --input - <<<"$payload" >/dev/null 2>&1; then
+  # POST one review. On failure, surface GitHub's combined response — e.g. the 422
+  # body the all-or-nothing reviews API returns for a bad inline position — instead
+  # of swallowing it, so a live failure is debuggable. On success the captured
+  # output (the created-review JSON) is intentionally discarded.
+  post_review() {
+    local out
+    if ! out=$(GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
+               --method POST --input - <<<"$1" 2>&1); then
+      echo "[publish] reviews POST failed: $out" >&2
+      return 1
+    fi
+  }
+  if ! post_review "$payload"; then
     if [ "$event" = "APPROVE" ]; then
       echo "[publish] APPROVE rejected (repo setting?); falling back to COMMENT" >&2
       payload=$(jq -c '.event="COMMENT"' <<<"$payload")
-      if ! GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
-           --method POST --input - <<<"$payload" >/dev/null 2>&1; then
-        echo "[publish] COMMENT fallback also failed" >&2
-        exit 1
-      fi
+      post_review "$payload" || { echo "[publish] COMMENT fallback also failed" >&2; exit 1; }
     else
       echo "[publish] review submission failed for event=$event" >&2
       exit 1
