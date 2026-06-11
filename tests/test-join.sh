@@ -29,6 +29,8 @@ seed() {  # seed <dir> <pr> <grumpy-state> <security-state>
 seed "$WORK/j1" pr-1 done done
 OUT=$(PR=1 "$JOIN" "$WORK/j1b" pr-1 "$PROTO" 2>&1)
 check "all done → check-run success" 'grep -q "check-run multi-grumpy sha=joinsha status=completed conclusion=success" <<<"$OUT"'
+check "all done → comment shows complete headline" 'grep -q "Review complete — published" <<<"$OUT"'
+check "all done → comment shows both sections"      'grep -q "\*\*grumpy\*\*" <<<"$OUT" && grep -q "\*\*security\*\*" <<<"$OUT"'
 state_checkout "$WORK/j1v"
 check "all done → joined=true" '[ "$(yq -r .joined "$WORK/j1v/multi-grumpy/pr-1/_instance.yaml")" = true ]'
 
@@ -36,6 +38,8 @@ check "all done → joined=true" '[ "$(yq -r .joined "$WORK/j1v/multi-grumpy/pr-
 seed "$WORK/j2" pr-2 done failed
 OUT=$(PR=2 "$JOIN" "$WORK/j2b" pr-2 "$PROTO" 2>&1)
 check "one failed → check-run failure" 'grep -q "check-run multi-grumpy sha=joinsha status=completed conclusion=failure" <<<"$OUT"'
+check "one failed → comment shows incomplete headline" 'grep -q "Review incomplete — a branch could not complete" <<<"$OUT"'
+check "one failed → comment shows both sections" 'grep -q "\*\*grumpy\*\*" <<<"$OUT" && grep -q "\*\*security\*\*" <<<"$OUT"'
 
 # not all terminal → no aggregate yet, joined stays false
 seed "$WORK/j3" pr-3 done review

@@ -43,5 +43,9 @@ else
   CONCL="failure"; TITLE="Review incomplete"; SUM="A review branch could not complete; merge is gated."
 fi
 set_check_run "$PID" "$SHA" completed "$CONCL" "$TITLE" "$SUM"
+# Final shared-comment update: the closing headline now matches the aggregate.
+# Reads the comment id from _instance.yaml ($INF) — the plan job created it — so
+# this only PATCHes. No-op echo under ENGINE_LOCAL.
+upsert_status_comment "$INF" "$PR" "$(render_fanout_status_body "$DIR" "$PID" "$INSTANCE" "$PROTO")"
 yq -i '.joined = true' "$INF"
 cas_push "$DIR" "$INSTANCE: join → $CONCL (all branches terminal)"
