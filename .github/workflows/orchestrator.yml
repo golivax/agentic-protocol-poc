@@ -145,6 +145,28 @@ jobs:
           # (the per-branch advance writes "multi-grumpy/<branch>" sub-runs, not this).
           set_check_run "multi-grumpy" "$SHA" in_progress "" "Review in progress" "Reviewing (iteration $ITER); merge is gated until the protocol completes."
 
+      - name: Ensure shared status comment
+        if: steps.plan.outputs.action == 'run-fanout'
+        env:
+          STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
+          PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR: ${{ steps.ctx.outputs.pr }}
+          INSTANCE: ${{ steps.ctx.outputs.instance }}
+        run: |
+          source .github/engine/lib.sh
+          # next.sh already seeded + pushed _instance.yaml into /tmp/state at fan-out
+          # start. Create the ONE shared progress comment up front (create-once:
+          # skip if an id is already recorded), so the two parallel branch advances
+          # and the join only ever PATCH it. Idempotent across re-runs of this job.
+          INF=$(instance_file /tmp/state multi-grumpy "$INSTANCE")
+          CID=$(yq -r '.status_comment_id // ""' "$INF" 2>/dev/null || echo "")
+          if [ -z "$CID" ]; then
+            BODY=$(render_fanout_status_body /tmp/state multi-grumpy "$INSTANCE" protocols/multi-grumpy/protocol.json)
+            upsert_status_comment "$INF" "$PR" "$BODY"
+            cas_push /tmp/state "$INSTANCE: ensure shared status comment"
+          fi
+
   # ── Zone 2: the sandboxed agents, fanned out one matrix leg per branch. ──
   # Matrix jobs share ONE job-level outputs map (last leg clobbers), so per-branch
   # data (agent run id, agent ok) is passed via a branch-named ARTIFACT instead —
