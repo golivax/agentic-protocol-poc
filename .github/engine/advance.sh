@@ -46,35 +46,35 @@ ITER="$ITER" RID="${AGENT_RUN_ID:-unknown}" CHECKS="$CHECKS_MAP" FB="$FB" yq -i 
     "feedback": strenv(FB)
   }]' "$SF"
 
-publish_review() {
-  local event body
-  event=$(jq -r 'if any(.files[]?.verdicts[]?; .verdict=="issues-found")
-                 then "REQUEST_CHANGES" else "APPROVE" end' "$EVID")
-  body=$(jq -r '
-    [ .files[] | .path as $p | .verdicts[] | select(.verdict=="issues-found") | .findings[]
-      | "### `\($p)`\n\(.comment)\n```js\n\(.existing_code)\n```" ] as $f |
-    if ($f | length) > 0
-    then "😤 Grumpy protocol review — \($f | length) issue(s), evidence verified by deterministic checks.\n\n" + ($f | join("\n\n"))
-    else "😤 Fine. I examined every file against every category and found nothing worth complaining about. Don'\''t get used to it."
-    end' "$EVID")
-  if [ "${ENGINE_LOCAL:-0}" = "1" ]; then
-    echo "[ENGINE_LOCAL] POST repos/$GITHUB_REPOSITORY/pulls/$PR/reviews event=$event" >&2
-    echo "$body" >&2
-    return 0
+# run_publish_hook — resolve and run the protocol's publish-state executable.
+# Echoes the hook's {conclusion,summary} JSON; on any resolution/exec failure,
+# returns a neutral conclusion so the transition still completes. The hook runs
+# trusted in engine-post (zone 4) and may hold the publish token — it is NOT a
+# sandboxed check.
+run_publish_hook() {
+  local pubstate action exec_override pdir res kind path out
+  pubstate=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .next // empty' "$PROTO")
+  action=$(jq -r --arg p "$pubstate" '.states[] | select(.id==$p) | .action // empty' "$PROTO")
+  exec_override=$(jq -r --arg p "$pubstate" '.states[] | select(.id==$p) | .exec // empty' "$PROTO")
+  pdir="$(cd "$(dirname "$PROTO")" && pwd)"
+  if [ -z "$action" ] && [ -z "$exec_override" ]; then
+    echo '{"conclusion":"neutral","summary":"no publish action defined"}'; return 0
   fi
-  # APPROVE requires the repo's "Allow GitHub Actions to approve pull requests"
-  # setting; if it's off (or the bot otherwise can't approve), fall back to a
-  # COMMENT review so a clean result still publishes and the state still advances.
-  if ! GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
-       -f event="$event" -f body="$body" >/dev/null 2>&1; then
-    if [ "$event" = "APPROVE" ]; then
-      echo "[advance] APPROVE rejected (repo setting?); falling back to COMMENT" >&2
-      GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
-        -f event="COMMENT" -f body="$body" >/dev/null
-    else
-      echo "[advance] review submission failed for event=$event" >&2
-      return 1
-    fi
+  res=$(resolve_executable "$pdir/publish" "$action" "$pdir" "$exec_override")
+  kind=${res%%$'\t'*}; path=${res#*$'\t'}
+  if [ "$kind" = "ERR" ]; then
+    echo "[advance] publish hook unresolved: $path" >&2
+    echo '{"conclusion":"neutral","summary":"publish hook unresolved"}'; return 0
+  fi
+  if [ ! -x "$path" ]; then
+    echo "[advance] publish hook not executable: $path" >&2
+    echo '{"conclusion":"neutral","summary":"publish hook not executable"}'; return 0
+  fi
+  out=$("$path" "$EVID" "$INSTANCE") || { echo "[advance] publish hook exited nonzero" >&2; echo '{"conclusion":"neutral","summary":"publish hook failed"}'; return 0; }
+  if jq -e 'type=="object" and has("conclusion") and has("summary")' <<<"$out" >/dev/null 2>&1; then
+    echo "$out"
+  else
+    echo '{"conclusion":"neutral","summary":"publish hook returned no verdict"}'
   fi
 }
 
@@ -102,19 +102,12 @@ render_status_body() {
 SHA="${PR_HEAD_SHA:-}"   # the PR head commit the check run attaches to (from the orchestrator)
 if [ "$ALL_PASS" = "true" ]; then
   yq -i '.state = "done"' "$SF"
-  publish_review
-  # Check run mirrors the review verdict so branch protection can gate the merge:
-  # issues-found → failure (changes must be addressed); clean → success.
-  # NB: use `failure`, not `action_required` — the latter makes GitHub render a
-  # phantom "workflow awaiting approval" prompt on the PR (it's meant for "the App
-  # needs you to authorize something", not "the review failed").
-  if jq -e 'any(.files[]?.verdicts[]?; .verdict=="issues-found")' "$EVID" >/dev/null 2>&1; then
-    set_check_run "$SHA" completed failure "Changes requested" "Grumpy requested changes — resolve them before merging. See the review."
-  else
-    set_check_run "$SHA" completed success "Approved" "Grumpy examined every file × category and found nothing to fix."
-  fi
-  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "✅ **done** — review published.")"
-  cas_push "$DIR" "pr-$PR: checks passed at iteration $ITER → published, done"
+  HOOK=$(run_publish_hook)
+  CONCL=$(jq -r '.conclusion' <<<"$HOOK")
+  CSUM=$(jq -r '.summary' <<<"$HOOK")
+  set_check_run "$SHA" completed "$CONCL" "Review complete" "$CSUM"
+  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "✅ done — published.")"
+  cas_push "$DIR" "$INSTANCE: checks passed at iteration $ITER → published, done"
 elif [ "$ITER" -lt "$MAX" ]; then
   NEXT=$((ITER + 1))
   N="$NEXT" yq -i '.iteration = env(N)' "$SF"

@@ -110,7 +110,7 @@ upsert_status_comment() {
 set_check_run() {
   local sha="$1" status="$2" conclusion="$3" title="$4" summary="$5"
   if [ "${ENGINE_LOCAL:-0}" = "1" ]; then
-    echo "[ENGINE_LOCAL] check-run grumpy-review sha=$sha status=$status conclusion=${conclusion:-none} title=$title" >&2
+    echo "[ENGINE_LOCAL] check-run grumpy-review sha=$sha status=$status conclusion=${conclusion:-none} title=$title summary=$summary" >&2
     return 0
   fi
   [ -n "$sha" ] || { echo "[engine] no head sha; skipping check run" >&2; return 0; }
