@@ -120,6 +120,7 @@ run_publish_hook() {
 render_status_body() {
   local sf="$1" headline="$2"   # PID/INSTANCE come from the enclosing scope (as in run_publish_hook)
   local link="https://github.com/$GITHUB_REPOSITORY/blob/agentic-state/$PID/$INSTANCE.yaml"
+  # checklist format kept in sync with render_fanout_status_body in lib.sh
   # yq → JSON, then jq for the logic (mikefarah yq has no if/then/else or //).
   local lines
   lines=$(yq -o=json '.history' "$sf" | jq -r --arg max "$MAX" '.[] |
@@ -129,6 +130,29 @@ render_status_body() {
     end')
   printf '🔍 **%s · %s**\n\n%s\n\n%s\n\n[Full state & audit trail](%s)\n' \
     "$PID" "$INSTANCE" "$lines" "$headline" "$link"
+}
+
+# update_status_comment <single-agent-headline> — branch-aware status-comment writer.
+# Single-agent (BRANCH empty): the per-instance comment with the per-file body
+# (v1, byte-for-byte unchanged — the headline arg is the single-agent headline).
+# Fan-out branch (BRANCH set): the ONE shared comment keyed in _instance.yaml,
+# rendered as the combined cross-branch view. The fan-out headline is derived
+# inside render_fanout_status_body from the branches' live states, so the headline
+# arg is ignored on that path. Branch advances only PATCH (the plan job created the
+# comment + seeded its id), preserving the _instance.yaml race-safety invariant.
+update_status_comment() {
+  local headline="$1"
+  if [ -n "$BRANCH" ]; then
+    local inf
+    inf=$(instance_file "$DIR" "$PID" "$INSTANCE")
+    # Branch advances only PATCH (plan job created the comment + seeded its id).
+    # If _instance.yaml is absent (e.g. a plan job failure or a local test without
+    # a prior fanout start), skip gracefully rather than crashing.
+    [ -f "$inf" ] || return 0
+    upsert_status_comment "$inf" "$PR" "$(render_fanout_status_body "$DIR" "$PID" "$INSTANCE" "$PROTO")"
+  else
+    upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$headline")"
+  fi
 }
 
 # Branch ordering: mutate state → publish/side-effects that don't touch state →
@@ -141,14 +165,14 @@ if [ "$ALL_PASS" = "true" ]; then
   CONCL=$(jq -r '.conclusion' <<<"$HOOK")
   CSUM=$(jq -r '.summary' <<<"$HOOK")
   set_check_run "$CR_NAME" "$SHA" completed "$CONCL" "Review complete" "$CSUM"
-  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "✅ done — published.")"
+  update_status_comment "✅ done — published."
   cas_push "$DIR" "$INSTANCE: checks passed at iteration $ITER → published, done"
   fire_join
 elif [ "$ITER" -lt "$MAX" ]; then
   NEXT=$((ITER + 1))
   N="$NEXT" yq -i '.iteration = env(N)' "$SF"
   set_check_run "$CR_NAME" "$SHA" in_progress "" "Review in progress" "Iteration $ITER failed checks; retrying as iteration $NEXT/$MAX."
-  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "⏳ iteration $ITER failed checks — retrying as iteration $NEXT/$MAX…")"
+  update_status_comment "⏳ iteration $ITER failed checks — retrying as iteration $NEXT/$MAX…"
   cas_push "$DIR" "$INSTANCE: iteration $ITER failed checks → iteration $NEXT"
   gh_api api "repos/$GITHUB_REPOSITORY/dispatches" \
     -f event_type="protocol-continue" \
@@ -158,7 +182,7 @@ elif [ "$ITER" -lt "$MAX" ]; then
 else
   yq -i '.state = "failed"' "$SF"
   set_check_run "$CR_NAME" "$SHA" completed failure "Review failed" "Could not produce a valid review after $MAX iterations."
-  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "❌ **failed** after $MAX iterations.")"
+  update_status_comment "❌ **failed** after $MAX iterations."
   cas_push "$DIR" "$INSTANCE: iterations exhausted → failed"
   fire_join
 fi

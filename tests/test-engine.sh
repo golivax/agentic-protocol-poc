@@ -113,6 +113,7 @@ W8="$WORK/w8"; rm -rf "$W8"
 PASSV='{"results":[{"check":"schema-valid","pass":true,"feedback":""},{"check":"rubric-coverage","pass":true,"feedback":""},{"check":"traces-exist-in-diff","pass":true,"feedback":""}]}'
 echo "$PASSV" > "$WORK/verdicts-pass.json"
 OUT=$(PR=8 AGENT_RUN_ID=201 .github/engine/advance.sh "$W8" pr-8 protocols/grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(pass) exited nonzero"
+check "single-agent comment keeps per-file blob link" 'grep -q "blob/agentic-state/grumpy-review/pr-8.yaml" <<<"$OUT"'
 git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify8"
 check "advance: state done"              '[ "$(yq -r .state "$WORK/verify8/grumpy-review/pr-8.yaml")" = done ]'
 check "advance: publish intended"        'grep -q "pulls/8/reviews" <<<"$OUT"'
@@ -215,6 +216,9 @@ git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/vmg1"
 check "advance branch: grumpy.yaml state done"    '[ "$(yq -r .state "$WORK/vmg1/multi-grumpy/pr-50/grumpy.yaml")" = done ]'
 check "advance branch: published via hook"        'grep -q "pulls/50/reviews" <<<"$OUT"'
 check "advance branch: per-branch check-run name" 'grep -q "check-run multi-grumpy/grumpy " <<<"$OUT"'
+check "advance branch: shared comment has grumpy section" 'grep -q "\*\*grumpy\*\*" <<<"$OUT"'
+check "advance branch: shared comment tree/ link"         'grep -q "tree/agentic-state/multi-grumpy/pr-50" <<<"$OUT"'
+check "advance branch: shared comment not blob link"      '! grep -q "blob/agentic-state" <<<"$OUT"'
 
 # --- advance.sh fan-out signalling: terminal branch fires protocol-join; iterate carries branch ---
 # iterate (fail, iter<max) on a branch → protocol-continue WITH branch

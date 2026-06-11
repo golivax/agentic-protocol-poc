@@ -101,7 +101,7 @@ render_fanout_status_body() {
     sf=$(state_file "$dir" "$pid" "$instance" "$b")
     if [ -f "$sf" ]; then
       max=$(jq -r --arg b "$b" '.states[] | select(.kind=="fanout") | .branches[] | select(.id==$b) | .max_iterations' "$proto")
-      # yq → JSON then jq for the logic (mikefarah yq has no if/then/else or //).
+      # yq → JSON then jq (mikefarah yq has no if/then/else or //); format kept in sync with render_status_body in advance.sh.
       lines=$(yq -o=json '.history' "$sf" | jq -r --arg max "$max" '.[] |
         if (.feedback // "") == ""
         then "- ✅ iteration \(.iteration)/\($max) — all checks passed"
