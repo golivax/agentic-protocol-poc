@@ -205,6 +205,17 @@ A=$(BRANCH=grumpy "$NEXT" "$WORK/bl3" pr-61 protocols/multi-grumpy/protocol.json
 check "branch continue/absent: fresh run-agent iter 1" \
   '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
 
+# --- advance.sh branch-scoped: grumpy branch, all pass → done + per-branch publish + branch check-run ---
+cp protocols/grumpy/publish/publish-review-from-evidence.sh protocols/multi-grumpy/publish/publish-grumpy.sh
+chmod +x protocols/multi-grumpy/publish/publish-grumpy.sh
+export PR_HEAD_SHA="mgsha1"
+OUT=$(BRANCH=grumpy PR=50 AGENT_RUN_ID=900 .github/engine/advance.sh "$WORK/advmg1" pr-50 \
+  protocols/multi-grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(mg grumpy) nonzero"
+git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/vmg1"
+check "advance branch: grumpy.yaml state done"    '[ "$(yq -r .state "$WORK/vmg1/multi-grumpy/pr-50/grumpy.yaml")" = done ]'
+check "advance branch: published via hook"        'grep -q "pulls/50/reviews" <<<"$OUT"'
+check "advance branch: per-branch check-run name" 'grep -q "check-run multi-grumpy/grumpy " <<<"$OUT"'
+
 echo "-----"
 echo "engine tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -11,19 +11,34 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 DIR="$1"; INSTANCE="$2"; PROTO="$3"; VERDICTS="$4"; EVID="$5"
+BRANCH="${BRANCH:-}"
 PID=$(protocol_id "$PROTO")
-AGENT_STATE=$(jq -r '.states[] | select(.kind=="agent") | .id' "$PROTO")
-[ -n "$AGENT_STATE" ] || { echo "[engine] protocol has no agent state" >&2; exit 1; }
+if [ -n "$BRANCH" ]; then
+  AGENT_STATE="$BRANCH"
+  MAX=$(jq -r --arg b "$BRANCH" '.states[] | select(.kind=="fanout") | .branches[] | select(.id==$b) | .max_iterations' "$PROTO")
+else
+  AGENT_STATE=$(jq -r '.states[] | select(.kind=="agent") | .id' "$PROTO")
+  [ -n "$AGENT_STATE" ] || { echo "[engine] protocol has no agent state" >&2; exit 1; }
+  MAX=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .max_iterations' "$PROTO")
+fi
 state_checkout "$DIR"
-SF=$(state_file "$DIR" "$PID" "$INSTANCE")
-MAX=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .max_iterations' "$PROTO")
+SF=$(state_file "$DIR" "$PID" "$INSTANCE" "$BRANCH")
 PR="${PR:-$INSTANCE}"   # GitHub chrome (review/comment/check-run) targets the PR number from env; instance-key fallback keeps local ENGINE_LOCAL runs working
-CR_NAME="$PID"         # check-run name derives from the protocol id
+if [ -n "$BRANCH" ]; then CR_NAME="$PID/$BRANCH"; else CR_NAME="$PID"; fi   # check-run name: <pid> single-agent, <pid>/<branch> fan-out
+
+# LIFE_STATE is the value a recovered/initial state file's .state must carry while
+# the agent unit is in flight (so next.sh reads it as active). Single-agent: the
+# agent state id. Fan-out branch: the owning fan-out state's id (NOT the branch id).
+if [ -n "$BRANCH" ]; then
+  LIFE_STATE=$(jq -r '.states[] | select(.kind=="fanout") | .id' "$PROTO")
+else
+  LIFE_STATE="$AGENT_STATE"
+fi
 
 if [ ! -f "$SF" ]; then
   # advance on missing state = recover from lost init
   mkdir -p "$(dirname "$SF")"
-  PID="$PID" INST="$INSTANCE" AS="$AGENT_STATE" yq -n '
+  PID="$PID" INST="$INSTANCE" AS="$LIFE_STATE" yq -n '
     .protocol = strenv(PID) |
     .instance = strenv(INST) |
     .state = strenv(AS) |
@@ -54,9 +69,14 @@ ITER="$ITER" RID="${AGENT_RUN_ID:-unknown}" CHECKS="$CHECKS_MAP" FB="$FB" yq -i 
 # sandboxed check.
 run_publish_hook() {
   local pubstate action exec_override pdir res kind path out
-  pubstate=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .next // empty' "$PROTO")
-  action=$(jq -r --arg p "$pubstate" '.states[] | select(.id==$p) | .action // empty' "$PROTO")
-  exec_override=$(jq -r --arg p "$pubstate" '.states[] | select(.id==$p) | .exec // empty' "$PROTO")
+  if [ -n "$BRANCH" ]; then
+    action=$(jq -r --arg b "$BRANCH" '.states[] | select(.kind=="fanout") | .branches[] | select(.id==$b) | .publish // empty' "$PROTO")
+    exec_override=""
+  else
+    pubstate=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .next // empty' "$PROTO")
+    action=$(jq -r --arg p "$pubstate" '.states[] | select(.id==$p) | .action // empty' "$PROTO")
+    exec_override=$(jq -r --arg p "$pubstate" '.states[] | select(.id==$p) | .exec // empty' "$PROTO")
+  fi
   pdir="$(cd "$(dirname "$PROTO")" && pwd)"
   if [ -z "$action" ] && [ -z "$exec_override" ]; then
     echo '{"conclusion":"neutral","summary":"no publish action defined"}'; return 0
