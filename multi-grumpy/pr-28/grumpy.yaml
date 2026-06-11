@@ -1,6 +1,6 @@
 protocol: multi-grumpy
 instance: pr-28
-state: review
+state: done
 iteration: 2
 gates: {}
 history:
@@ -11,4 +11,11 @@ history:
       "rubric-coverage": "fail"
       "traces-exist-in-diff": "pass"
     feedback: 'Missing or duplicated rubric cells: duplication × tests/fixtures/src/billing.js (verdicts: 0); security × tests/fixtures/src/billing.js (verdicts: 0)'
+  - iteration: 2
+    agent_run_id: "27382132674"
+    checks:
+      "schema-valid": "pass"
+      "rubric-coverage": "pass"
+      "traces-exist-in-diff": "pass"
+    feedback: ""
 status_comment_id: 4685725460
