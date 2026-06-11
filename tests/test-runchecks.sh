@@ -30,7 +30,7 @@ trap 'rm -f "$TP"' EXIT
 jq '.states[0].checks = [{"run":"does-not-exist","on_fail":"iterate"}]' "$P" > "$TP"
 OUT=$("$RC" "$TP" review "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
 chk "runner: unknown check → fail verdict" '[ "$(jq -r ".results[0].pass" <<<"$OUT")" = false ]'
-chk "runner: unknown check → useful feedback" 'jq -r ".results[0].feedback" <<<"$OUT" | grep -q "no check executable found"'
+chk "runner: unknown check → useful feedback" 'jq -r ".results[0].feedback" <<<"$OUT" | grep -q "no executable found"'
 
 # --- explicit exec override resolves a specific file ---
 jq '.states[0].checks = [{"run":"sv","exec":"checks/schema-valid.sh","on_fail":"iterate"}]' "$P" > "$TP"
@@ -49,6 +49,16 @@ chk "runner: non-executable → useful feedback" 'jq -r ".results[0].feedback" <
 printf '#!/usr/bin/env bash\nexit 3\n' > "$SBX/checks/noexec.sh"; chmod +x "$SBX/checks/noexec.sh"
 OUT=$("$RC" "$SBX/protocol.json" review "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
 chk "runner: crashing check → fail verdict" '[ "$(jq -r ".results[0].pass" <<<"$OUT")" = false ]'
+
+# --- resolve_executable (shared resolver) direct unit checks ---
+source .github/engine/lib.sh
+PDIR="protocols/grumpy"
+R=$(resolve_executable "$PDIR/checks" "schema-valid" "$PDIR" "")
+chk "resolve: finds checks/schema-valid.sh" '[ "${R%%$'"'"'\t'"'"'*}" = OK ] && grep -q "checks/schema-valid.sh" <<<"$R"'
+R=$(resolve_executable "$PDIR/checks" "does-not-exist" "$PDIR" "")
+chk "resolve: missing → ERR" '[ "${R%%$'"'"'\t'"'"'*}" = ERR ]'
+R=$(resolve_executable "$PDIR/checks" "ignored" "$PDIR" "checks/rubric-coverage.py")
+chk "resolve: explicit exec resolves" '[ "${R%%$'"'"'\t'"'"'*}" = OK ] && grep -q "rubric-coverage.py" <<<"$R"'
 
 echo "-----"
 echo "run-checks tests: $PASS passed, $FAIL failed"

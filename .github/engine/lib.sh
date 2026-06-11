@@ -17,6 +17,30 @@ gh_api() {
   gh "$@"
 }
 
+# resolve_executable <search-dir> <name> <protocol-dir> <explicit-exec-or-empty>
+# One resolution rule for any protocol-provided executable (a check OR a publish
+# hook). Prints "OK\t<path>" when a single file is found, or "ERR\t<reason>".
+# Resolution:
+#   - if <explicit-exec> is set, use <protocol-dir>/<exec>
+#   - else match <search-dir>/<name> or <search-dir>/<name>.* (extension-agnostic)
+# Executability is the caller's responsibility (so it can word its own verdict).
+resolve_executable() {
+  local sdir="$1" name="$2" pdir="$3" ex="$4"
+  if [ -n "$ex" ]; then
+    if [ -f "$pdir/$ex" ]; then printf 'OK\t%s\n' "$pdir/$ex"
+    else printf 'ERR\tdeclared exec not found: %s\n' "$ex"; fi
+    return 0
+  fi
+  local g matches=()
+  for g in "$sdir/$name" "$sdir/$name".*; do
+    [ -f "$g" ] && matches+=("$g")
+  done
+  if   [ "${#matches[@]}" -eq 0 ]; then printf 'ERR\tno executable found (looked for %s or %s.*)\n' "$name" "$name"
+  elif [ "${#matches[@]}" -gt 1 ]; then printf 'ERR\tambiguous: multiple files match %s.* (%s); use an explicit "exec"\n' "$name" "${matches[*]}"
+  else printf 'OK\t%s\n' "${matches[0]}"
+  fi
+}
+
 # state_checkout <dir> — clone the state branch; create it on origin if missing.
 state_checkout() {
   local dir="$1"
