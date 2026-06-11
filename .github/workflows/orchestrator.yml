@@ -1,4 +1,7 @@
 name: Grumpy Orchestrator
+# run-name and concurrency.group below must use the SAME instance expression so a
+# repository_dispatch (client_payload.instance="pr-N") and a pull_request (number N)
+# label the same logical instance. GHA has no top-level anchors — keep them in sync.
 run-name: "grumpy-review · ${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}"
 
 on:
@@ -50,9 +53,13 @@ jobs:
         env:
           DISPATCH_INSTANCE: ${{ github.event.client_payload.instance }}
         run: |
+          # Map the GitHub event → engine command (see next.sh header for the contract):
+          #   start = fresh review, reset = force-restart on a new commit, continue = iterate loop.
+          # DISPATCH_INSTANCE is read via env (not inline) to avoid shell injection from the payload.
           case "${{ github.event_name }}" in
             repository_dispatch)
               INSTANCE="$DISPATCH_INSTANCE"
+              [ -n "$INSTANCE" ] || { echo "[ctx] repository_dispatch with empty instance" >&2; exit 1; }
               PR="${INSTANCE#pr-}"
               CMD="continue" ;;
             pull_request)
@@ -109,6 +116,8 @@ jobs:
           ITER: ${{ steps.plan.outputs.iteration }}
         run: |
           source .github/engine/lib.sh
+          # Name must match protocol.json .name (advance.sh derives the closing run's
+          # name from there); if they diverge the in-progress check run never closes.
           set_check_run "grumpy-review" "$SHA" in_progress "" "Review in progress" "Reviewing (iteration $ITER); merge is gated until the protocol completes."
 
   # ── Zone 2: the sandboxed agent, as a separately dispatched gh-aw workflow. ──
