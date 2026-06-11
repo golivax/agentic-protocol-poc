@@ -1,6 +1,6 @@
 protocol: grumpy-review
 instance: pr-15
-state: review
+state: done
 iteration: 2
 gates: {}
 head_sha: eef09436bde9331d3decad4201e17cd9a9f104e1
@@ -16,4 +16,11 @@ history:
       +    for (let j = 0; j < items.length; j++) {";existing_code not in diff (duplication × src/report.js): "+function formatFooter(title) {
       +  return "== " + title.toUpperCase() + " ==";
       +}"
+  - iteration: 2
+    agent_run_id: "27350790491"
+    checks:
+      "schema-valid": "pass"
+      "rubric-coverage": "pass"
+      "traces-exist-in-diff": "pass"
+    feedback: ""
 status_comment_id: 4681150881
