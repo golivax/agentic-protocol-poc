@@ -194,6 +194,17 @@ check "fanout start: grumpy file seeded active"   '[ "$(yq -r .state "$WORK/fo2/
 check "fanout start: security file seeded active" '[ "$(yq -r .state "$WORK/fo2/multi-grumpy/pr-50/security.yaml")" = review ] && [ "$(yq -r .iteration "$WORK/fo2/multi-grumpy/pr-50/security.yaml")" = 1 ]'
 check "fanout start: instance file w/ head" '[ "$(yq -r .head_sha "$WORK/fo2/multi-grumpy/pr-50/_instance.yaml")" = head50 ] && [ "$(yq -r .joined "$WORK/fo2/multi-grumpy/pr-50/_instance.yaml")" = false ]'
 
+# --- next.sh branch lifecycle: terminal branch halts; absent branch starts fresh ---
+state_checkout "$WORK/bl1"; mkdir -p "$WORK/bl1/multi-grumpy/pr-60"
+yq -n '.protocol="multi-grumpy"|.instance="pr-60"|.state="done"|.iteration=2|.gates={}|.history=[]' \
+  > "$WORK/bl1/multi-grumpy/pr-60/grumpy.yaml"
+cas_push "$WORK/bl1" "seed pr-60 grumpy done"
+A=$(BRANCH=grumpy "$NEXT" "$WORK/bl2" pr-60 protocols/multi-grumpy/protocol.json continue)
+check "branch continue/terminal: halts" '[ "$(jq -r .action <<<"$A")" = halt ]'
+A=$(BRANCH=grumpy "$NEXT" "$WORK/bl3" pr-61 protocols/multi-grumpy/protocol.json continue)
+check "branch continue/absent: fresh run-agent iter 1" \
+  '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
+
 echo "-----"
 echo "engine tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
