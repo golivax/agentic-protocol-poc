@@ -17,19 +17,12 @@
 # or prints a non-conforming verdict becomes a failing verdict — one bad check
 # never aborts the run. The runner holds NO credentials (trust zone 3).
 set -euo pipefail
+source "$(dirname "$0")/lib.sh"
 
 PROTO="$1"; STATE="$2"; EV="$3"; DIFF="$4"; FILES="$5"
 PDIR="$(cd "$(dirname "$PROTO")" && pwd)"
 
 fail_verdict() { jq -nc --arg c "$1" --arg f "$2" '{check:$c, pass:false, feedback:$f}'; }
-
-# Print every existing candidate path for a check name (one per line).
-resolve_matches() {
-  local name="$1" g
-  for g in "$PDIR/checks/$name" "$PDIR/checks/$name".*; do
-    [ -f "$g" ] && printf '%s\n' "$g"
-  done
-}
 
 RESULTS="[]"
 while IFS= read -r entry; do
@@ -37,14 +30,14 @@ while IFS= read -r entry; do
   ex=$(jq -r '.exec // empty' <<<"$entry")
 
   path=""
-  if [ -n "$ex" ]; then
-    if [ -f "$PDIR/$ex" ]; then path="$PDIR/$ex"; fi
-    [ -z "$path" ] && V=$(fail_verdict "$name" "declared exec not found: $ex")
+  res=$(resolve_executable "$PDIR/checks" "$name" "$PDIR" "$ex")
+  # resolve_executable returns "OK\t<path>" or "ERR\t<reason>"; split on the first
+  # tab (resolved paths are git-managed and never contain a literal tab).
+  kind=${res%%$'\t'*}; rest=${res#*$'\t'}
+  if [ "$kind" = "ERR" ]; then
+    V=$(fail_verdict "$name" "$rest")
   else
-    mapfile -t M < <(resolve_matches "$name")
-    if   [ "${#M[@]}" -eq 0 ]; then V=$(fail_verdict "$name" "no check executable found (looked for checks/$name or checks/$name.*)")
-    elif [ "${#M[@]}" -gt 1 ]; then V=$(fail_verdict "$name" "ambiguous check: multiple files match checks/$name.* (${M[*]}); use an explicit \"exec\"")
-    else path="${M[0]}"; fi
+    path="$rest"
   fi
 
   if [ -n "$path" ]; then

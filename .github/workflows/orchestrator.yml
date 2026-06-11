@@ -1,5 +1,8 @@
 name: Grumpy Orchestrator
-run-name: "grumpy-review · pr-${{ github.event.issue.number || github.event.pull_request.number || github.event.client_payload.pr }}"
+# run-name and concurrency.group below must use the SAME instance expression so a
+# repository_dispatch (client_payload.instance="pr-N") and a pull_request (number N)
+# label the same logical instance. GHA has no top-level anchors — keep them in sync.
+run-name: "grumpy-review · ${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}"
 
 on:
   pull_request:
@@ -7,13 +10,13 @@ on:
   issue_comment:
     types: [created]                          # manual re-trigger via /grumpy
   repository_dispatch:
-    types: [grumpy-continue]                  # internal iterate re-entry
+    types: [protocol-continue]                # internal iterate re-entry
 
 permissions:
   contents: read
 
 concurrency:
-  group: grumpy-${{ github.event.issue.number || github.event.pull_request.number || github.event.client_payload.pr }}
+  group: grumpy-${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}
   cancel-in-progress: false
 
 jobs:
@@ -35,6 +38,8 @@ jobs:
       iteration: ${{ steps.plan.outputs.iteration }}
       feedback: ${{ steps.plan.outputs.feedback }}
       sabotage: ${{ steps.sabotage.outputs.sabotage }}
+      instance: ${{ steps.ctx.outputs.instance }}
+      command: ${{ steps.ctx.outputs.command }}
     steps:
       - uses: actions/checkout@v4
       - name: Ensure yq
@@ -45,12 +50,30 @@ jobs:
             sudo chmod +x /usr/local/bin/yq
           }
       - id: ctx
+        env:
+          DISPATCH_INSTANCE: ${{ github.event.client_payload.instance }}
         run: |
+          # Map the GitHub event → engine command (see next.sh header for the contract):
+          #   start = fresh review, reset = force-restart on a new commit, continue = iterate loop.
+          # DISPATCH_INSTANCE is read via env (not inline) to avoid shell injection from the payload.
           case "${{ github.event_name }}" in
-            repository_dispatch) echo "pr=${{ github.event.client_payload.pr }}" >> "$GITHUB_OUTPUT" ;;
-            pull_request)        echo "pr=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT" ;;
-            *)                   echo "pr=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT" ;;
+            repository_dispatch)
+              INSTANCE="$DISPATCH_INSTANCE"
+              [ -n "$INSTANCE" ] || { echo "[ctx] repository_dispatch with empty instance" >&2; exit 1; }
+              PR="${INSTANCE#pr-}"
+              CMD="continue" ;;
+            pull_request)
+              PR="${{ github.event.pull_request.number }}"
+              INSTANCE="pr-$PR"
+              if [ "${{ github.event.action }}" = "synchronize" ]; then CMD="reset"; else CMD="start"; fi ;;
+            *)
+              PR="${{ github.event.issue.number }}"
+              INSTANCE="pr-$PR"
+              CMD="start" ;;
           esac
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "instance=$INSTANCE" >> "$GITHUB_OUTPUT"
+          echo "command=$CMD" >> "$GITHUB_OUTPUT"
       - id: head
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -65,8 +88,8 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
-          .github/engine/next.sh /tmp/state "${{ steps.ctx.outputs.pr }}" \
-            protocols/grumpy/protocol.json "$HEAD_SHA" > /tmp/action.json
+          .github/engine/next.sh /tmp/state "${{ steps.ctx.outputs.instance }}" \
+            protocols/grumpy/protocol.json "${{ steps.ctx.outputs.command }}" "$HEAD_SHA" > /tmp/action.json
           cat /tmp/action.json
           echo "action=$(jq -r .action /tmp/action.json)" >> "$GITHUB_OUTPUT"
           echo "iteration=$(jq -r .iteration /tmp/action.json)" >> "$GITHUB_OUTPUT"
@@ -93,7 +116,9 @@ jobs:
           ITER: ${{ steps.plan.outputs.iteration }}
         run: |
           source .github/engine/lib.sh
-          set_check_run "$SHA" in_progress "" "Grumpy review in progress" "Reviewing (iteration $ITER); merge is gated until the protocol completes."
+          # Name must match protocol.json .name (advance.sh derives the closing run's
+          # name from there); if they diverge the in-progress check run never closes.
+          set_check_run "grumpy-review" "$SHA" in_progress "" "Review in progress" "Reviewing (iteration $ITER); merge is gated until the protocol completes."
 
   # ── Zone 2: the sandboxed agent, as a separately dispatched gh-aw workflow. ──
   dispatch:
@@ -232,5 +257,5 @@ jobs:
           fi
           printf '%s' "$VERDICTS" > /tmp/verdicts.json
           jq . /tmp/verdicts.json
-          .github/engine/advance.sh /tmp/state "$PR" \
+          .github/engine/advance.sh /tmp/state "${{ needs.plan.outputs.instance }}" \
             protocols/grumpy/protocol.json /tmp/verdicts.json /tmp/agent/evidence.json

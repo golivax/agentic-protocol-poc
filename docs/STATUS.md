@@ -88,10 +88,12 @@ before extending the system so you know which "missing" pieces are deliberate.
 
 - **Auto-review on open/push (`pull_request` trigger).** The orchestrator now
   triggers on `pull_request` `opened`/`synchronize`/`reopened`, so every PR is
-  reviewed on open and re-reviewed on each push (not only on `/grumpy`). A new
-  head SHA makes `next.sh` reset the instance to a fresh review (the prior
-  review stays in the state branch's git history). Required for the check-run
-  merge gate to be coherent (otherwise un-`/grumpy`'d PRs would block forever).
+  reviewed on open and re-reviewed on each push (not only on `/grumpy`). A
+  `synchronize` event maps to the `reset` command, which unconditionally starts
+  a fresh review (the prior review stays in the state branch's git history).
+  The engine does not compare head SHAs — that policy is entirely in the
+  orchestrator's event→command mapping. Required for the check-run merge gate
+  to be coherent (otherwise un-`/grumpy`'d PRs would block forever).
   **Same-repo PRs only** — fork PRs get no secrets and need
   `pull_request_target` + sandboxing, deliberately out of scope.
 - **Check-run conclusion is `failure` (not `action_required`) for
@@ -99,17 +101,44 @@ before extending the system so you know which "missing" pieces are deliberate.
   awaiting approval" prompt on the PR with a broken "Approve workflows to run"
   button; `failure` blocks the merge identically without the confusion.
 
-## Known engine couplings to generalise (not redesign)
+## Engine couplings — resolved
 
-The engine scripts are meant to be protocol-agnostic and mostly are
-(`run-checks.sh` takes any `protocol.json`; `next.sh`/`advance.sh` take the
-protocol path as an argument). Two grumpy-specific literals remain baked in and
-should become parameters when a second protocol is added:
+The engine is now fully protocol-agnostic (`grep -rin grumpy .github/engine/`
+is empty). The two previously noted couplings are gone:
 
-- `next.sh` / `advance.sh` write `protocol: "grumpy-review"` into new state.
-- `lib.sh`'s `state_file` hardcodes the `grumpy/pr-<N>.yaml` path layout.
+- **Protocol id from data.** `next.sh` and `advance.sh` read the protocol id
+  from `protocol.json` `.name` via `protocol_id()` in `lib.sh`. The check-run
+  name, status-comment headline, and state-path prefix all derive from it.
+- **State path from data.** `lib.sh`'s `state_file` returns
+  `<dir>/<protocol-id>/<instance-key>.yaml` (e.g. `grumpy-review/pr-<N>.yaml`).
 
-These are small (instance-key + protocol-id as inputs), not architectural.
+**Trigger policy lives in `orchestrator.yml`, not the engine.** `next.sh`
+accepts a command (`start` / `reset` / `continue`); the orchestrator maps
+GitHub events to commands:
+
+| GitHub event | Command |
+|---|---|
+| `pull_request` opened / reopened | `start` |
+| `pull_request` synchronize | `reset` |
+| `issue_comment` `/grumpy` | `start` |
+| `repository_dispatch` `protocol-continue` | `continue` |
+
+The `start`/`reset`/`continue` action matrix (Absent / Active / Terminal):
+
+| Command | Absent | Active | Terminal |
+|---|---|---|---|
+| `start` | fresh review | halt | fresh re-review |
+| `reset` | fresh review | fresh review | fresh review |
+| `continue` | fresh review | resume current iteration | halt |
+
+Two intentional v1 behavior divergences (documented, not defects):
+- `start` on Terminal → fresh re-review (prior design: halt).
+- `start` on Active → halt (prior design: resume).
+
+**Publication is a protocol publish hook.** `advance.sh` resolves and calls
+`protocols/grumpy/publish/publish-review-from-evidence.sh` via
+`resolve_executable` (the same mechanism as checks). The hook runs trusted in
+zone 4 (engine-post) holding the publish token; it is not a sandboxed check.
 
 ## Not exercised by this PoC (honest gaps)
 

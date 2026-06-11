@@ -95,35 +95,33 @@ protocols/grumpy/
   protocol.json          # states, checks, transitions, max_iterations (DATA)
   evidence.schema.json   # the rubric the agent must fill (the CONTRACT)
   checks/*.sh            # deterministic transition checks (FORM verification)
+  publish/publish-review-from-evidence.sh  # protocol's publish hook (zone 4)
 
-.github/engine/            # GENERIC — protocol-agnostic
-  lib.sh                 # state checkout, CAS push, status-comment upsert
-  next.sh                # planner: (state, protocol) -> action JSON
+.github/engine/            # GENERIC — fully protocol-agnostic
+  lib.sh                 # state checkout, CAS push, status-comment upsert,
+                         #   resolve_executable, set_check_run
+  next.sh                # planner: (state, protocol, command) -> action JSON
   advance.sh             # sole state writer: verdicts -> mutate, publish, push
   run-checks.sh          # resolve + run a state's checks (any language) -> verdicts
 
 .github/workflows/
-  orchestrator.yml       # the 4 trust zones; calls the engine + the protocol's checks
+  orchestrator.yml       # the 4 trust zones; maps events → commands; calls the engine
   grumpy-agent.md        # gh-aw agent workflow for the example protocol
   grumpy-agent.lock.yml  # compiled output of grumpy-agent.md (committed)
 
 agentic-state branch
-  grumpy/pr-<N>.yaml     # durable per-instance state (the source of truth)
+  <protocol-id>/<instance-key>.yaml   # durable per-instance state (e.g. grumpy-review/pr-<N>.yaml)
 ```
 
 > **`grumpy-review` is an example protocol, not the engine.** Everything under
-> `.github/engine/` (and the orchestrator's plumbing) is generic: it interprets
-> *a* `protocol.json`, runs *its* checks, and advances *its* state. The grumpy
-> reviewer — its `protocol.json`, evidence schema, checks, and agent prompt —
-> lives entirely in `protocols/grumpy/` + `grumpy-agent.md` and exists to
-> exercise the engine. To build a different protocol (an incident-response
-> runbook, a release checklist, a compliance review) you write a new
-> `protocols/<name>/` and agent workflow; you do **not** touch the engine.
->
-> *v1 caveat:* a few grumpy-specific names are still baked into the engine
-> scripts (the literal `"grumpy-review"` and the `grumpy/pr-<N>.yaml` state
-> path). Generalising those — instance key and protocol id as parameters — is a
-> small, known refactor tracked in `STATUS.md`, not a redesign.
+> `.github/engine/` is protocol-agnostic: it reads the protocol id from
+> `protocol.json` `.name`, resolves checks and publish hooks from the protocol
+> directory, and derives the state path as `<protocol-id>/<instance-key>.yaml`.
+> The grumpy reviewer — its `protocol.json`, evidence schema, checks, and
+> publish hook — lives entirely in `protocols/grumpy/` + `grumpy-agent.md` and
+> exists to exercise the engine. To build a different protocol (an
+> incident-response runbook, a release checklist, a compliance review) you write
+> a new `protocols/<name>/` and agent workflow; you do **not** touch the engine.
 
 ### 3.2 The four trust zones (per iteration)
 
@@ -146,10 +144,14 @@ advance job reads only the check *verdicts* to decide, and only the evidence (to
 ### 3.3 The transition lifecycle
 
 ```
-event (/grumpy comment, or repository_dispatch "grumpy-continue")
+event (pull_request open/push, /grumpy comment, or repository_dispatch "protocol-continue")
+   │
+   ▼  orchestrator maps event → command: opened/reopened → start,
+      synchronize → reset, issue_comment /grumpy → start, dispatch → continue
    │
    ▼
-[plan]      checkout agentic-state; next.sh reads/creates grumpy/pr-<N>.yaml,
+[plan]      checkout agentic-state; next.sh <dir> <instance-key> <protocol.json>
+            <command> [head_sha] reads/creates <protocol-id>/<instance-key>.yaml,
             emits {action: run-agent|halt, iteration, feedback}
    │ run-agent
    ▼
@@ -162,9 +164,9 @@ event (/grumpy comment, or repository_dispatch "grumpy-continue")
    │
    ▼
 [advance]   append an iteration record to state.history, then:
-            • all checks pass → state=done, publish review, CAS-push
+            • all checks pass → state=done, run protocol publish hook, CAS-push
             • a check failed, iteration<max → bump iteration, CAS-push,
-              repository_dispatch "grumpy-continue"  (→ next run)
+              repository_dispatch "protocol-continue"  (→ next run)
             • iterations exhausted → state=failed, CAS-push
 ```
 
@@ -174,7 +176,7 @@ instance.
 
 ### 3.4 State model
 
-`grumpy/pr-<N>.yaml` (porch-compatible field names):
+`<protocol-id>/<instance-key>.yaml` (e.g. `grumpy-review/pr-<N>.yaml`; porch-compatible field names):
 
 ```yaml
 protocol: grumpy-review
@@ -195,7 +197,7 @@ status_comment_id: 4673907543   # the single PR comment the engine re-renders
 ```
 
 Every transition is a commit to this file on the `agentic-state` branch, so
-`git log agentic-state -- grumpy/pr-<N>.yaml` is a complete, auditable history.
+`git log agentic-state -- grumpy-review/pr-<N>.yaml` is a complete, auditable history.
 
 ---
 
@@ -509,14 +511,84 @@ Compile it with `gh aw compile` and commit the generated `grumpy-agent.lock.yml`
 ### 4.5 The orchestrator (`orchestrator.yml`)
 
 Mostly protocol-agnostic plumbing you won't edit per-protocol: the four jobs,
-the trigger surface (`issue_comment` for `/grumpy`, `repository_dispatch` for
-re-entry), the per-PR `concurrency` group, and the credential wiring. It calls
-the engine scripts and the checks; the *protocol* decides everything else.
+the per-PR `concurrency` group, and the credential wiring. It calls the engine
+scripts and the checks; the *protocol* decides everything else.
 
 A safety detail worth knowing: agent-derived strings (`feedback`, `verdicts`)
 are passed to shell steps via `env:`, never interpolated into `run:` blocks —
 otherwise a crafted filename or finding could inject shell commands into the
 job that holds the state PAT.
+
+### 4.6 The command seam — trigger policy lives in the orchestrator, not the engine
+
+The engine (`next.sh`) receives a **command** and never sniffs GitHub events.
+The orchestrator translates events to commands:
+
+| GitHub event | Condition | Command |
+|---|---|---|
+| `pull_request` opened / reopened | — | `start` |
+| `pull_request` synchronize | new commit pushed | `reset` |
+| `issue_comment` created | body starts with `/grumpy` | `start` |
+| `repository_dispatch` `protocol-continue` | iterate re-entry | `continue` |
+
+The command determines the engine's behaviour based on the instance lifecycle
+state (Absent / Active / Terminal):
+
+| Command | Absent | Active | Terminal |
+|---|---|---|---|
+| `start` | fresh review | **halt** (review in flight) | fresh re-review |
+| `reset` | fresh review | fresh review | fresh review |
+| `continue` | fresh review | resume current iteration | halt |
+
+Two intentional v1 divergences from the original design:
+- **`start` on Terminal → fresh re-review** (the prior design halted; now
+  posting `/grumpy` on a finished PR restarts the review, e.g. after a
+  rewrite).
+- **`start` on Active → halt** (the prior design resumed; now a duplicate
+  trigger on an in-flight review is silently ignored to avoid double-advancing).
+
+`head_sha` (the fifth argument to `next.sh`) is **recorded as metadata** only
+(stored in the state file for check-run binding). The engine never compares it
+to decide policy — that comparison was removed. The orchestrator is where the
+policy lives: `synchronize` → `reset` is the mechanism that ensures a new push
+invalidates the old review.
+
+### 4.7 The publish hook
+
+When all checks pass, `advance.sh` calls the protocol's **publish hook** —
+a protocol-provided executable resolved via the same `resolve_executable`
+function used for checks (see §4.3), from the publish state's `.action` field:
+
+```jsonc
+{ "id": "publish",
+  "kind": "deterministic",
+  "action": "publish-review-from-evidence"  // resolved in protocols/<name>/publish/
+}
+```
+
+**ABI:** the hook is invoked as `<hook> <evidence.json> <instance-key>` with
+env vars `ENGINE_LOCAL`, `GITHUB_REPOSITORY`, `PUBLISH_TOKEN`, and `PR`. It
+prints one JSON object `{"conclusion","summary"}` on stdout; the engine relays
+those to the check run.
+
+**Trust zone distinction — this is NOT a sandboxed check:**
+
+| | Zone | Credential | Sandboxed? |
+|---|---|---|---|
+| Checks | 3 | nothing (read-only default token) | yes — zero credential |
+| Publish hook | 4 (engine-post) | publish token (PR reviews + check runs) | no — trusted, repo-authored |
+
+The publish hook runs **trusted in zone 4** alongside `advance.sh`, holding
+the publish token. It has the authority to post PR reviews and check runs.
+A check (zone 3) has no credentials and is explicitly designed to run code
+that touches agent-influenced data without being able to affect external
+systems. Do not conflate them: "resolved via `resolve_executable`" describes
+the *mechanical* resolution; the trust boundary is entirely different.
+
+For grumpy-review, the publish hook is
+`protocols/grumpy/publish/publish-review-from-evidence.sh`. It reads the
+evidence, posts a REQUEST_CHANGES or APPROVE review (COMMENT fallback if the
+repo setting is off), and returns `{"conclusion":"failure"|"success","summary":"…"}`.
 
 ---
 
@@ -537,14 +609,14 @@ job that holds the state PAT.
      - ✗ iteration 1/3 — Missing: security × src/auth.js; duplication × src/report.js
      - ✅ iteration 2/3 — all checks passed
      ✅ done — review published.
-     [Full state & audit trail](…/blob/agentic-state/grumpy/pr-9.yaml)
+     [Full state & audit trail](…/blob/agentic-state/grumpy-review/pr-9.yaml)
      ```
    - The final **review** (REQUEST_CHANGES / APPROVE) is the deliverable.
 4. **If checks fail**, you don't see half-baked output — the agent silently
    iterates (a second run), and only checked output is ever published. After
    `max_iterations`, the engine posts a clear failure instead of going quiet.
 5. **Inspect the record** any time: the status-comment link, the `agentic-state`
-   branch (`git log agentic-state -- grumpy/pr-<N>.yaml`), or the Actions tab
+   branch (`git log agentic-state -- grumpy-review/pr-<N>.yaml`), or the Actions tab
    (one orchestrator run + one agent run per iteration).
 
 The mental-model shift from plain gh-aw: **the PR/issue is the unit of
@@ -556,8 +628,8 @@ cost, because "waiting" is just a line in a committed file.
 
 By default a review verdict is *advisory* — GitHub won't stop a merge just
 because a review requested changes. To make the protocol a real merge gate, it
-publishes a **check run** named `grumpy-review` on the PR's head commit,
-reflecting protocol state:
+publishes a **check run** named after the protocol id (for grumpy-review: `grumpy-review`)
+on the PR's head commit, reflecting protocol state:
 
 | protocol state | check run | merge box |
 |---|---|---|
@@ -567,10 +639,11 @@ reflecting protocol state:
 | failed after max iterations | `completed` / `failure` | ❌ blocks |
 
 The check run binds to the head SHA. A push mid-review invalidates the old
-verdict, and the `synchronize` trigger re-runs the protocol: `next.sh` notices
-the head SHA changed from the one recorded in state and **resets the instance to
-a fresh review** of the new commit (the prior review stays in the state branch's
-git history). So the gate can never go green on un-reviewed code. The check is
+verdict: the orchestrator maps `pull_request synchronize` → command `reset`,
+which tells `next.sh` to **unconditionally start a fresh review** of the new
+commit (the prior review stays in the state branch's git history). The engine
+does not compare head SHAs itself — trigger policy lives in the orchestrator
+(see §4.6). So the gate can never go green on un-reviewed code. The check is
 emitted with the Actions `GITHUB_TOKEN` (the Checks API is App/Actions-token
 only — a PAT can't create check runs), via `set_check_run` in `lib.sh`, from the
 `plan` job (initial `in_progress`) and `advance.sh` (terminal/iterate states).
