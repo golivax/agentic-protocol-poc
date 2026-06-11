@@ -1,7 +1,15 @@
 protocol: grumpy-review
 instance: pr-23
-state: review
+state: done
 iteration: 1
 gates: {}
 head_sha: 525878fad301ed4a46813a363443cbeba91e154c
-history: []
+history:
+  - iteration: 1
+    agent_run_id: "27359905848"
+    checks:
+      "schema-valid": "pass"
+      "rubric-coverage": "pass"
+      "traces-exist-in-diff": "pass"
+    feedback: ""
+status_comment_id: 4682516481
