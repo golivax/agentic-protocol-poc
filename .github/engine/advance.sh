@@ -87,7 +87,7 @@ run_publish_hook() {
 # and a link to the durable state file. The comment is a PR-specific view; the
 # authoritative record is always agentic-state:<protocol-id>/<instance-key>.yaml.
 render_status_body() {
-  local sf="$1" pr="$2" headline="$3"
+  local sf="$1" headline="$2"   # PID/INSTANCE come from the enclosing scope (as in run_publish_hook)
   local link="https://github.com/$GITHUB_REPOSITORY/blob/agentic-state/$PID/$INSTANCE.yaml"
   # yq → JSON, then jq for the logic (mikefarah yq has no if/then/else or //).
   local lines
@@ -110,13 +110,13 @@ if [ "$ALL_PASS" = "true" ]; then
   CONCL=$(jq -r '.conclusion' <<<"$HOOK")
   CSUM=$(jq -r '.summary' <<<"$HOOK")
   set_check_run "$CR_NAME" "$SHA" completed "$CONCL" "Review complete" "$CSUM"
-  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "✅ done — published.")"
+  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "✅ done — published.")"
   cas_push "$DIR" "$INSTANCE: checks passed at iteration $ITER → published, done"
 elif [ "$ITER" -lt "$MAX" ]; then
   NEXT=$((ITER + 1))
   N="$NEXT" yq -i '.iteration = env(N)' "$SF"
   set_check_run "$CR_NAME" "$SHA" in_progress "" "Review in progress" "Iteration $ITER failed checks; retrying as iteration $NEXT/$MAX."
-  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "⏳ iteration $ITER failed checks — retrying as iteration $NEXT/$MAX…")"
+  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "⏳ iteration $ITER failed checks — retrying as iteration $NEXT/$MAX…")"
   cas_push "$DIR" "$INSTANCE: iteration $ITER failed checks → iteration $NEXT"
   gh_api api "repos/$GITHUB_REPOSITORY/dispatches" \
     -f event_type="protocol-continue" \
@@ -125,6 +125,6 @@ elif [ "$ITER" -lt "$MAX" ]; then
 else
   yq -i '.state = "failed"' "$SF"
   set_check_run "$CR_NAME" "$SHA" completed failure "Review failed" "Could not produce a valid review after $MAX iterations."
-  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "❌ **failed** after $MAX iterations.")"
+  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "❌ **failed** after $MAX iterations.")"
   cas_push "$DIR" "$INSTANCE: iterations exhausted → failed"
 fi
