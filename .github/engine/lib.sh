@@ -8,6 +8,10 @@
 STATE_BRANCH="agentic-state"
 GIT_ID=(-c user.email="engine@agentic-protocol-poc" -c user.name="protocol-engine")
 
+# protocol_id <protocol.json> — the protocol's id (used as the state-path prefix
+# and the status-comment display name). The engine NEVER hardcodes it.
+protocol_id() { jq -r '.name' "$1"; }
+
 # gh wrapper: every GitHub API call in the engine goes through this.
 gh_api() {
   if [ "${ENGINE_LOCAL:-0}" = "1" ]; then
@@ -70,15 +74,14 @@ cas_push() {
   fi
 }
 
-# state_file <dir> <pr> — path to the instance's state file
-state_file() { echo "$1/grumpy/pr-$2.yaml"; }
+# state_file <dir> <protocol-id> <instance-key> — path to the instance's state file
+state_file() { echo "$1/$2/$3.yaml"; }
 
-# upsert_status_comment <state_dir> <pr> <body>
+# upsert_status_comment <state_file> <pr> <body>
 # Single engine-owned PR comment, edited in place; id persisted in state.
 # NOTE: mutates the state file but does NOT push — callers must cas_push afterwards.
 upsert_status_comment() {
-  local dir="$1" pr="$2" body="$3"
-  local sf; sf=$(state_file "$dir" "$pr")
+  local sf="$1" pr="$2" body="$3"
   local cid; cid=$(yq -r '.status_comment_id // ""' "$sf")
   if [ "${ENGINE_LOCAL:-0}" = "1" ]; then
     echo "[ENGINE_LOCAL] status comment pr#$pr: $body" >&2

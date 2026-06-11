@@ -10,18 +10,21 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-DIR="$1"; PR="$2"; PROTO="$3"; VERDICTS="$4"; EVID="$5"
+DIR="$1"; INSTANCE="$2"; PROTO="$3"; VERDICTS="$4"; EVID="$5"
+PID=$(protocol_id "$PROTO")
+AGENT_STATE=$(jq -r '.states[] | select(.kind=="agent") | .id' "$PROTO")
 state_checkout "$DIR"
-SF=$(state_file "$DIR" "$PR")
-MAX=$(jq -r '.states[] | select(.id=="review") | .max_iterations' "$PROTO")
+SF=$(state_file "$DIR" "$PID" "$INSTANCE")
+MAX=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .max_iterations' "$PROTO")
+PR="${PR:-$INSTANCE}"   # GitHub chrome (review/comment/check-run) targets the PR number from env; instance-key fallback keeps local ENGINE_LOCAL runs working
 
 if [ ! -f "$SF" ]; then
   # advance on missing state = recover from lost init
   mkdir -p "$(dirname "$SF")"
-  PR="$PR" yq -n '
-    .protocol = "grumpy-review" |
-    .instance = "pr-" + env(PR) |
-    .state = "review" |
+  PID="$PID" INST="$INSTANCE" AS="$AGENT_STATE" yq -n '
+    .protocol = strenv(PID) |
+    .instance = strenv(INST) |
+    .state = strenv(AS) |
     .iteration = 1 |
     .gates = {} |
     .history = []' > "$SF"
@@ -109,19 +112,19 @@ if [ "$ALL_PASS" = "true" ]; then
   else
     set_check_run "$SHA" completed success "Approved" "Grumpy examined every file × category and found nothing to fix."
   fi
-  upsert_status_comment "$DIR" "$PR" "$(render_status_body "$SF" "$PR" "✅ **done** — review published.")"
+  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "✅ **done** — review published.")"
   cas_push "$DIR" "pr-$PR: checks passed at iteration $ITER → published, done"
 elif [ "$ITER" -lt "$MAX" ]; then
   NEXT=$((ITER + 1))
   N="$NEXT" yq -i '.iteration = env(N)' "$SF"
   set_check_run "$SHA" in_progress "" "Grumpy review in progress" "Iteration $ITER failed checks; retrying as iteration $NEXT/$MAX."
-  upsert_status_comment "$DIR" "$PR" "$(render_status_body "$SF" "$PR" "⏳ iteration $ITER failed checks — retrying as iteration $NEXT/$MAX…")"
+  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "⏳ iteration $ITER failed checks — retrying as iteration $NEXT/$MAX…")"
   cas_push "$DIR" "pr-$PR: iteration $ITER failed checks → iteration $NEXT"
   gh_api api "repos/$GITHUB_REPOSITORY/dispatches" \
     -f event_type="grumpy-continue" -F "client_payload[pr]=$PR"
 else
   yq -i '.state = "failed"' "$SF"
   set_check_run "$SHA" completed failure "Review failed" "Could not produce a valid review after $MAX iterations."
-  upsert_status_comment "$DIR" "$PR" "$(render_status_body "$SF" "$PR" "❌ **failed** after $MAX iterations.")"
+  upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "$PR" "❌ **failed** after $MAX iterations.")"
   cas_push "$DIR" "pr-$PR: iterations exhausted → failed"
 fi

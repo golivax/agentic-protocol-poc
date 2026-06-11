@@ -9,18 +9,20 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-DIR="$1"; PR="$2"; PROTO="$3"; HEAD_SHA="${4:-}"
+DIR="$1"; INSTANCE="$2"; PROTO="$3"; HEAD_SHA="${4:-}"
+PID=$(protocol_id "$PROTO")
+AGENT_STATE=$(jq -r '.states[] | select(.kind=="agent") | .id' "$PROTO")
+MAX=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .max_iterations' "$PROTO")
 state_checkout "$DIR"
-SF=$(state_file "$DIR" "$PR")
-MAX=$(jq -r '.states[] | select(.id=="review") | .max_iterations' "$PROTO")
+SF=$(state_file "$DIR" "$PID" "$INSTANCE")
 
 # Write a fresh-review state file for this PR (init or reset-on-new-head).
 write_fresh_state() {
   mkdir -p "$(dirname "$SF")"
-  PR="$PR" SHA="$HEAD_SHA" yq -n '
-    .protocol = "grumpy-review" |
-    .instance = "pr-" + env(PR) |
-    .state = "review" |
+  PID="$PID" INST="$INSTANCE" AS="$AGENT_STATE" SHA="$HEAD_SHA" yq -n '
+    .protocol = strenv(PID) |
+    .instance = strenv(INST) |
+    .state = strenv(AS) |
     .iteration = 1 |
     .gates = {} |
     .head_sha = strenv(SHA) |
@@ -29,7 +31,7 @@ write_fresh_state() {
 
 if [ ! -f "$SF" ]; then
   write_fresh_state
-  cas_push "$DIR" "init grumpy/pr-$PR"
+  cas_push "$DIR" "init $PID/$INSTANCE"
   jq -n '{action:"run-agent", iteration:1, feedback:"", reason:""}'
   exit 0
 fi
@@ -38,7 +40,7 @@ fi
 STORED_SHA=$(yq -r '.head_sha // ""' "$SF")
 if [ -n "$HEAD_SHA" ] && [ "$HEAD_SHA" != "$STORED_SHA" ]; then
   write_fresh_state
-  cas_push "$DIR" "pr-$PR: new head $HEAD_SHA → fresh review"
+  cas_push "$DIR" "$INSTANCE: new head $HEAD_SHA → fresh review"
   jq -n '{action:"run-agent", iteration:1, feedback:"", reason:"new head commit"}'
   exit 0
 fi
