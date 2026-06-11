@@ -84,6 +84,12 @@ The one principle that ties it together:
 PR, advanced one PR at a time; a PAT for cross-workflow triggering (the default
 `GITHUB_TOKEN` deliberately can't trigger workflows).
 
+> §1–§7 describe the v1 single-agent engine. **§8 adds v2 — fan-out/join:** one
+> protocol phase fanning out to several agents in parallel, then a strict
+> AND-barrier joining them. The same trust zones, evidence-as-contract, and
+> CAS-pushed durable state carry over; the engine grows one env seam (`BRANCH`)
+> rather than a second code path.
+
 ---
 
 ## 3. Architecture
@@ -859,3 +865,226 @@ where workflows run from for `issue_comment` / `repository_dispatch` events.
 
 See `STATUS.md` for what is and isn't implemented, and the spec/plan under
 `agent-factory/docs/superpowers/` for the full design history.
+
+---
+
+## 8. v2 — Fan-out / join (multi-agent review)
+
+Everything above describes a protocol where each phase is **one** agent. v2 adds
+a phase that fans out to **several** agents running in parallel, each with its
+own iterate loop, then **joins** them under a strict barrier before the process
+may advance. The example is `multi-grumpy`: its `review` phase fans out to two
+agents — `grumpy` (the §3 reviewer, reused unchanged) and a thin `security`
+stub — and joins on "both finished."
+
+The design goal is that **v1 stays byte-identical**: the engine grows one
+environment variable, not a second code path.
+
+### 8.1 The `BRANCH` env seam
+
+`next.sh`, `run-checks.sh`, and `advance.sh` all read one new env var,
+`BRANCH` (and `lib.sh` provides the branch-aware `state_file`/`instance_file`
+helpers they pass it to):
+
+- **`BRANCH` empty/unset** → the exact v1 single-agent path (the regression
+  guard — the whole v1 test suite passes unchanged).
+- **`BRANCH=<id>` set** → the same scripts operate on **one fan-out branch**:
+  its agent unit, its check list, its publish hook, and its own state file.
+
+A "branch" here is a *parallel agent leg* of a fan-out phase (the `grumpy` leg,
+the `security` leg) — unrelated to a git branch. There is no fork in the engine;
+each script simply reads one extra variable and selects the per-branch unit.
+
+### 8.2 The `fanout` and `join` state kinds
+
+A new protocol, `protocols/multi-grumpy/protocol.json`, introduces two state
+kinds alongside v1's `agent`/`deterministic`. The chosen design (**Approach C —
+data-driven**) is that each branch **reuses the v1 single-agent iterate loop
+verbatim**; the only genuinely new logic is the fan-out planner and the join
+barrier.
+
+```jsonc
+{
+  "name": "multi-grumpy",
+  "categories": ["naming","error-handling","performance","duplication","security"],
+  "states": [
+    { "id": "review",
+      "kind": "fanout",                 // fan out to N parallel agent branches
+      "branches": [
+        { "id": "grumpy",   "workflow": "grumpy-agent",
+          "evidence": "grumpy.evidence.schema.json",   "max_iterations": 3,
+          "checks": [ {"run":"schema-valid"}, {"run":"rubric-coverage"},
+                      {"run":"traces-exist-in-diff"} ],
+          "publish": "publish-grumpy" },
+        { "id": "security", "workflow": "security-agent",
+          "evidence": "security.evidence.schema.json", "max_iterations": 3,
+          "checks": [ {"run":"schema-valid"},
+                      {"run":"traces-exist-in-diff"} ], // no rubric-coverage
+          "publish": "publish-security" }
+      ],
+      "next": "join" },
+    { "id": "join",
+      "kind": "join",                   // strict AND-barrier over review's branches
+      "of": "review",
+      "next": "done" }                  // advance only when every branch is `done`
+  ]
+}
+```
+
+Each branch carries its **own** `workflow`, `evidence` schema, `max_iterations`,
+`checks`, and `publish` hook — so branches can differ. Here the **security branch
+drops `rubric-coverage`** (it has no fixed file×category rubric); it runs only
+`schema-valid` + `traces-exist-in-diff`.
+
+### 8.3 Per-branch state + the instance file
+
+Each branch gets its own state file, byte-shaped exactly like a v1 single-agent
+state, plus one shared instance file per PR:
+
+```
+multi-grumpy/pr-<N>/grumpy.yaml      # the grumpy branch (looks like a v1 state)
+multi-grumpy/pr-<N>/security.yaml    # the security branch
+multi-grumpy/pr-<N>/_instance.yaml   # shared: { head_sha, joined: false }
+```
+
+A branch is **active** when its state file's `.state == review` (the fan-out
+state id); **terminal** is `done`/`failed`. Crucially, **each branch writes only
+its own file**, so the v1 compare-and-swap invariant (§2.5) holds with no write
+contention even though the legs run concurrently — there is never a two-writer
+race on a single file. The `_instance.yaml` `joined` flag makes the join step
+idempotent (§8.5).
+
+### 8.4 Eager publish vs. the strict join gate (the hybrid), and the two axes
+
+Two things that v1 collapsed into one are deliberately separated in v2:
+
+- **Eager publish** — each branch publishes its review the **moment it reaches
+  `done`** (grumpy 😤, security 🔒), independently of the other. You see results
+  as they land, not all-or-nothing at the end.
+- **The gate is the join, not the publish.** The aggregate `multi-grumpy`
+  check-run goes green **only when every branch reaches `done`**. A branch that
+  exhausts to `failed` publishes nothing and leaves the aggregate **red**
+  ("Review incomplete") → merge loudly blocked. A missing review is *always* a
+  red gate, never an absent-but-green one — there is no silent gap.
+
+This rests on keeping two axes orthogonal:
+
+| | meaning | example |
+|---|---|---|
+| **Process** (`done` / `failed`) | did the agent produce evidence that passed *its* checks within `max_iterations`? | exhausted security branch → `failed` |
+| **Verdict** (APPROVE / CHANGES_REQUESTED) | what did the (successful) review *conclude*? | grumpy found 5 issues → CHANGES_REQUESTED |
+
+A valid review **with comments** is a process **success**, published normally;
+its per-branch check-run conclusion `failure` then means *"changes requested,"*
+**not** process failure. **The strict join gate is about the process axis only.**
+
+### 8.5 `join.sh` and the serialized join workflow
+
+`advance.sh`, when a branch reaches a terminal state, emits a
+`repository_dispatch: protocol-join` (and now also carries `client_payload[branch]`
+on its `protocol-continue` iterate dispatch). That dispatch fires a dedicated
+workflow:
+
+- **`.github/workflows/protocol-join.yml`** — runs **serialized** (concurrency
+  group `join-<instance>`, `cancel-in-progress: false`) so two near-simultaneous
+  branch completions can't double-evaluate the barrier.
+- **`engine/join.sh`** (new) — reads **every** branch state file; once all are
+  terminal **and** `_instance.yaml.joined` is still false, it sets the aggregate
+  check-run (`success` iff every branch is `done`, else `failure`), re-renders
+  the status comment, flips `joined: true`, and CAS-pushes. It is **idempotent**:
+  a second join run sees `joined: true` and no-ops.
+
+### 8.6 Three check-runs
+
+| check-run | kind | role |
+|---|---|---|
+| `multi-grumpy/grumpy` | per-branch | informational — the grumpy leg's outcome |
+| `multi-grumpy/security` | per-branch | informational — the security leg's outcome |
+| `multi-grumpy` | aggregate | **the required gating check** |
+
+`plan` marks the aggregate `in_progress`; `join.sh` completes it. Make the
+aggregate `multi-grumpy` the required status check (same mechanism as §5.1).
+
+### 8.7 The orchestrator as a branch matrix — and why artifacts, not job outputs
+
+`orchestrator.yml` is rewritten so the agent-bearing jobs run as a matrix over
+branches:
+
+- **`plan`** runs `next.sh` **unbranched** for `pull_request`/`issue_comment`
+  (→ action `run-fanout`, `branches: [grumpy, security]`), and **branched**
+  (`BRANCH=<payload.branch> next.sh … continue`) for `repository_dispatch:
+  protocol-continue` (→ exactly one branch).
+- **`dispatch` → `checks` → `advance`** become a `strategy.matrix.branch`
+  (`fail-fast: false`), gated `if: needs.plan.outputs.branches != '[]'`. Each leg
+  carries `BRANCH=<branch>` end-to-end and preserves the four v1 trust zones
+  (plan = engine-pre; dispatch = agent-trigger; checks = read-only ground truth,
+  **no write tokens**; advance = sole state writer + publisher).
+
+> **Why per-branch data flows through branch-named ARTIFACTS, not job `outputs`.**
+> A GHA matrix's legs **share a single `outputs` map** for the job — the last leg
+> to finish clobbers the others. So the agent run-id and the verdicts can't be
+> passed leg→leg as job outputs. Instead each leg uploads **branch-named
+> artifacts** (`runmeta-<branch>`, `verdicts-<branch>`) and the downstream leg
+> downloads its own. This is the central plumbing decision of the v2 orchestrator.
+
+### 8.8 The security agent and its sabotage knob
+
+`.github/workflows/security-agent.md` (compiled to `security-agent.lock.yml`) is
+a thin gh-aw clone of grumpy-agent that emits grumpy-shaped evidence tagged
+`category:"security"`. Its sabotage knob differs from grumpy's on purpose, to
+demonstrate the red gate:
+
+- **grumpy:** iteration-1-only sabotage → fabricates once, then **self-recovers**
+  and reaches `done`.
+- **security:** **persistent** sabotage → while the `poc:sabotage` label is
+  present it fabricates a finding **every** iteration → fails
+  `traces-exist-in-diff` → exhausts to `failed`.
+
+The orchestrator's sabotage step now reports the label regardless of iteration;
+each agent self-decides what to do with it.
+
+### 8.9 The fan-out lifecycle
+
+```
+event (pull_request open/push, /grumpy comment)
+   │  plan (UNBRANCHED): next.sh → run-fanout, branches=[grumpy, security]
+   ▼
+review  ── fan out ──┬─────────────────────────┬──────────────────────────
+                     │ branch: grumpy           │ branch: security
+                     ▼  (v1 iterate loop)       ▼  (v1 iterate loop, no rubric-coverage)
+            dispatch→checks→advance     dispatch→checks→advance
+            (BRANCH=grumpy)             (BRANCH=security)
+                     │ on terminal:             │ on terminal:
+                     │  eager-publish if `done`  │  eager-publish if `done`
+                     │  + repository_dispatch    │  + repository_dispatch
+                     │    protocol-join          │    protocol-join
+                     └────────────┬─────────────┘
+                                  ▼  protocol-join.yml (SERIALIZED, concurrency join-<instance>)
+                              [join] join.sh: all branches terminal & not joined?
+                                  • all `done`  → aggregate `multi-grumpy` = success (green gate)
+                                  • any `failed`→ aggregate `multi-grumpy` = failure (red gate)
+                                  flip _instance.yaml joined:true, CAS-push (idempotent)
+                                  ▼
+                                done
+```
+
+Each branch's loop is the §3.3 v1 lifecycle verbatim, just with `BRANCH` set;
+the only new states are the `fanout` entry (one `plan`, N legs) and the `join`
+barrier.
+
+### 8.10 Concurrency caveat
+
+Fan-out **within one PR** is safe even though both agents run concurrently,
+because `grumpy` and `security` are **distinct workflow files** — each branch's
+"newest run since T0" run resolver only ever sees its own workflow's runs, so the
+two legs can't misattribute each other's runs. The unsolved case is the same one
+as v1 (deviation #11): **concurrent PRs of the *same* workflow**, which share a
+global concurrency group. That correlation-id fix is the **v3** milestone (see
+`BACKLOG.md`); v2 was live-verified one PR at a time (PR #25 happy path, PR #28
+sabotage red gate — see `STATUS.md`).
+
+### 8.11 New tests
+
+`tests/test-join.sh` (join aggregation + idempotency) and
+`tests/test-fanout-e2e.sh` (local end-to-end: fanout start → advance ×2 → join
+success) bring the local suite to **6 files / 122 assertions**, all green.

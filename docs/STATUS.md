@@ -1,8 +1,10 @@
-# PoC v1 — Status & Deviations
+# PoC — Status & Deviations
 
-This records what the v1 PoC actually is, measured against the original design
+This records what the PoC actually is, measured against the original design
 spec (`agent-factory/docs/superpowers/specs/2026-06-10-...`) and plan. Read it
 before extending the system so you know which "missing" pieces are deliberate.
+The v1 sections come first; the **v2 — multi-grumpy fan-out/join** section at the
+end records the multi-agent milestone (both are live-verified).
 
 ## Proven end-to-end (real GitHub Actions)
 
@@ -72,6 +74,8 @@ before extending the system so you know which "missing" pieces are deliberate.
     Correct only one-PR-at-a-time: the gh-aw agent workflow uses a *global*
     concurrency group, so two PRs reviewed concurrently could misattribute
     runs. A production fix stamps a correlation id into the evidence artifact.
+    (Still deferred — now the **v3** milestone; see `BACKLOG.md`. v2's fan-out
+    *within* one PR is safe without it — see the v2 section's concurrency note.)
 
 ## Post-v1 enhancements (added after the demos)
 
@@ -167,3 +171,130 @@ zone 4 (engine-post) holding the publish token; it is not a sandboxed check.
 - Workflows run from the **default branch** for `issue_comment` /
   `repository_dispatch` — keep `orchestrator.yml` and the agent lock on `main`,
   and never commit them onto a demo PR branch (pollutes the reviewed diff).
+
+---
+
+# v2 — multi-grumpy fan-out/join
+
+v2 adds **multi-agent review**: a new `multi-grumpy` protocol whose single
+`review` phase **fans out** to two independent gh-aw workflows — `grumpy` (the
+v1 general reviewer, reused verbatim) and a thin `security` stub — each with its
+own bounded iterate loop and eager publish, then **joins** them under a strict
+AND-barrier that gates the merge. It is live-verified (PRs #25 and #28, below)
+and built so the v1 single-agent path stays byte-identical (the regression guard).
+
+## What shipped
+
+- **The `BRANCH` engine seam.** `next.sh`, `run-checks.sh`, and
+  `advance.sh` all read a `BRANCH` env var (`lib.sh` provides the branch-aware
+  `state_file`/`instance_file` helpers they pass it to). **Empty/unset = the original v1
+  single-agent grumpy path, byte-identical** (this is the regression guard —
+  the whole v1 suite still passes unchanged). **Set = operate on one fan-out
+  branch:** its agent unit, its check list, its publish hook, and its own
+  per-branch state file. No new code path forks the engine; the same scripts
+  read one extra variable.
+
+- **New `fanout` + `join` protocol kinds (Approach C — data-driven).** Each
+  branch reuses the v1 single-agent iterate loop *verbatim*; the only new logic
+  is the fan-out planner and the join barrier. `protocols/multi-grumpy/protocol.json`
+  has a `review` state `kind:"fanout"` with a `branches[]` array (each branch:
+  `id`, `workflow`, `evidence`, `max_iterations`, `checks`, `publish`) and a
+  `join` state `kind:"join"`. The **security branch drops the `rubric-coverage`
+  check** — it runs only `schema-valid` + `traces-exist-in-diff` (it has no
+  fixed file×category rubric to cover).
+
+- **Per-branch state layout.** `multi-grumpy/pr-N/<branch>.yaml` — one file per
+  branch, each byte-shaped like v1's single-agent state — plus a shared
+  `multi-grumpy/pr-N/_instance.yaml` (`head_sha`, `joined` flag). A branch is
+  "active" when its state file's `.state == review` (the fan-out state id);
+  terminal is `done`/`failed`. **No write contention:** each branch writes only
+  its own file, so the v1 `cas_push` rebase-once invariant still holds under the
+  matrix.
+
+- **Eager publish ≠ gate (the hybrid).** Each branch publishes its review the
+  moment it reaches `done` (grumpy 😤, security 🔒), independently of the other.
+  The phase **gate** is a separate strict AND-join: the aggregate `multi-grumpy`
+  check-run goes green **only when every branch reaches `done`**. A branch that
+  exhausts to `failed` publishes nothing and leaves the aggregate **red**
+  ("Review incomplete") → merge loudly blocked. There is no silent gap: a missing
+  review always shows as a red gate, never as an absent-but-green one.
+
+- **Axis separation (process outcome vs. review verdict).** `done`/`failed` is
+  the **process** axis — did the agent produce evidence that passed its checks
+  within `max_iterations`. The review **verdict** (issues-found → CHANGES_REQUESTED
+  vs. none-found → APPROVE) is orthogonal. A valid review *with comments* is a
+  process **success** and is published normally; its per-branch check-run
+  conclusion `failure` then means "changes requested," **not** process failure.
+  The strict join gate cares only about the process axis.
+
+- **Three check-runs.** Two informational per-branch runs `multi-grumpy/grumpy`
+  and `multi-grumpy/security`, plus the aggregate `multi-grumpy` — the **required
+  gating check**. `plan` marks the aggregate `in_progress`; `join.sh` completes
+  it (success iff all branches `done`, else failure).
+
+- **`join.sh`** (new engine script). Reads every branch state file; once all are
+  terminal and `_instance.yaml` is not yet joined, sets the aggregate check-run,
+  renders the status comment, flips `joined`, and CAS-pushes. **Idempotent.** It
+  runs in a dedicated **serialized** workflow `.github/workflows/protocol-join.yml`
+  (concurrency `join-<instance>`, `cancel-in-progress: false`), fired by a
+  `repository_dispatch: protocol-join` that `advance.sh` emits whenever a branch
+  reaches a terminal state. `advance.sh` also now carries `client_payload[branch]`
+  on its `protocol-continue` iterate dispatch.
+
+- **Orchestrator = branch matrix.** `.github/workflows/orchestrator.yml` was
+  rewritten. `plan` runs `next.sh` **unbranched** for `pull_request`/`issue_comment`
+  (→ action `run-fanout`, `branches=[grumpy,security]`) and **branched**
+  (`BRANCH=<payload.branch> next.sh … continue`) for `repository_dispatch:
+  protocol-continue` (→ one branch). `dispatch`/`checks`/`advance` are a
+  `strategy.matrix.branch` (`fail-fast: false`), gated `if: needs.plan.outputs.branches
+  != '[]'`. **Per-branch data (agent run-id, verdicts) flows between the matrixed
+  jobs via branch-named ARTIFACTS** (`runmeta-<branch>`, `verdicts-<branch>`),
+  **not** job `outputs` — because GHA matrix legs share one outputs map and the
+  last leg clobbers the others. The four v1 trust zones are preserved per leg
+  (plan = engine-pre; dispatch = agent-trigger; checks = read-only ground truth,
+  **no write tokens**; advance = sole state writer + publisher).
+
+- **The security agent** (`.github/workflows/security-agent.md` → compiled
+  `security-agent.lock.yml`) is a thin gh-aw clone of grumpy-agent that emits
+  grumpy-shaped evidence with `category:"security"`. It has a **persistent
+  sabotage knob:** while the `poc:sabotage` label is present it fabricates a
+  finding **every iteration** (→ fails `traces-exist-in-diff` → exhausts to
+  `failed`). This contrasts with grumpy's **iteration-1-only** knob (sabotage
+  then self-recover). The orchestrator's sabotage step now reports the label
+  regardless of iteration; each agent self-decides what to do with it.
+
+- **New tests.** `tests/test-join.sh` (join aggregation + idempotency) and
+  `tests/test-fanout-e2e.sh` (local end-to-end: fanout start → advance ×2 → join
+  success). The full local suite is now **6 files / 122 assertions, all green**
+  (the four v1 files — `test-checks.sh`, `test-engine.sh`, `test-runchecks.sh`,
+  `test-publish.sh` — plus these two).
+
+## Live verification
+
+- **PR #25 — happy path.** Both branches reached `done` on iteration 1; the
+  grumpy 😤 and security 🔒 reviews were **both posted eagerly** with inline
+  line-anchored comments; two serialized Protocol Join runs fired (idempotent,
+  `joined:true`); the aggregate `multi-grumpy` check went **success** (green
+  gate). Both per-branch check-runs were `failure` = changes-requested (axis
+  separation in action).
+  <https://github.com/golivax/agentic-protocol-poc/pull/25>
+
+- **PR #28 — sabotage (`poc:sabotage` label).** grumpy sabotaged on iteration 1,
+  self-recovered on iteration 2 → `done` → **published** its 😤 review (5 issues)
+  = a partial publish; security emitted the fabricated finding on all 3
+  iterations → exhausted to `state:failed` (iteration 3) → posted **no** review;
+  the aggregate `multi-grumpy` went **failure** ("Review incomplete") = red gate,
+  merge loudly blocked. This is the hybrid policy's money-shot: one branch can
+  succeed and publish while the gate still correctly blocks on the other's
+  failure, with no silent gap.
+  <https://github.com/golivax/agentic-protocol-poc/pull/28>
+
+## Concurrency — still deferred (now v3)
+
+The correlation-id run resolver (v1 deviation #11) is **still deferred — now the
+v3 milestone** (see `BACKLOG.md`). v2 does **not** need it: fan-out **within one
+PR** is safe because grumpy and security are **distinct workflow files**, so each
+branch's "newest run since T0" resolver only ever sees its own workflow's runs —
+they can't misattribute to each other. The unsolved case remains **concurrent
+PRs of the *same* workflow**, which share a global concurrency group; that is
+the correlation-id problem deferred to v3. v2 was live-verified one PR at a time.

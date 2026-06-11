@@ -3,6 +3,62 @@
 Running list of things we've decided to do but haven't yet. For "what is / isn't
 implemented today" see `STATUS.md`.
 
+The next two milestones are **v3 = correlation-id run resolver** and
+**v4 = human-in-the-loop (approval gate)**; both are written up first below.
+The remaining entries are smaller, unsequenced candidates.
+
+## v3 — Correlation-id run resolver (next milestone)
+
+**What:** Stamp a correlation id into each agent dispatch and the evidence
+artifact it returns, so the orchestrator resolves *the exact run it launched*
+instead of guessing "newest `workflow_dispatch` run of this workflow since T0".
+
+**Why (the blocker it removes):** Today the agent run-id resolver is correct only
+**one PR at a time per workflow** (v1 deviation #11). The gh-aw agent workflow
+uses a *global* concurrency group, so two PRs reviewed concurrently by the **same**
+workflow could misattribute runs. v2's fan-out *within* one PR is already safe —
+grumpy and security are **distinct** workflow files, so each branch's resolver
+only sees its own workflow's runs (see `STATUS.md` §"v2 … Concurrency"). What v3
+fixes is the remaining case: **concurrent PRs of the same workflow.** Until then,
+the PoC is live-verified one PR at a time.
+
+**Sketch:**
+- `plan`/`dispatch` generate a correlation id (e.g. `${PR}-${branch}-${iteration}-${uuid}`)
+  and pass it into the `aw_context` the agent materializes.
+- The agent echoes it back into `evidence.json` (and/or the artifact name).
+- The run resolver matches on the correlation id rather than time-since-T0; the
+  `checks` job refuses an artifact whose id doesn't match (fail closed).
+- Tests: a resolver unit that rejects a mismatched/foreign run.
+
+**Status:** not started — the designated v3 milestone.
+
+---
+
+## v4 — Human-in-the-loop (approval gate)
+
+**What:** A protocol state kind that **pauses** for a human decision (approve /
+request-changes / reject) before the engine advances past it — the first use of
+the `gates: {}` field already reserved in the state model.
+
+**Why:** v1/v2 gate purely on deterministic checks (form) and an agent's verdict;
+there is no point where a human's explicit sign-off is a *required transition*.
+A human gate makes "waiting for a person" a first-class, zero-cost protocol state
+(a line in the committed state file), consistent with the "PR is the unit of
+existence; runs are heartbeats" model — a protocol can sit gated for weeks.
+
+**Sketch:**
+- A `kind:"gate"` state in `protocol.json`; the engine emits a pending check-run
+  and records the gate as open in `gates`.
+- A trigger (a `/approve` comment, a review submission, or a label) maps — in the
+  orchestrator, per the command seam — to a `resolve-gate` command that records
+  the decision and outcome in the state file and advances (or halts) accordingly.
+- Reuse the existing trust-zone split: the human's input is an *event* (a
+  wake-up), and `advance.sh` remains the sole state writer.
+
+**Status:** not started — the designated v4 milestone.
+
+---
+
 ## Configurable feedback scope (last vs. cumulative)
 
 **What:** Make the feedback injected into a retry's prompt configurable — either
@@ -85,4 +141,4 @@ the `grumpy-review` name has reported at least once, so it's selectable.
 
 ---
 
-## (See also `STATUS.md` and the v1 deviation list for other candidate work: restore the agent egress firewall for the now-public endpoint, correlation-id run resolver.)
+## (See also `STATUS.md` and the v1 deviation list for other candidate work: restore the agent egress firewall for the now-public endpoint. The correlation-id run resolver is now the **v3** milestone, above.)
