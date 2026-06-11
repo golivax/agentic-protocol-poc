@@ -43,6 +43,25 @@ Q=$(run_local /tmp/ev-clean.json)
 check "clean → APPROVE"                  '.event == "APPROVE"' "$Q"
 check "clean → no comments"              '(.comments | length) == 0' "$Q"
 
+# --- publish-security: REQUEST_CHANGES body uses the security chrome ---
+# run_local_security: captures the ENGINE_LOCAL POST payload JSON from stderr (same
+# pattern as run_local above — 2>&1 1>/dev/null swaps streams so stderr is piped).
+run_local_security() {
+  ENGINE_LOCAL=1 GITHUB_REPOSITORY=acme/repo PR=8 \
+    protocols/multi-grumpy/publish/publish-security.sh "$1" pr-8 2>&1 1>/dev/null \
+    | sed -n '/^{/,$p'
+}
+S=$(run_local_security tests/fixtures/evidence-security.json)
+check "publish-security: event is REQUEST_CHANGES"  '.event == "REQUEST_CHANGES"'   "$S"
+check "publish-security: body has security heading" '(.body | test("🔒"))'          "$S"
+check "publish-security: has one inline comment"    '(.comments | length) == 1'     "$S"
+
+# The hook prints {conclusion,summary} on stdout; capture that separately.
+SEC_STDOUT=$(ENGINE_LOCAL=1 GITHUB_REPOSITORY=acme/repo PR=8 \
+  protocols/multi-grumpy/publish/publish-security.sh tests/fixtures/evidence-security.json pr-8 2>/dev/null)
+check "publish-security: conclusion=failure"  '.conclusion == "failure"'  "$SEC_STDOUT"
+check "publish-security: summary non-empty"   '(.summary | length) > 0'  "$SEC_STDOUT"
+
 echo "-----"
 echo "publish tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

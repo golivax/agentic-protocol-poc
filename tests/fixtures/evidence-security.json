@@ -1,0 +1,21 @@
+{
+  "files": [
+    {
+      "path": "src/auth.js",
+      "verdicts": [
+        {
+          "category": "security",
+          "verdict": "issues-found",
+          "findings": [
+            {
+              "existing_code": "const token = req.query.token;",
+              "comment": "Reflected secret in query string; use an Authorization header and validate server-side.",
+              "side": "RIGHT",
+              "line": 12
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
