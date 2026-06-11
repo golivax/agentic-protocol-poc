@@ -31,6 +31,7 @@ def parse_diff(path):
     """
     maps = {}
     cur = None
+    minus_path = None
     in_hunk = False
     right_no = left_no = 0
     hunk_id = -1
@@ -39,13 +40,28 @@ def parse_diff(path):
             line = raw.rstrip("\n")
             if line.startswith("diff --git"):
                 cur, in_hunk = None, False
-                continue
-            if line.startswith("+++ b/"):
-                cur = line[6:]
-                maps.setdefault(cur, {"RIGHT": {}, "LEFT": {}})
-                in_hunk = False
+                minus_path = None
                 continue
             if line.startswith("--- "):
+                minus = line[4:]
+                if minus == "/dev/null":
+                    minus_path = None
+                elif minus.startswith("a/"):
+                    minus_path = minus[2:]
+                else:
+                    minus_path = minus
+                in_hunk = False
+                continue
+            if line.startswith("+++ "):
+                plus = line[4:]
+                if plus == "/dev/null":
+                    cur = minus_path  # deleted file: key it under its old path
+                elif plus.startswith("b/"):
+                    cur = plus[2:]
+                else:
+                    cur = plus
+                if cur is not None:
+                    maps.setdefault(cur, {"RIGHT": {}, "LEFT": {}})
                 in_hunk = False
                 continue
             m = HUNK_RE.match(line)

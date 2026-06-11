@@ -113,6 +113,17 @@ else
   FAIL=$((FAIL+1)); echo "FAIL: traces-exist-in-diff missing-args rc=$rc out=$out"
 fi
 
+DIFF3=$FX/diff-pr3-filedelete.txt
+FILES3=$FX/changed-files-pr3.txt
+
+# deleted file: a LEFT anchor on a removed line resolves (regression guard):
+jq -n '{files:[{path:"src/legacy.js",verdicts:[{category:"naming",verdict:"issues-found",findings:[{existing_code:"function legacy(a) {",comment:"bad name",side:"LEFT",line:1}]}]}]}' > /tmp/ev-del-left.json
+assert_check traces-exist-in-diff.py true "" /tmp/ev-del-left.json "$DIFF3" "$FILES3"
+
+# deleted file: an examined identifier from the removed code resolves:
+jq -n '{files:[{path:"src/legacy.js",verdicts:[{category:"naming",verdict:"none-found",examined:["legacy"]}]}]}' > /tmp/ev-del-exam.json
+assert_check traces-exist-in-diff.py true "" /tmp/ev-del-exam.json "$DIFF3" "$FILES3"
+
 echo "-----"
 echo "checks tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
