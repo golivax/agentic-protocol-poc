@@ -35,8 +35,8 @@ resolve_executable() {
   for g in "$sdir/$name" "$sdir/$name".*; do
     [ -f "$g" ] && matches+=("$g")
   done
-  if   [ "${#matches[@]}" -eq 0 ]; then printf 'ERR\tno executable found (looked for %s or %s.*)\n' "$name" "$name"
-  elif [ "${#matches[@]}" -gt 1 ]; then printf 'ERR\tambiguous: multiple files match %s.* (%s); use an explicit "exec"\n' "$name" "${matches[*]}"
+  if   [ "${#matches[@]}" -eq 0 ]; then printf 'ERR\tno executable found (looked for %s/%s or %s/%s.*)\n' "$sdir" "$name" "$sdir" "$name"
+  elif [ "${#matches[@]}" -gt 1 ]; then printf 'ERR\tambiguous: multiple files match %s/%s.* (%s); use an explicit "exec"\n' "$sdir" "$name" "${matches[*]}"
   else printf 'OK\t%s\n' "${matches[0]}"
   fi
 }

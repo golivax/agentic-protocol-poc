@@ -53,12 +53,13 @@ chk "runner: crashing check → fail verdict" '[ "$(jq -r ".results[0].pass" <<<
 # --- resolve_executable (shared resolver) direct unit checks ---
 source .github/engine/lib.sh
 PDIR="protocols/grumpy"
+TAB=$'\t'   # split helper: resolve_executable returns "<kind>\t<rest>"
 R=$(resolve_executable "$PDIR/checks" "schema-valid" "$PDIR" "")
-chk "resolve: finds checks/schema-valid.sh" '[ "${R%%$'"'"'\t'"'"'*}" = OK ] && grep -q "checks/schema-valid.sh" <<<"$R"'
+chk "resolve: finds checks/schema-valid.sh" '[ "${R%%$TAB*}" = OK ] && grep -q "checks/schema-valid.sh" <<<"$R"'
 R=$(resolve_executable "$PDIR/checks" "does-not-exist" "$PDIR" "")
-chk "resolve: missing → ERR" '[ "${R%%$'"'"'\t'"'"'*}" = ERR ]'
+chk "resolve: missing → ERR" '[ "${R%%$TAB*}" = ERR ]'
 R=$(resolve_executable "$PDIR/checks" "ignored" "$PDIR" "checks/rubric-coverage.py")
-chk "resolve: explicit exec resolves" '[ "${R%%$'"'"'\t'"'"'*}" = OK ] && grep -q "rubric-coverage.py" <<<"$R"'
+chk "resolve: explicit exec resolves" '[ "${R%%$TAB*}" = OK ] && grep -q "rubric-coverage.py" <<<"$R"'
 
 echo "-----"
 echo "run-checks tests: $PASS passed, $FAIL failed"

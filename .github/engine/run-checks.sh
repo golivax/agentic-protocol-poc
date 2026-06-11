@@ -31,6 +31,8 @@ while IFS= read -r entry; do
 
   path=""
   res=$(resolve_executable "$PDIR/checks" "$name" "$PDIR" "$ex")
+  # resolve_executable returns "OK\t<path>" or "ERR\t<reason>"; split on the first
+  # tab (resolved paths are git-managed and never contain a literal tab).
   kind=${res%%$'\t'*}; rest=${res#*$'\t'}
   if [ "$kind" = "ERR" ]; then
     V=$(fail_verdict "$name" "$rest")
