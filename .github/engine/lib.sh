@@ -74,8 +74,16 @@ cas_push() {
   fi
 }
 
-# state_file <dir> <protocol-id> <instance-key> — path to the instance's state file
-state_file() { echo "$1/$2/$3.yaml"; }
+# state_file <dir> <protocol-id> <instance-key> [branch]
+#   no branch → single-agent path        <dir>/<pid>/<instance>.yaml
+#   branch    → fan-out per-branch path   <dir>/<pid>/<instance>/<branch>.yaml
+state_file() {
+  if [ -n "${4:-}" ]; then echo "$1/$2/$3/$4.yaml"; else echo "$1/$2/$3.yaml"; fi
+}
+
+# instance_file <dir> <protocol-id> <instance-key> — shared per-instance bookkeeping
+# (head_sha, status_comment_id, joined flag) for a fan-out instance.
+instance_file() { echo "$1/$2/$3/_instance.yaml"; }
 
 # upsert_status_comment <state_file> <pr> <body>
 # Single engine-owned PR comment, edited in place; id persisted in state.

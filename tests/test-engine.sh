@@ -167,6 +167,14 @@ rm -f "$STUB_HOOK" "$STUB_PROTO"; trap - EXIT
 check "advance: relays hook conclusion" 'grep -q "conclusion=success" <<<"$OUT"'
 check "advance: relays hook summary"    'grep -q "STUB-RELAYED-OK" <<<"$OUT"'
 
+# --- lib: branch-aware state/instance paths (single-agent form unchanged) ---
+check "state_file single-agent form unchanged" \
+  '[ "$(state_file /s grumpy-review pr-5)" = "/s/grumpy-review/pr-5.yaml" ]'
+check "state_file branch form nests under instance dir" \
+  '[ "$(state_file /s multi-grumpy pr-5 grumpy)" = "/s/multi-grumpy/pr-5/grumpy.yaml" ]'
+check "instance_file points at _instance.yaml" \
+  '[ "$(instance_file /s multi-grumpy pr-5)" = "/s/multi-grumpy/pr-5/_instance.yaml" ]'
+
 echo "-----"
 echo "engine tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
