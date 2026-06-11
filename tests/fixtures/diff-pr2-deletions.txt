@@ -1,0 +1,18 @@
+diff --git a/src/cache.js b/src/cache.js
+index 1111111..2222222 100644
+--- a/src/cache.js
++++ b/src/cache.js
+@@ -3,7 +3,7 @@ const store = {};
+ function get(key) {
+   return store[key];
+ }
+-function set(key, val) {
++function set(key, value) {
+   store[key] = val;
+ }
+ module.exports = { get, set };
+@@ -20,3 +20,4 @@ function clear() {
+   store = {};
+ }
++function size() { return Object.keys(store).length; }
+ module.exports.clear = clear;

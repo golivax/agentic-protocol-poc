@@ -74,7 +74,8 @@ Read `/tmp/gh-aw/task-context.json`. It contains:
   { "path": "src/auth.js", "verdicts": [
     { "category": "naming", "verdict": "issues-found",
       "findings": [ { "existing_code": "function f(x, y) {",
-                      "comment": "Seriously? 'f'? In 2026?" } ] },
+                      "comment": "Seriously? 'f'? In 2026?",
+                      "side": "RIGHT", "line": 1 } ] },
     { "category": "security", "verdict": "none-found",
       "examined": ["login", "validateToken"] } ] } ] }
 ```
@@ -86,6 +87,20 @@ Read `/tmp/gh-aw/task-context.json`. It contains:
 - Every `existing_code` MUST be copied verbatim from the diff — a contiguous
   snippet, exact characters. The traces-exist-in-diff check rejects anything
   it cannot find in the diff it fetches itself.
+- Every `issues-found` finding MUST carry a line anchor: `side` (`RIGHT` for an
+  added or unchanged line in the new file, `LEFT` for a removed line) and `line`
+  (the line number that snippet sits on). For a multi-line snippet, also set
+  `start_line` (the first line) — `line` is then the last line; both must be on
+  the same `side` and inside the same diff hunk. Omit `start_line` for a single
+  line.
+- How to find line numbers: each diff hunk starts with `@@ -OLD,c +NEW,d @@`.
+  Counting from there: `+` lines advance only the RIGHT (new-file) number; `-`
+  lines advance only the LEFT (old-file) number; context (unprefixed) lines
+  advance BOTH.
+  Your `line` is the RIGHT number for `side: RIGHT`, the LEFT number for
+  `side: LEFT`. The traces-exist-in-diff check rejects any finding whose
+  `existing_code` does not sit exactly at the claimed line(s) — a wrong anchor is
+  rejected just like a fabricated snippet, and you will be asked to fix it.
 - Every `examined` entry MUST be a function or variable name that literally
   appears in that file's diff hunks. These prove you actually read the file.
 - Do NOT invent findings to look busy. `none-found` everywhere is a perfectly

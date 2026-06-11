@@ -1,0 +1,10 @@
+diff --git a/src/legacy.js b/src/legacy.js
+deleted file mode 100644
+index 3333333..0000000
+--- a/src/legacy.js
++++ /dev/null
+@@ -1,4 +0,0 @@
+-function legacy(a) {
+-  return a * 2;
+-}
+-module.exports = legacy;
