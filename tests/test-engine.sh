@@ -175,6 +175,15 @@ check "state_file branch form nests under instance dir" \
 check "instance_file points at _instance.yaml" \
   '[ "$(instance_file /s multi-grumpy pr-5)" = "/s/multi-grumpy/pr-5/_instance.yaml" ]'
 
+# --- next.sh branch-scoped continue resumes a single branch's state file ---
+state_checkout "$WORK/nb1"; mkdir -p "$WORK/nb1/multi-grumpy/pr-77"
+yq -n '.protocol="multi-grumpy"|.instance="pr-77"|.state="review"|.iteration=2|.gates={}|.history=[{"iteration":1,"feedback":"sec: missing anchor"}]' \
+  > "$WORK/nb1/multi-grumpy/pr-77/security.yaml"
+cas_push "$WORK/nb1" "seed pr-77 security active@iter2"
+A=$(BRANCH=security "$NEXT" "$WORK/nb2" pr-77 protocols/multi-grumpy/protocol.json continue)
+check "branch continue: resumes iter 2"        '[ "$(jq -r .iteration <<<"$A")" = 2 ]'
+check "branch continue: carries branch feedback" 'jq -r .feedback <<<"$A" | grep -q "missing anchor"'
+
 echo "-----"
 echo "engine tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
