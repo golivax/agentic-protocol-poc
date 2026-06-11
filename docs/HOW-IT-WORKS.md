@@ -276,8 +276,9 @@ So a Python check is just `checks/<name>.py` with `#!/usr/bin/env python3` and
 `run-checks.sh` turns a missing, non-executable, crashing, or malformed check
 into a *failing verdict* rather than aborting the run.
 
-In this example protocol, `rubric-coverage` is implemented in **Python** and the
-other two in **bash**, to demonstrate the mix; all three obey the same ABI.
+In this example protocol, `rubric-coverage` and `traces-exist-in-diff` are
+implemented in **Python** and `schema-valid` in **bash**, to demonstrate the
+mix; all three obey the same ABI.
 
 Whatever the language: **always exit 0** even when the check fails (a non-zero
 exit is reserved for a genuine runner error), and read the rubric from
@@ -417,73 +418,217 @@ if __name__ == "__main__":
     main()
 ```
 
-#### `traces-exist-in-diff.sh` — does every claim point at something real?
+#### `traces-exist-in-diff.py` — does every claim point at the exact line it names?
 
-This is what makes "I found nothing" cost more than a sentence. A `jq` pass
-flattens the evidence into a stream of claims — each `existing_code` snippet and
-each `examined` identifier, tagged with its file — and the shell verifies each
-against the diff *the check itself was handed*:
+This is what makes "I found nothing" cost more than a sentence, and what makes
+inline review comments reliable. The check parses the diff into per-side line
+maps — `RIGHT` for new-file line numbers, `LEFT` for old-file line numbers —
+and verifies each claim:
 
-- **snippets** are matched as a whitespace-normalized substring against the
-  whole diff, after stripping the leading `+`/`-` so a multi-line snippet copied
-  verbatim from the source still matches;
-- **identifiers** must appear within the claimed file's own diff section, where
-  the section is delimited by the `diff --git … b/<path>` header (matched as a
-  literal suffix, not a regex, so a path like `src/a.js` can't match
-  `src/aXjs`).
+- **findings** must carry a `side` (`RIGHT`/`LEFT`) and a `line`; an optional
+  `start_line` marks a multi-line range, which must be contiguous within one
+  hunk and satisfy `start_line < line`. The check confirms the verbatim
+  `existing_code` matches the diff content at exactly those lines after
+  whitespace-normalisation (carried over from the old check).
+- **`none-found` identifiers** must appear in the concatenated diff content for
+  that file (whitespace-normalised matching is not applied here; simple
+  substring suffices).
 
-```bash
-#!/usr/bin/env bash
-# Check: every positive claim (existing_code) and negative-attestation trace
-# (examined identifier) verifiably exists in the independently fetched diff.
-# Usage: traces-exist-in-diff.sh <evidence.json> <diff.txt> <changed-files.txt>
-set -euo pipefail
-EV="$1"; DIFF="$2"
+Because every anchor that passes is a real, content-matched diff position, the
+publish hook can post all inline comments in one all-or-nothing review POST
+without a 422 from the GitHub reviews API. The check *is* the guarantee; the
+publish hook trusts it.
 
-norm() { tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'; }
-# Strip the +/- prefix from diff content lines so multi-line snippets quoted
-# verbatim from the source match after normalization.
-DIFF_NORM=$(sed -E 's/^[+-]//' "$DIFF" | norm)
+For the full design rationale and the tradeoffs among the four possible
+anchoring strategies, see `protocols/grumpy/README.md` §"Line anchoring".
 
-# file_section <path> — the diff lines belonging to one file
-file_section() {
-  awk -v p="$1" '
-    /^diff --git /{ tail = " b/" p; on = (substr($0, length($0)-length(tail)+1) == tail) } on
-  ' "$DIFF"
-}
+```python
+#!/usr/bin/env python3
+"""Check: every finding's anchor (line[/start_line] on a side) resolves to the
+claimed snippet in the independently-fetched diff, and every `examined`
+identifier appears in that file's diff hunks.
 
-BAD=()
-while IFS= read -r row; do
-  path=$(jq -r '.path' <<<"$row")
-  cat=$(jq -r '.category' <<<"$row")
-  kind=$(jq -r '.kind' <<<"$row")
-  val=$(jq -r '.value' <<<"$row")
-  if [ "$kind" = "snippet" ]; then
-    v=$(norm <<<"$val")
-    case "$DIFF_NORM" in *"$v"*) ;; *) BAD+=("existing_code not in diff ($cat × $path): \"$val\"") ;; esac
-  else
-    if ! file_section "$path" | grep -qF -- "$val"; then
-      BAD+=("examined identifier not in $path's diff ($cat): \"$val\"")
-    fi
-  fi
-done < <(jq -c '
-  .files[]? | .path as $p | .verdicts[]? | .category as $c |
-  ( (.findings // [])[] | {path:$p, category:$c, kind:"snippet", value:.existing_code} ),
-  ( (.examined // [])[] | {path:$p, category:$c, kind:"identifier", value:.} )' "$EV")
+Usage: traces-exist-in-diff.py <evidence.json> <diff.txt> <changed-files.txt>
 
-if [ "${#BAD[@]}" -gt 0 ]; then
-  FB="Unverifiable claims: $(IFS='; '; echo "${BAD[*]}")"
-  jq -n --arg f "$FB" '{check:"traces-exist-in-diff", pass:false, feedback:$f}'
-else
-  jq -n '{check:"traces-exist-in-diff", pass:true, feedback:""}'
-fi
+This replaces the former "snippet appears somewhere in the diff" check: a finding
+must now name the exact line(s) it critiques (RIGHT = new-file line numbers,
+LEFT = old-file line numbers), and we verify the snippet sits there. Anchors that
+pass here are valid GitHub review positions, so the publish hook can post them in
+a single review without the all-or-nothing reviews API 422-ing.
+"""
+import json
+import re
+import sys
+
+HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def norm(s: str) -> str:
+    """Collapse all runs of whitespace to single spaces (matches the old check)."""
+    return " ".join(s.split())
+
+
+def parse_diff(path):
+    """Return {file: {"RIGHT": {lineno: (content, hunk_id)}, "LEFT": {...}}}.
+
+    Context lines populate both sides; '+' only RIGHT; '-' only LEFT. Each mapped
+    line records the id of the hunk it belongs to (for same-hunk range checks).
+    """
+    maps = {}
+    cur = None
+    minus_path = None
+    in_hunk = False
+    right_no = left_no = 0
+    hunk_id = -1
+    with open(path) as fh:
+        for raw in fh:
+            line = raw.rstrip("\n")
+            if line.startswith("diff --git"):
+                cur, in_hunk = None, False
+                minus_path = None
+                continue
+            if line.startswith("--- "):
+                minus = line[4:]
+                if minus == "/dev/null":
+                    minus_path = None
+                elif minus.startswith("a/"):
+                    minus_path = minus[2:]
+                else:
+                    minus_path = minus
+                in_hunk = False
+                continue
+            if line.startswith("+++ "):
+                plus = line[4:]
+                if plus == "/dev/null":
+                    cur = minus_path  # deleted file: key it under its old path
+                elif plus.startswith("b/"):
+                    cur = plus[2:]
+                else:
+                    cur = plus
+                if cur is not None:
+                    maps.setdefault(cur, {"RIGHT": {}, "LEFT": {}})
+                in_hunk = False
+                continue
+            m = HUNK_RE.match(line)
+            if m:
+                left_no, right_no = int(m.group(1)), int(m.group(2))
+                hunk_id += 1
+                in_hunk = True
+                continue
+            if not in_hunk or cur is None or line == "":
+                continue
+            tag, content = line[0], line[1:]
+            if tag == " ":
+                maps[cur]["LEFT"][left_no] = (content, hunk_id)
+                maps[cur]["RIGHT"][right_no] = (content, hunk_id)
+                left_no += 1
+                right_no += 1
+            elif tag == "+":
+                maps[cur]["RIGHT"][right_no] = (content, hunk_id)
+                right_no += 1
+            elif tag == "-":
+                maps[cur]["LEFT"][left_no] = (content, hunk_id)
+                left_no += 1
+            # "\ No newline at end of file" and any other marker: ignore
+    return maps
+
+
+def verify_finding(f, fmap, path, cat):
+    """Return an error string if the finding's anchor is invalid, else None."""
+    if not isinstance(f, dict):
+        return f"malformed finding ({cat} × {path})"
+    side = f.get("side")
+    if side not in ("RIGHT", "LEFT"):
+        return f"finding side must be RIGHT or LEFT ({cat} × {path}): {side!r}"
+    smap = fmap.get(side, {})
+    line = f.get("line")
+    start = f.get("start_line")
+    if not isinstance(line, int) or line not in smap:
+        return f"line {line} not on {side} side of {path}'s diff ({cat})"
+    if start is not None:
+        if not isinstance(start, int) or start not in smap:
+            return f"start_line {start} not on {side} side of {path}'s diff ({cat})"
+        if start >= line:
+            return f"start_line {start} must be < line {line} ({cat} × {path})"
+        hunk = smap[line][1]
+        for n in range(start, line + 1):
+            if n not in smap or smap[n][1] != hunk:
+                return (f"lines {start}-{line} are not one contiguous hunk on "
+                        f"{side} ({cat} × {path})")
+        lines = [smap[n][0] for n in range(start, line + 1)]
+    else:
+        lines = [smap[line][0]]
+    got = norm("\n".join(lines))
+    want = norm(f.get("existing_code") or "")
+    if got != want:
+        anchor = f"{start}-{line}" if start is not None else f"{line}"
+        return (f"existing_code does not match {side} line(s) {anchor} of "
+                f"{path} ({cat})")
+    return None
+
+
+def main():
+    if len(sys.argv) < 4:
+        print(json.dumps({
+            "check": "traces-exist-in-diff",
+            "pass": False,
+            "feedback": "usage: traces-exist-in-diff.py <evidence.json> <diff.txt> <changed-files.txt>",
+        }))
+        sys.exit(0)
+    # _files (changed-files.txt) is unused: the diff is the source of truth here.
+    ev_path, diff_path, _files = sys.argv[1], sys.argv[2], sys.argv[3]
+    try:
+        with open(ev_path) as fh:
+            evidence = json.load(fh)
+    except (OSError, ValueError):
+        evidence = {}
+    maps = parse_diff(diff_path)
+
+    bad = []
+    files = evidence.get("files", []) if isinstance(evidence, dict) else []
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path")
+        fmap = maps.get(path, {"RIGHT": {}, "LEFT": {}})
+        blob = "\n".join(
+            c for (c, _h) in list(fmap["RIGHT"].values()) + list(fmap["LEFT"].values())
+        )
+        for verdict in (entry.get("verdicts") or []):
+            if not isinstance(verdict, dict):
+                continue
+            cat = verdict.get("category")
+            for f in (verdict.get("findings") or []):
+                err = verify_finding(f, fmap, path, cat)
+                if err:
+                    bad.append(err)
+            for ident in (verdict.get("examined") or []):
+                if ident not in blob:
+                    bad.append(
+                        f"examined identifier not in {path}'s diff ({cat}): {ident!r}"
+                    )
+
+    if bad:
+        out = {
+            "check": "traces-exist-in-diff",
+            "pass": False,
+            "feedback": "Unverifiable claims: " + "; ".join(bad),
+        }
+    else:
+        out = {"check": "traces-exist-in-diff", "pass": True, "feedback": ""}
+    print(json.dumps(out, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-Together these three implement the principle from §2.7: `schema-valid` and
+Together these three implement the principle from §2: `schema-valid` and
 `rubric-coverage` enforce that the agent *addressed every cell*, and
 `traces-exist-in-diff` enforces that each cell's claim — positive or negative —
-is *anchored in code that actually changed*. None of them judge whether a
-finding is correct; that's substance, reserved for a future judge/gate.
+is *anchored in code that actually changed*, at the specific line(s) the agent
+named. None of them judge whether a finding is correct; that's substance,
+reserved for a future judge/gate.
 
 ### 4.4 The agent workflow (`grumpy-agent.md`)
 

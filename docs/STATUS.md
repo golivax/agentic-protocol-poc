@@ -16,8 +16,10 @@ before extending the system so you know which "missing" pieces are deliberate.
 - Durable state on the `agentic-state` branch, one file per PR, advanced by
   fast-forward (CAS) push.
 - Two acceptance demos: PR #4/#9 (sabotage → iterate → pass), PR #7 (clean
-  negative control). 36 local tests (`tests/test-checks.sh` 18,
-  `tests/test-engine.sh` 18).
+  negative control); native line-anchored inline review live-verified on PR #21.
+  86 local tests across four files: `tests/test-checks.sh` 34,
+  `tests/test-engine.sh` 30, `tests/test-runchecks.sh` 14,
+  `tests/test-publish.sh` 8.
 
 ## Simplifications declared up front (in the plan)
 
@@ -40,6 +42,9 @@ before extending the system so you know which "missing" pieces are deliberate.
    rungs from the design are not implemented.
 5. **Findings quote `existing_code`, not line anchors.** No snippet→line
    position resolution (the OCR-style "positioning" module is out of scope).
+   **(SUPERSEDED 2026-06-11:** findings now carry a verified `side`/`line`[/`start_line`]
+   anchor and grumpy posts native inline review comments; the anchor is verified
+   by `traces-exist-in-diff.py`. Live-verified on PR #21.**)**
 
 ## Deviations discovered during live integration (not in the plan)
 
@@ -74,9 +79,10 @@ before extending the system so you know which "missing" pieces are deliberate.
   from `protocol.json` (`.states[].checks[]`) and resolves each to an executable
   in any language (`exec` path, or `checks/<name>.*` extension-agnostic). The
   orchestrator no longer hardcodes the check names. `rubric-coverage` is now
-  Python (`rubric-coverage.py`); `schema-valid` and `traces-exist-in-diff` stay
-  bash — same ABI. New test suite `tests/test-runchecks.sh` (11 tests) covers
-  resolution and robustness (missing / non-executable / crashing / ambiguous).
+  Python (`rubric-coverage.py`); `rubric-coverage` AND `traces-exist-in-diff`
+  are now Python, while `schema-valid` stays bash — same ABI. New test suite
+  `tests/test-runchecks.sh` (11 tests) covers resolution and robustness
+  (missing / non-executable / crashing / ambiguous).
 
 - **Merge-gating via a check run.** `advance.sh`/`plan` emit a `grumpy-review`
   check run on the PR head SHA reflecting protocol state (in_progress while
