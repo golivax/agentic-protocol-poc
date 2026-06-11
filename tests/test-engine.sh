@@ -184,6 +184,16 @@ A=$(BRANCH=security "$NEXT" "$WORK/nb2" pr-77 protocols/multi-grumpy/protocol.js
 check "branch continue: resumes iter 2"        '[ "$(jq -r .iteration <<<"$A")" = 2 ]'
 check "branch continue: carries branch feedback" 'jq -r .feedback <<<"$A" | grep -q "missing anchor"'
 
+# --- next.sh fanout planning: start on a fanout protocol seeds both branches ---
+A=$("$NEXT" "$WORK/fo1" pr-50 protocols/multi-grumpy/protocol.json start head50)
+check "fanout start: action run-fanout"      '[ "$(jq -r .action <<<"$A")" = run-fanout ]'
+check "fanout start: two branches listed"    '[ "$(jq -r ".branches|length" <<<"$A")" = 2 ]'
+check "fanout start: lists grumpy workflow"  'jq -e ".branches[]|select(.id==\"grumpy\")|select(.workflow==\"grumpy-agent\")" <<<"$A" >/dev/null'
+state_checkout "$WORK/fo2"
+check "fanout start: grumpy file seeded active"   '[ "$(yq -r .state "$WORK/fo2/multi-grumpy/pr-50/grumpy.yaml")" = review ] && [ "$(yq -r .iteration "$WORK/fo2/multi-grumpy/pr-50/grumpy.yaml")" = 1 ]'
+check "fanout start: security file seeded active" '[ "$(yq -r .state "$WORK/fo2/multi-grumpy/pr-50/security.yaml")" = review ] && [ "$(yq -r .iteration "$WORK/fo2/multi-grumpy/pr-50/security.yaml")" = 1 ]'
+check "fanout start: instance file w/ head" '[ "$(yq -r .head_sha "$WORK/fo2/multi-grumpy/pr-50/_instance.yaml")" = head50 ] && [ "$(yq -r .joined "$WORK/fo2/multi-grumpy/pr-50/_instance.yaml")" = false ]'
+
 echo "-----"
 echo "engine tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

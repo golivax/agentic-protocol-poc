@@ -15,6 +15,54 @@ source "$(dirname "$0")/lib.sh"
 DIR="$1"; INSTANCE="$2"; PROTO="$3"; COMMAND="$4"; HEAD_SHA="${5:-}"
 BRANCH="${BRANCH:-}"
 PID=$(protocol_id "$PROTO")
+
+# Check out the state branch first: both the fan-out planner (below) and the
+# single-agent path write into "$DIR", and state_checkout only depends on "$DIR",
+# so doing it here is behaviour-preserving for the single-agent path.
+state_checkout "$DIR"
+
+# Fan-out detector + planner + emitter. Defined here (before the guard) because
+# they depend only on the already-set $PROTO/$DIR/$PID/$INSTANCE/$HEAD_SHA/$COMMAND,
+# not on the single-agent AGENT_STATE/LIFE_STATE/SF computed further down.
+emit_run_fanout() { jq -nc --argjson b "$1" '{action:"run-fanout", iteration:1, feedback:"", reason:"fanout", branches:$b}'; }
+
+# is_fanout — true iff the protocol has a kind:"fanout" state.
+is_fanout() { [ "$(jq -r '.states[] | select(.kind=="fanout") | .id' "$PROTO")" != "" ]; }
+
+# start_fanout — seed one fresh state file per branch (.state = the fan-out state's
+# id, the LIFE_STATE for branches; branch identity lives in the FILENAME) plus a
+# shared _instance.yaml, then emit run-fanout with the branch dispatch list.
+start_fanout() {
+  local branches fstate sf inf bid
+  fstate=$(jq -r '.states[] | select(.kind=="fanout") | .id' "$PROTO")   # e.g. "review" — the LIFE_STATE for branches
+  branches=$(jq -c '[.states[] | select(.kind=="fanout") | .branches[] | {id, workflow, iteration:1, feedback:""}]' "$PROTO")
+  while IFS= read -r bid; do
+    sf=$(state_file "$DIR" "$PID" "$INSTANCE" "$bid")
+    mkdir -p "$(dirname "$sf")"
+    PID="$PID" INST="$INSTANCE" AS="$fstate" yq -n '
+      .protocol=strenv(PID) | .instance=strenv(INST) | .state=strenv(AS) |
+      .iteration=1 | .gates={} | .history=[]' > "$sf"
+  done < <(jq -r '.states[] | select(.kind=="fanout") | .branches[].id' "$PROTO")
+  inf=$(instance_file "$DIR" "$PID" "$INSTANCE")
+  PID="$PID" INST="$INSTANCE" SHA="$HEAD_SHA" yq -n '
+    .protocol=strenv(PID) | .instance=strenv(INST) |
+    .head_sha=strenv(SHA) | .joined=false' > "$inf"
+  cas_push "$DIR" "$PID/$INSTANCE: fan-out review ($COMMAND)"
+  emit_run_fanout "$branches"
+}
+
+# Unbranched start/reset on a fan-out protocol routes to the planner BEFORE the
+# single-agent agent-unit discovery (which has no kind:"agent" state to read and
+# would error). The branched fan-out path (continue with BRANCH set) and the
+# single-agent path both fall through this guard unchanged.
+if [ -z "$BRANCH" ] && is_fanout; then
+  case "$COMMAND" in
+    start|reset) start_fanout; exit 0 ;;
+    continue)    echo "[next] fanout 'continue' requires a BRANCH" >&2; exit 2 ;;
+    *)           echo "[next] unknown command: $COMMAND" >&2; exit 2 ;;
+  esac
+fi
+
 # The "agent unit" (its id + max_iterations) comes from a fan-out BRANCH when
 # BRANCH is set, else from the single-agent state. Single-agent path is the
 # regression-guarded baseline and must stay byte-for-byte identical.
@@ -39,7 +87,6 @@ if [ -n "$BRANCH" ]; then
 else
   LIFE_STATE="$AGENT_STATE"
 fi
-state_checkout "$DIR"
 SF=$(state_file "$DIR" "$PID" "$INSTANCE" "$BRANCH")   # $BRANCH empty → single-agent path
 
 write_fresh_state() {
