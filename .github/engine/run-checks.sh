@@ -56,6 +56,13 @@ while IFS= read -r entry; do
   fi
 
   RESULTS=$(jq -c --argjson v "$V" '. + [$v]' <<<"$RESULTS")
-done < <(jq -c --arg s "$STATE" '.states[] | select(.id==$s) | .checks[]?' "$PROTO")
+done < <(
+  if [ -n "${BRANCH:-}" ]; then
+    jq -c --arg s "$STATE" --arg b "$BRANCH" \
+      '.states[] | select(.id==$s) | .branches[]? | select(.id==$b) | .checks[]?' "$PROTO"
+  else
+    jq -c --arg s "$STATE" '.states[] | select(.id==$s) | .checks[]?' "$PROTO"
+  fi
+)
 
 jq -c '{results: .}' <<<"$RESULTS"

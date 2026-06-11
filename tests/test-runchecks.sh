@@ -61,6 +61,14 @@ chk "resolve: missing → ERR" '[ "${R%%$TAB*}" = ERR ]'
 R=$(resolve_executable "$PDIR/checks" "ignored" "$PDIR" "checks/rubric-coverage.py")
 chk "resolve: explicit exec resolves" '[ "${R%%$TAB*}" = OK ] && grep -q "rubric-coverage.py" <<<"$R"'
 
+# --- branch-aware check list: BRANCH selects .branches[].checks ---
+MG=protocols/multi-grumpy/protocol.json
+OUT=$(BRANCH=grumpy "$RC" "$MG" review "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
+chk "branch grumpy → 3 checks run"  '[ "$(jq -r ".results|length" <<<"$OUT")" = 3 ]'
+OUT=$(BRANCH=security "$RC" "$MG" review "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
+chk "branch security → 2 checks run (no rubric-coverage)" \
+  '[ "$(jq -r ".results|length" <<<"$OUT")" = 2 ] && ! jq -e ".results[]|select(.check==\"rubric-coverage\")" <<<"$OUT" >/dev/null'
+
 echo "-----"
 echo "run-checks tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
