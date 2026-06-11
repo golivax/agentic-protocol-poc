@@ -26,6 +26,17 @@ SF=$(state_file "$DIR" "$PID" "$INSTANCE" "$BRANCH")
 PR="${PR:-$INSTANCE}"   # GitHub chrome (review/comment/check-run) targets the PR number from env; instance-key fallback keeps local ENGINE_LOCAL runs working
 if [ -n "$BRANCH" ]; then CR_NAME="$PID/$BRANCH"; else CR_NAME="$PID"; fi   # check-run name: <pid> single-agent, <pid>/<branch> fan-out
 
+# fire_join — on a TERMINAL branch (done OR failed), signal the fan-out barrier so a
+# serialized join handler can evaluate it. No-op for the single-agent path (BRANCH empty),
+# so single-agent done/failed never emit protocol-join.
+fire_join() {
+  [ -n "$BRANCH" ] || return 0
+  gh_api api "repos/$GITHUB_REPOSITORY/dispatches" \
+    -f event_type="protocol-join" \
+    -F "client_payload[protocol]=$PID" \
+    -F "client_payload[instance]=$INSTANCE"
+}
+
 # LIFE_STATE is the value a recovered/initial state file's .state must carry while
 # the agent unit is in flight (so next.sh reads it as active). Single-agent: the
 # agent state id. Fan-out branch: the owning fan-out state's id (NOT the branch id).
@@ -132,6 +143,7 @@ if [ "$ALL_PASS" = "true" ]; then
   set_check_run "$CR_NAME" "$SHA" completed "$CONCL" "Review complete" "$CSUM"
   upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "✅ done — published.")"
   cas_push "$DIR" "$INSTANCE: checks passed at iteration $ITER → published, done"
+  fire_join
 elif [ "$ITER" -lt "$MAX" ]; then
   NEXT=$((ITER + 1))
   N="$NEXT" yq -i '.iteration = env(N)' "$SF"
@@ -141,10 +153,12 @@ elif [ "$ITER" -lt "$MAX" ]; then
   gh_api api "repos/$GITHUB_REPOSITORY/dispatches" \
     -f event_type="protocol-continue" \
     -F "client_payload[protocol]=$PID" \
-    -F "client_payload[instance]=$INSTANCE"
+    -F "client_payload[instance]=$INSTANCE" \
+    -F "client_payload[branch]=$BRANCH"
 else
   yq -i '.state = "failed"' "$SF"
   set_check_run "$CR_NAME" "$SHA" completed failure "Review failed" "Could not produce a valid review after $MAX iterations."
   upsert_status_comment "$SF" "$PR" "$(render_status_body "$SF" "❌ **failed** after $MAX iterations.")"
   cas_push "$DIR" "$INSTANCE: iterations exhausted → failed"
+  fire_join
 fi

@@ -216,6 +216,18 @@ check "advance branch: grumpy.yaml state done"    '[ "$(yq -r .state "$WORK/vmg1
 check "advance branch: published via hook"        'grep -q "pulls/50/reviews" <<<"$OUT"'
 check "advance branch: per-branch check-run name" 'grep -q "check-run multi-grumpy/grumpy " <<<"$OUT"'
 
+# --- advance.sh fan-out signalling: terminal branch fires protocol-join; iterate carries branch ---
+# iterate (fail, iter<max) on a branch → protocol-continue WITH branch
+echo '{"results":[{"check":"schema-valid","pass":false,"feedback":"sec: bad anchor"}]}' > "$WORK/verdicts-secfail.json"
+OUT=$(BRANCH=security PR=50 AGENT_RUN_ID=901 .github/engine/advance.sh "$WORK/advmg2" pr-50 \
+  protocols/multi-grumpy/protocol.json "$WORK/verdicts-secfail.json" tests/fixtures/evidence-lazy.json 2>&1)
+check "fanout iterate: protocol-continue fired" 'grep -q "protocol-continue" <<<"$OUT"'
+check "fanout iterate: payload carries branch"  'grep -q "client_payload\[branch\]=security" <<<"$OUT"'
+# terminal (done) on a branch → protocol-join fired
+OUT=$(BRANCH=grumpy PR=51 AGENT_RUN_ID=902 .github/engine/advance.sh "$WORK/advmg3" pr-51 \
+  protocols/multi-grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1)
+check "fanout done: protocol-join fired" 'grep -q "protocol-join" <<<"$OUT"'
+
 echo "-----"
 echo "engine tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
