@@ -14,9 +14,11 @@ event=$(jq -r 'if any(.files[]?.verdicts[]?; .verdict=="issues-found")
 
 # Build comments[]: one inline comment per issues-found finding. Single-line
 # findings carry {path,line,side,body}; ranged findings also add {start_line,start_side}.
+# A ranged finding's start_side must equal its side (GitHub API rule); the
+# evidence carries no separate start_side, so we reuse .side.
 comments=$(jq -c '
-  [ .files[] | .path as $p | .verdicts[]
-    | select(.verdict=="issues-found") | .findings[]
+  [ .files[]? | .path as $p | .verdicts[]?
+    | select(.verdict=="issues-found") | .findings[]?
     | { path: $p, side: .side, line: .line, body: .comment }
       + ( if .start_line then { start_line: .start_line, start_side: .side } else {} end )
   ]' "$EVID")
@@ -47,8 +49,11 @@ else
     if [ "$event" = "APPROVE" ]; then
       echo "[publish] APPROVE rejected (repo setting?); falling back to COMMENT" >&2
       payload=$(jq -c '.event="COMMENT"' <<<"$payload")
-      GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
-        --method POST --input - <<<"$payload" >/dev/null
+      if ! GH_TOKEN="$PUBLISH_TOKEN" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" \
+           --method POST --input - <<<"$payload" >/dev/null 2>&1; then
+        echo "[publish] COMMENT fallback also failed" >&2
+        exit 1
+      fi
     else
       echo "[publish] review submission failed for event=$event" >&2
       exit 1
