@@ -2,7 +2,7 @@ name: Grumpy Orchestrator
 # run-name and concurrency.group below must use the SAME instance expression so a
 # repository_dispatch (client_payload.instance="pr-N") and a pull_request (number N)
 # label the same logical instance. GHA has no top-level anchors — keep them in sync.
-run-name: "grumpy-review · ${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}"
+run-name: "multi-grumpy · ${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}"
 
 on:
   pull_request:
@@ -40,6 +40,8 @@ jobs:
       sabotage: ${{ steps.sabotage.outputs.sabotage }}
       instance: ${{ steps.ctx.outputs.instance }}
       command: ${{ steps.ctx.outputs.command }}
+      branches: ${{ steps.plan.outputs.branches }}
+      branch: ${{ steps.ctx.outputs.branch }}
     steps:
       - uses: actions/checkout@v4
       - name: Ensure yq
@@ -52,15 +54,21 @@ jobs:
       - id: ctx
         env:
           DISPATCH_INSTANCE: ${{ github.event.client_payload.instance }}
+          DISPATCH_BRANCH: ${{ github.event.client_payload.branch }}
         run: |
           # Map the GitHub event → engine command (see next.sh header for the contract):
           #   start = fresh review, reset = force-restart on a new commit, continue = iterate loop.
-          # DISPATCH_INSTANCE is read via env (not inline) to avoid shell injection from the payload.
+          # DISPATCH_INSTANCE / DISPATCH_BRANCH are read via env (not inline) to avoid
+          # shell injection from the payload. The branch is only present on a
+          # repository_dispatch (protocol-continue) — empty for pull_request/issue_comment,
+          # which routes next.sh down the unbranched fan-out-planning path.
+          BRANCH=""
           case "${{ github.event_name }}" in
             repository_dispatch)
               INSTANCE="$DISPATCH_INSTANCE"
               [ -n "$INSTANCE" ] || { echo "[ctx] repository_dispatch with empty instance" >&2; exit 1; }
               PR="${INSTANCE#pr-}"
+              BRANCH="$DISPATCH_BRANCH"
               CMD="continue" ;;
             pull_request)
               PR="${{ github.event.pull_request.number }}"
@@ -74,6 +82,7 @@ jobs:
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
           echo "instance=$INSTANCE" >> "$GITHUB_OUTPUT"
           echo "command=$CMD" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
       - id: head
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -88,12 +97,27 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
-          .github/engine/next.sh /tmp/state "${{ steps.ctx.outputs.instance }}" \
-            protocols/grumpy/protocol.json "${{ steps.ctx.outputs.command }}" "$HEAD_SHA" > /tmp/action.json
+          # BRANCH (empty for pull_request/issue_comment) routes next.sh: empty →
+          # unbranched fan-out planning (run-fanout); set → branched continue for that
+          # one branch (run-agent or halt). An UNBRANCHED continue on a fan-out protocol
+          # errors (exit 2) — but pull_request/issue_comment never emit "continue".
+          BRANCH="${{ steps.ctx.outputs.branch }}" .github/engine/next.sh /tmp/state "${{ steps.ctx.outputs.instance }}" \
+            protocols/multi-grumpy/protocol.json "${{ steps.ctx.outputs.command }}" "$HEAD_SHA" > /tmp/action.json
           cat /tmp/action.json
-          echo "action=$(jq -r .action /tmp/action.json)" >> "$GITHUB_OUTPUT"
+          ACTION=$(jq -r .action /tmp/action.json)
+          echo "action=$ACTION" >> "$GITHUB_OUTPUT"
           echo "iteration=$(jq -r .iteration /tmp/action.json)" >> "$GITHUB_OUTPUT"
           { echo "feedback<<GH_EOF"; jq -r .feedback /tmp/action.json; echo "GH_EOF"; } >> "$GITHUB_OUTPUT"
+          # Branch matrix: run-fanout → all branch ids; branched continue run-agent →
+          # [that branch]; halt/other → []. Downstream jobs gate on branches != '[]'.
+          if [ "$ACTION" = "run-fanout" ]; then
+            BRANCHES=$(jq -c '[.branches[].id]' /tmp/action.json)
+          elif [ "$ACTION" = "run-agent" ] && [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            BRANCHES=$(jq -cn --arg b "${{ steps.ctx.outputs.branch }}" '[$b]')
+          else
+            BRANCHES='[]'
+          fi
+          echo "branches=$BRANCHES" >> "$GITHUB_OUTPUT"
       - id: sabotage
         env:
           GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
@@ -108,7 +132,7 @@ jobs:
             echo "sabotage=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Mark review in progress (check run)
-        if: steps.plan.outputs.action == 'run-agent'
+        if: steps.plan.outputs.branches != '[]'
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -116,18 +140,23 @@ jobs:
           ITER: ${{ steps.plan.outputs.iteration }}
         run: |
           source .github/engine/lib.sh
-          # Name must match protocol.json .name (advance.sh derives the closing run's
-          # name from there); if they diverge the in-progress check run never closes.
-          set_check_run "grumpy-review" "$SHA" in_progress "" "Review in progress" "Reviewing (iteration $ITER); merge is gated until the protocol completes."
+          # Mark the AGGREGATE "multi-grumpy" check-run in_progress — this is the
+          # required gating check. It stays in_progress until join.sh completes it
+          # (the per-branch advance writes "multi-grumpy/<branch>" sub-runs, not this).
+          set_check_run "multi-grumpy" "$SHA" in_progress "" "Review in progress" "Reviewing (iteration $ITER); merge is gated until the protocol completes."
 
-  # ── Zone 2: the sandboxed agent, as a separately dispatched gh-aw workflow. ──
+  # ── Zone 2: the sandboxed agents, fanned out one matrix leg per branch. ──
+  # Matrix jobs share ONE job-level outputs map (last leg clobbers), so per-branch
+  # data (agent run id, agent ok) is passed via a branch-named ARTIFACT instead —
+  # see runmeta-<branch> below. No job-level outputs here.
   dispatch:
     needs: plan
-    if: needs.plan.outputs.action == 'run-agent'
+    if: ${{ needs.plan.outputs.branches != '[]' }}
     runs-on: ubuntu-latest
-    outputs:
-      agent_run_id: ${{ steps.wait.outputs.agent_run_id }}
-      agent_ok: ${{ steps.wait.outputs.agent_ok }}
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.plan.outputs.branches) }}
     steps:
       - id: wait
         env:
@@ -138,55 +167,84 @@ jobs:
           SABOTAGE: ${{ needs.plan.outputs.sabotage }}
           REPO: ${{ github.repository }}
         run: |
+          # pr/iteration/feedback/sabotage come from plan: for run-fanout they are
+          # uniformly iteration 1 / feedback "" (correct for a fresh branch); for a
+          # branched continue there is exactly one matrix leg, so they are that
+          # branch's values.
           CTX=$(jq -nc \
             --arg pr "$PR" \
             --arg iteration "$ITERATION" \
             --arg feedback "$FEEDBACK" \
             --argjson sabotage "$SABOTAGE" \
             '{pr: $pr, iteration: $iteration, feedback: $feedback, sabotage: $sabotage}')
+          # Each branch dispatches its OWN agent workflow. Distinct lock files per
+          # branch keep the newest-since-T0 resolver unambiguous within one PR (the
+          # documented concurrent-PR limitation is unchanged and deferred).
+          WF="${{ matrix.branch }}-agent.lock.yml"
+          mkdir -p /tmp/meta
           T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          gh workflow run grumpy-agent.lock.yml --repo "$REPO" -f aw_context="$CTX"
+          gh workflow run "$WF" --repo "$REPO" -f aw_context="$CTX"
           # PoC simplification (documented limitation): resolve the agent run as the
-          # newest workflow_dispatch run since T0. Safe only when one PR is reviewed at
-          # a time — the agent workflow's concurrency group is global, so concurrent PRs
-          # could misattribute runs. A production fix stamps a correlation id into the
-          # evidence artifact and matches on it.
+          # newest workflow_dispatch run for THIS branch's workflow since T0.
           RID=""
           for i in $(seq 1 24); do
             sleep 5
             RID=$(gh run list --repo "$REPO" \
-              --workflow grumpy-agent.lock.yml --event workflow_dispatch \
+              --workflow "$WF" --event workflow_dispatch \
               --created ">=$T0" --json databaseId --jq '.[0].databaseId // empty')
             [ -n "$RID" ] && break
           done
           [ -n "$RID" ] || { echo "agent run never appeared"; exit 1; }
-          echo "agent_run_id=$RID" >> "$GITHUB_OUTPUT"
+          # Write run_id as soon as it resolves so downstream can react even on agent
+          # failure; agent_ok is written after the watch.
+          printf '%s' "$RID" > /tmp/meta/run_id
           if gh run watch "$RID" --repo "$REPO" --exit-status; then
-            echo "agent_ok=true" >> "$GITHUB_OUTPUT"
+            printf '%s' "true" > /tmp/meta/agent_ok
           else
-            echo "agent_ok=false" >> "$GITHUB_OUTPUT"
+            printf '%s' "false" > /tmp/meta/agent_ok
           fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runmeta-${{ matrix.branch }}
+          path: /tmp/meta
 
   # ── Zone 3: checks. No secrets beyond default read token; independent ground truth. ──
+  # Matrixed one leg per branch. Per-branch verdicts are passed to advance via the
+  # branch-named verdicts-<branch> ARTIFACT (NOT a job output, which would clobber
+  # across legs). The agent run id arrives via the runmeta-<branch> artifact.
   checks:
     needs: [plan, dispatch]
-    if: always() && needs.dispatch.result != 'skipped' && needs.plan.outputs.action == 'run-agent'
+    if: always() && needs.plan.outputs.branches != '[]' && needs.dispatch.result != 'skipped'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.plan.outputs.branches) }}
     permissions:
       contents: read
       actions: read
       pull-requests: read
-    outputs:
-      verdicts: ${{ steps.run.outputs.verdicts }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+      - name: Download run meta
+        uses: actions/download-artifact@v4
+        with:
+          name: runmeta-${{ matrix.branch }}
+          path: /tmp/meta
+      - id: meta
+        run: |
+          RID=$(cat /tmp/meta/run_id 2>/dev/null || echo "")
+          OK=$(cat /tmp/meta/agent_ok 2>/dev/null || echo "")
+          echo "rid=$RID" >> "$GITHUB_OUTPUT"
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
       - name: Download evidence artifact
         run: |
           mkdir -p /tmp/agent
-          if [ -n "${{ needs.dispatch.outputs.agent_run_id }}" ]; then
-            gh run download "${{ needs.dispatch.outputs.agent_run_id }}" \
+          if [ -n "${{ steps.meta.outputs.rid }}" ]; then
+            gh run download "${{ steps.meta.outputs.rid }}" \
               --repo "${{ github.repository }}" -n evidence -D /tmp/agent \
               || echo "no evidence artifact"
           fi
@@ -194,28 +252,44 @@ jobs:
         run: |
           gh pr diff "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" > /tmp/diff.txt
           gh pr diff "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" --name-only > /tmp/files.txt
-      - id: run
+      - name: Run checks
         env:
-          RID: ${{ needs.dispatch.outputs.agent_run_id }}
-          OK: ${{ needs.dispatch.outputs.agent_ok }}
+          RID: ${{ steps.meta.outputs.rid }}
+          OK: ${{ steps.meta.outputs.ok }}
         run: |
           # The check LIST comes from protocol.json (not hardcoded here); run-checks.sh
           # resolves each check to an executable in any language and aggregates verdicts.
+          # BRANCH selects this branch's check list from the fan-out state.
           EV=/tmp/agent/evidence.json
           if [ ! -f "$EV" ]; then
             echo "WARNING: no evidence artifact (agent run $RID, ok=$OK); checks will report it" >&2
             echo '{}' > "$EV"
           fi
-          VERDICTS=$(.github/engine/run-checks.sh \
-            protocols/grumpy/protocol.json review "$EV" /tmp/diff.txt /tmp/files.txt)
+          VERDICTS=$(BRANCH=${{ matrix.branch }} .github/engine/run-checks.sh \
+            protocols/multi-grumpy/protocol.json review "$EV" /tmp/diff.txt /tmp/files.txt)
           jq . <<<"$VERDICTS"
-          echo "verdicts=$VERDICTS" >> "$GITHUB_OUTPUT"
+          mkdir -p /tmp/verdicts
+          printf '%s' "$VERDICTS" > /tmp/verdicts/verdicts.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verdicts-${{ matrix.branch }}
+          path: /tmp/verdicts
 
   # ── Zone 4: engine-post. Reads check verdicts only; sole writer of state. ──
+  # Matrixed one leg per branch. Each leg reads its OWN run id + verdicts from the
+  # branch-named artifacts (runmeta-<branch>, verdicts-<branch>) — never from a
+  # needs-output, which would clobber across legs. advance.sh runs WITH BRANCH so it
+  # writes per-branch state + the multi-grumpy/<branch> sub check-run, and fires
+  # protocol-join (terminal) or protocol-continue with branch=<branch> (iterate).
   advance:
     needs: [plan, dispatch, checks]
-    if: always() && needs.plan.outputs.action == 'run-agent' && needs.dispatch.result != 'skipped' && (needs.checks.result == 'success' || needs.checks.result == 'failure')
+    if: always() && needs.plan.outputs.branches != '[]' && needs.dispatch.result != 'skipped' && (needs.checks.result == 'success' || needs.checks.result == 'failure')
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.plan.outputs.branches) }}
     permissions:
       contents: read
       pull-requests: write
@@ -231,13 +305,24 @@ jobs:
               https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             sudo chmod +x /usr/local/bin/yq
           }
+      - name: Download run meta
+        uses: actions/download-artifact@v4
+        with:
+          name: runmeta-${{ matrix.branch }}
+          path: /tmp/meta
+      - name: Download verdicts
+        uses: actions/download-artifact@v4
+        with:
+          name: verdicts-${{ matrix.branch }}
+          path: /tmp/verdicts
       - name: Re-download evidence (for publication only)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p /tmp/agent
-          if [ -n "${{ needs.dispatch.outputs.agent_run_id }}" ]; then
-            gh run download "${{ needs.dispatch.outputs.agent_run_id }}" \
+          RID=$(cat /tmp/meta/run_id 2>/dev/null || echo "")
+          if [ -n "$RID" ]; then
+            gh run download "$RID" \
               --repo "${{ github.repository }}" -n evidence -D /tmp/agent || true
           fi
           [ -f /tmp/agent/evidence.json ] || echo '{"files":[]}' > /tmp/agent/evidence.json
@@ -246,16 +331,18 @@ jobs:
           STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
           GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
           PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AGENT_RUN_ID: ${{ needs.dispatch.outputs.agent_run_id }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR: ${{ needs.plan.outputs.pr }}
           PR_HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
-          VERDICTS: ${{ needs.checks.outputs.verdicts }}
         run: |
+          # AGENT_RUN_ID comes from the downloaded runmeta file (env: blocks can't read
+          # a downloaded file), so export it here before calling advance.sh.
+          export AGENT_RUN_ID=$(cat /tmp/meta/run_id 2>/dev/null || echo "")
+          VERDICTS=$(cat /tmp/verdicts/verdicts.json 2>/dev/null || echo "")
           if [ -z "$VERDICTS" ]; then
             VERDICTS='{"results":[{"check":"checks-job","pass":false,"feedback":"checks job did not complete; treating as failed iteration"}]}'
           fi
           printf '%s' "$VERDICTS" > /tmp/verdicts.json
           jq . /tmp/verdicts.json
-          .github/engine/advance.sh /tmp/state "${{ needs.plan.outputs.instance }}" \
-            protocols/grumpy/protocol.json /tmp/verdicts.json /tmp/agent/evidence.json
+          BRANCH=${{ matrix.branch }} .github/engine/advance.sh /tmp/state "${{ needs.plan.outputs.instance }}" \
+            protocols/multi-grumpy/protocol.json /tmp/verdicts.json /tmp/agent/evidence.json
