@@ -58,4 +58,31 @@ Keep the COMMENT fallback regardless, as the safe default when neither is set up
 
 ---
 
+## Make `grumpy-review` a required status check (enforce the merge gate)
+
+**What:** Configure branch protection / a ruleset so the `grumpy-review` check
+run actually *blocks* merges, not just shows red.
+
+**Why deferred:** The producer side is done — `advance.sh`/`plan` emit the
+`grumpy-review` check on the PR head SHA (in_progress → failure on
+changes-requested → success on clean), verified live on PR #15. What's left is a
+one-time GitHub *config* step, deferred so it's a deliberate choice (turning it
+on blocks merges on every PR that doesn't get a clean review).
+
+**Prerequisites (met):** repo is public (branch protection/rulesets available);
+the `grumpy-review` name has reported at least once, so it's selectable.
+
+**How (per HOW-IT-WORKS §5.1):**
+- Ruleset (recommended): *Settings → Rules → Rulesets → New branch ruleset* →
+  target `main` → *Require status checks before merging* → add `grumpy-review`
+  (source: GitHub Actions) → Active → Create.
+- Optionally layer *Require approvals* for a human sign-off too (note: the bot
+  can block via `failure` but can't `APPROVE` to unblock unless the
+  "Allow GitHub Actions to approve pull requests" setting is on).
+- Verify: open a PR with issues → merge button blocked until a clean review.
+
+**Status:** ready to enable (config only). Deferred until you want enforcement on.
+
+---
+
 ## (See also `STATUS.md` "Known engine couplings to generalise" and the v1 deviation list for other candidate work: restore the agent egress firewall for the now-public endpoint, correlation-id run resolver, parameterise the `grumpy-review` / `grumpy/pr-<N>.yaml` literals out of the engine.)
