@@ -85,4 +85,4 @@ the `grumpy-review` name has reported at least once, so it's selectable.
 
 ---
 
-## (See also `STATUS.md` "Known engine couplings to generalise" and the v1 deviation list for other candidate work: restore the agent egress firewall for the now-public endpoint, correlation-id run resolver, parameterise the `grumpy-review` / `grumpy/pr-<N>.yaml` literals out of the engine.)
+## (See also `STATUS.md` and the v1 deviation list for other candidate work: restore the agent egress firewall for the now-public endpoint, correlation-id run resolver.)
