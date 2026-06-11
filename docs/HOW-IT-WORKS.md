@@ -549,6 +549,44 @@ existence, and workflow runs are heartbeats that advance it** — not the other
 way round. A protocol can sit waiting (a future human gate) for weeks at zero
 cost, because "waiting" is just a line in a committed file.
 
+### 5.1 Blocking the merge on the review
+
+By default a review verdict is *advisory* — GitHub won't stop a merge just
+because a review requested changes. To make the protocol a real merge gate, it
+publishes a **check run** named `grumpy-review` on the PR's head commit,
+reflecting protocol state:
+
+| protocol state | check run | merge box |
+|---|---|---|
+| reviewing / iterating | `in_progress` | pending — blocks |
+| changes requested (issues found) | `completed` / `action_required` | ❌ blocks |
+| clean | `completed` / `success` | ✅ |
+| failed after max iterations | `completed` / `failure` | ❌ blocks |
+
+The check run binds to the head SHA, so a push mid-review naturally invalidates
+the old verdict (the engine re-reports on the next event). It's emitted with the
+Actions `GITHUB_TOKEN` (the Checks API is App/Actions-token only — a PAT can't
+create check runs), via `set_check_run` in `lib.sh`, from the `plan` job (initial
+`in_progress`) and `advance.sh` (terminal/iterate states). The relevant jobs
+carry `checks: write`.
+
+**Emitting the check is not the same as enforcing it.** The check appears in the
+merge box on any repo, but it only *blocks* merge once you make it a **required
+status check** in branch protection / rulesets — which needs a public repo or a
+paid plan for private repos. Configure it once the check has reported at least
+once (so GitHub knows the `grumpy-review` name):
+
+- **Ruleset** (recommended): *Settings → Rules → Rulesets → New branch ruleset*,
+  target the default branch, enable *Require status checks before merging*, add
+  `grumpy-review` (source: GitHub Actions).
+- **Classic**: *Settings → Branches → Add rule*, pattern `main`, *Require status
+  checks to pass before merging*, search and select `grumpy-review`.
+
+Optionally layer *Require approvals* on top for a human sign-off in addition to
+the automated gate. (Caveat: the bot can post `action_required`/REQUEST_CHANGES
+to block, but can't `APPROVE` to unblock unless the repo's "Allow GitHub Actions
+to approve pull requests" setting is on — see `STATUS.md`.)
+
 ---
 
 ## 6. Operational setup

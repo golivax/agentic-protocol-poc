@@ -78,6 +78,14 @@ before extending the system so you know which "missing" pieces are deliberate.
   bash — same ABI. New test suite `tests/test-runchecks.sh` (11 tests) covers
   resolution and robustness (missing / non-executable / crashing / ambiguous).
 
+- **Merge-gating via a check run.** `advance.sh`/`plan` emit a `grumpy-review`
+  check run on the PR head SHA reflecting protocol state (in_progress while
+  reviewing, `action_required` on changes-requested, `success` on clean,
+  `failure` on exhausted). Emitting works on any repo; *blocking* the merge
+  requires making `grumpy-review` a required status check in branch protection /
+  rulesets (needs a public repo or a paid plan for private). `lib.sh`
+  `set_check_run`; engine tests assert the three outcomes (50 local tests total).
+
 ## Known engine couplings to generalise (not redesign)
 
 The engine scripts are meant to be protocol-agnostic and mostly are

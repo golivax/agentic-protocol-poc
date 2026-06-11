@@ -24,8 +24,10 @@ jobs:
     permissions:
       contents: read
       issues: write
+      checks: write
     outputs:
       pr: ${{ steps.ctx.outputs.pr }}
+      head_sha: ${{ steps.head.outputs.sha }}
       action: ${{ steps.plan.outputs.action }}
       iteration: ${{ steps.plan.outputs.iteration }}
       feedback: ${{ steps.plan.outputs.feedback }}
@@ -71,6 +73,23 @@ jobs:
           else
             echo "sabotage=false" >> "$GITHUB_OUTPUT"
           fi
+      - id: head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.ctx.outputs.pr }}
+        run: |
+          SHA=$(gh pr view "$PR" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+      - name: Mark review in progress (check run)
+        if: steps.plan.outputs.action == 'run-agent'
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.head.outputs.sha }}
+          ITER: ${{ steps.plan.outputs.iteration }}
+        run: |
+          source .github/engine/lib.sh
+          set_check_run "$SHA" in_progress "" "Grumpy review in progress" "Reviewing (iteration $ITER); merge is gated until the protocol completes."
 
   # ── Zone 2: the sandboxed agent, as a separately dispatched gh-aw workflow. ──
   dispatch:
@@ -173,6 +192,7 @@ jobs:
       pull-requests: write
       issues: write
       actions: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
       - name: Ensure yq
@@ -200,6 +220,7 @@ jobs:
           AGENT_RUN_ID: ${{ needs.dispatch.outputs.agent_run_id }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR: ${{ needs.plan.outputs.pr }}
+          PR_HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
           VERDICTS: ${{ needs.checks.outputs.verdicts }}
         run: |
           if [ -z "$VERDICTS" ]; then

@@ -95,20 +95,30 @@ render_status_body() {
 # Branch ordering: mutate state → publish/side-effects that don't touch state →
 # upsert_status_comment → cas_push LAST → dispatch.
 # upsert before push: it may write status_comment_id into state.
+SHA="${PR_HEAD_SHA:-}"   # the PR head commit the check run attaches to (from the orchestrator)
 if [ "$ALL_PASS" = "true" ]; then
   yq -i '.state = "done"' "$SF"
   publish_review
+  # Check run mirrors the review verdict so branch protection can gate the merge:
+  # issues-found → action_required (changes must be addressed); clean → success.
+  if jq -e 'any(.files[]?.verdicts[]?; .verdict=="issues-found")' "$EVID" >/dev/null 2>&1; then
+    set_check_run "$SHA" completed action_required "Changes requested" "Grumpy requested changes — resolve them before merging. See the review."
+  else
+    set_check_run "$SHA" completed success "Approved" "Grumpy examined every file × category and found nothing to fix."
+  fi
   upsert_status_comment "$DIR" "$PR" "$(render_status_body "$SF" "$PR" "✅ **done** — review published.")"
   cas_push "$DIR" "pr-$PR: checks passed at iteration $ITER → published, done"
 elif [ "$ITER" -lt "$MAX" ]; then
   NEXT=$((ITER + 1))
   N="$NEXT" yq -i '.iteration = env(N)' "$SF"
+  set_check_run "$SHA" in_progress "" "Grumpy review in progress" "Iteration $ITER failed checks; retrying as iteration $NEXT/$MAX."
   upsert_status_comment "$DIR" "$PR" "$(render_status_body "$SF" "$PR" "⏳ iteration $ITER failed checks — retrying as iteration $NEXT/$MAX…")"
   cas_push "$DIR" "pr-$PR: iteration $ITER failed checks → iteration $NEXT"
   gh_api api "repos/$GITHUB_REPOSITORY/dispatches" \
     -f event_type="grumpy-continue" -F "client_payload[pr]=$PR"
 else
   yq -i '.state = "failed"' "$SF"
+  set_check_run "$SHA" completed failure "Review failed" "Could not produce a valid review after $MAX iterations."
   upsert_status_comment "$DIR" "$PR" "$(render_status_body "$SF" "$PR" "❌ **failed** after $MAX iterations.")"
   cas_push "$DIR" "pr-$PR: iterations exhausted → failed"
 fi
