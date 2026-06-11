@@ -39,44 +39,52 @@ check "cas push survives concurrent writer" \
    grep -q 'state: publish' '$WORK/verify2/grumpy/pr-1.yaml' && \
    grep -q 'state: review' '$WORK/verify2/grumpy/pr-2.yaml'"
 
-# --- next.sh: first call initializes state and emits run-agent iter 1
-S3="$WORK/s3"
-A=$(.github/engine/next.sh "$S3" pr-7 protocols/grumpy/protocol.json)
-check "next: initial action is run-agent" '[ "$(jq -r .action <<<"$A")" = run-agent ]'
-check "next: initial iteration is 1"      '[ "$(jq -r .iteration <<<"$A")" = 1 ]'
-check "next: state file pushed"           "git clone -q --branch agentic-state '$STATE_REMOTE' '$WORK/verify3' && grep -q 'state: review' '$WORK/verify3/grumpy-review/pr-7.yaml'"
+PROTO=protocols/grumpy/protocol.json
+NEXT=.github/engine/next.sh
 
-# --- next.sh: feedback from history is surfaced
+# start on ABSENT → fresh review, run-agent iter 1, state pushed
+A=$("$NEXT" "$WORK/n1" pr-7 "$PROTO" start)
+check "start/absent: run-agent"        '[ "$(jq -r .action <<<"$A")" = run-agent ]'
+check "start/absent: iteration 1"      '[ "$(jq -r .iteration <<<"$A")" = 1 ]'
+check "start/absent: state pushed"     "git clone -q --branch agentic-state '$STATE_REMOTE' '$WORK/vn1' && grep -q 'state: review' '$WORK/vn1/grumpy-review/pr-7.yaml'"
+
+# continue on ACTIVE (iter 2 + feedback) → resume iter 2 with feedback
+state_checkout "$WORK/n2"
 FB="Missing: security × src/auth.js" yq -i \
-  '.iteration = 2 | .history += [{"iteration": 1, "agent_run_id": "100", "feedback": strenv(FB)}]' \
-  "$S3/grumpy-review/pr-7.yaml"
-cas_push "$S3" "simulate failed iteration"
-S4="$WORK/s4"
-A=$(.github/engine/next.sh "$S4" pr-7 protocols/grumpy/protocol.json)
-check "next: resumes at iteration 2"   '[ "$(jq -r .iteration <<<"$A")" = 2 ]'
-check "next: carries feedback"         'jq -r .feedback <<<"$A" | grep -q "security × src/auth.js"'
+  '.iteration = 2 | .history += [{"iteration":1,"agent_run_id":"100","feedback":strenv(FB)}]' \
+  "$WORK/n2/grumpy-review/pr-7.yaml"
+cas_push "$WORK/n2" "simulate failed iteration"
+A=$("$NEXT" "$WORK/n3" pr-7 "$PROTO" continue)
+check "continue/active: resumes iter 2" '[ "$(jq -r .iteration <<<"$A")" = 2 ]'
+check "continue/active: carries feedback" 'jq -r .feedback <<<"$A" | grep -q "security × src/auth.js"'
 
-# --- next.sh: terminal state halts
-S5="$WORK/s5"; state_checkout "$S5"
-yq -i '.state = "done"' "$S5/grumpy-review/pr-7.yaml" && cas_push "$S5" "simulate done"
-S6="$WORK/s6"
-A=$(.github/engine/next.sh "$S6" pr-7 protocols/grumpy/protocol.json)
-check "next: terminal state halts" '[ "$(jq -r .action <<<"$A")" = halt ]'
+# continue on TERMINAL → halt
+state_checkout "$WORK/n4"
+yq -i '.state = "done"' "$WORK/n4/grumpy-review/pr-7.yaml" && cas_push "$WORK/n4" "simulate done"
+A=$("$NEXT" "$WORK/n5" pr-7 "$PROTO" continue)
+check "continue/terminal: halts" '[ "$(jq -r .action <<<"$A")" = halt ]'
 
-# --- next.sh: a new head commit resets a terminal instance to a fresh review ---
-S7="$WORK/s7"; state_checkout "$S7"; mkdir -p "$S7/grumpy-review"
-yq -n '.protocol="grumpy-review"|.instance="pr-77"|.state="done"|.iteration=2|.gates={}|.head_sha="aaa111"|.history=[{"iteration":1,"feedback":"old"}]' > "$S7/grumpy-review/pr-77.yaml"
-cas_push "$S7" "seed pr-77 done@aaa111"
-A=$(.github/engine/next.sh "$WORK/s8" pr-77 protocols/grumpy/protocol.json bbb222)
-check "next: new head → run-agent iter 1" '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
-state_checkout "$WORK/s9"
-check "next: new head recorded + reset to review" '[ "$(yq -r .head_sha "$WORK/s9/grumpy-review/pr-77.yaml")" = bbb222 ] && [ "$(yq -r .state "$WORK/s9/grumpy-review/pr-77.yaml")" = review ]'
-# same head + terminal → halt (no spurious reset)
-S11="$WORK/s11"; state_checkout "$S11"; mkdir -p "$S11/grumpy-review"
-yq -n '.protocol="grumpy-review"|.instance="pr-78"|.state="done"|.iteration=1|.gates={}|.head_sha="ccc333"|.history=[]' > "$S11/grumpy-review/pr-78.yaml"
-cas_push "$S11" "seed pr-78 done@ccc333"
-A=$(.github/engine/next.sh "$WORK/s12" pr-78 protocols/grumpy/protocol.json ccc333)
-check "next: same head + terminal → halt" '[ "$(jq -r .action <<<"$A")" = halt ]'
+# start on TERMINAL → fresh re-review (intentional v1 divergence)
+A=$("$NEXT" "$WORK/n6" pr-7 "$PROTO" start)
+check "start/terminal: re-reviews fresh" '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
+state_checkout "$WORK/n6b"
+check "start/terminal: state reset to review" '[ "$(yq -r .state "$WORK/n6b/grumpy-review/pr-7.yaml")" = review ]'
+
+# start on ACTIVE → halt (intentional v1 divergence; do not disturb in-flight)
+state_checkout "$WORK/n7"; mkdir -p "$WORK/n7/grumpy-review"
+yq -n '.protocol="grumpy-review"|.instance="pr-88"|.state="review"|.iteration=2|.gates={}|.head_sha="aaa"|.history=[]' > "$WORK/n7/grumpy-review/pr-88.yaml"
+cas_push "$WORK/n7" "seed pr-88 active"
+A=$("$NEXT" "$WORK/n8" pr-88 "$PROTO" start)
+check "start/active: halts" '[ "$(jq -r .action <<<"$A")" = halt ]'
+
+# reset always → fresh review iter 1 and records the new head
+state_checkout "$WORK/n9"; mkdir -p "$WORK/n9/grumpy-review"
+yq -n '.protocol="grumpy-review"|.instance="pr-9"|.state="done"|.iteration=3|.gates={}|.head_sha="old111"|.history=[{"iteration":1,"feedback":"old"}]' > "$WORK/n9/grumpy-review/pr-9.yaml"
+cas_push "$WORK/n9" "seed pr-9 done@old111"
+A=$("$NEXT" "$WORK/n10" pr-9 "$PROTO" reset new222)
+check "reset: run-agent iter 1" '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
+state_checkout "$WORK/n11"
+check "reset: new head recorded + state review" '[ "$(yq -r .head_sha "$WORK/n11/grumpy-review/pr-9.yaml")" = new222 ] && [ "$(yq -r .state "$WORK/n11/grumpy-review/pr-9.yaml")" = review ]'
 
 # --- advance.sh: failed checks → iteration bump + feedback + re-dispatch intent
 W7="$WORK/w7"; rm -rf "$W7"
