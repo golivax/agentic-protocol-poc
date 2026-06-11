@@ -17,6 +17,7 @@ PID=$(protocol_id "$PROTO")
 AGENT_STATE=$(jq -r '.states[] | select(.kind=="agent") | .id' "$PROTO")
 [ -n "$AGENT_STATE" ] || { echo "[engine] protocol has no agent state" >&2; exit 1; }
 MAX=$(jq -r --arg s "$AGENT_STATE" '.states[] | select(.id==$s) | .max_iterations' "$PROTO")
+[ -n "$MAX" ] && [ "$MAX" != "null" ] || { echo "[engine] agent state '$AGENT_STATE' has no max_iterations" >&2; exit 1; }
 state_checkout "$DIR"
 SF=$(state_file "$DIR" "$PID" "$INSTANCE")
 
@@ -40,15 +41,20 @@ start_fresh() {
   emit_run_agent 1 "" "$COMMAND"
 }
 
-# Determine the instance lifecycle from the (optional) state file.
+# Determine the instance lifecycle from the (optional) state file. Defensive reads
+# (// fallbacks) keep a malformed/partial state file from aborting under `set -e`.
+# Literal equality, NOT a case pattern: a case glob would treat metacharacters in
+# $AGENT_STATE (if a future protocol used any) as wildcards.
 LIFECYCLE="absent"; ITER=0
 if [ -f "$SF" ]; then
-  STATE=$(yq -r '.state' "$SF")
-  ITER=$(yq -r '.iteration' "$SF")
-  case "$STATE" in
-    "$AGENT_STATE") if [ "$ITER" -gt "$MAX" ]; then LIFECYCLE="terminal"; else LIFECYCLE="active"; fi ;;
-    *)              LIFECYCLE="terminal" ;;   # done / failed / any non-agent terminal
-  esac
+  STATE=$(yq -r '.state // ""' "$SF")
+  ITER=$(yq -r '.iteration // 0' "$SF")
+  if [ "$STATE" = "$AGENT_STATE" ]; then
+    # iterations 1..MAX are all valid attempts; > MAX means the loop is spent.
+    if [ "$ITER" -gt "$MAX" ]; then LIFECYCLE="terminal"; else LIFECYCLE="active"; fi
+  else
+    LIFECYCLE="terminal"   # done / failed / any non-agent terminal
+  fi
 fi
 
 case "$COMMAND" in

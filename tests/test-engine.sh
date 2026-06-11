@@ -48,7 +48,12 @@ check "start/absent: run-agent"        '[ "$(jq -r .action <<<"$A")" = run-agent
 check "start/absent: iteration 1"      '[ "$(jq -r .iteration <<<"$A")" = 1 ]'
 check "start/absent: state pushed"     "git clone -q --branch agentic-state '$STATE_REMOTE' '$WORK/vn1' && grep -q 'state: review' '$WORK/vn1/grumpy-review/pr-7.yaml'"
 
+# continue on ABSENT → fresh review iter 1 (defensive corner: engine loop before any start)
+A=$("$NEXT" "$WORK/nc0" pr-700 "$PROTO" continue)
+check "continue/absent: fresh iter 1" '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
+
 # continue on ACTIVE (iter 2 + feedback) → resume iter 2 with feedback
+# (reuses the pr-7 state pushed by start/absent above — pr-7 tests share state)
 state_checkout "$WORK/n2"
 FB="Missing: security × src/auth.js" yq -i \
   '.iteration = 2 | .history += [{"iteration":1,"agent_run_id":"100","feedback":strenv(FB)}]' \
@@ -85,6 +90,13 @@ A=$("$NEXT" "$WORK/n10" pr-9 "$PROTO" reset new222)
 check "reset: run-agent iter 1" '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
 state_checkout "$WORK/n11"
 check "reset: new head recorded + state review" '[ "$(yq -r .head_sha "$WORK/n11/grumpy-review/pr-9.yaml")" = new222 ] && [ "$(yq -r .state "$WORK/n11/grumpy-review/pr-9.yaml")" = review ]'
+
+# reset on ACTIVE → also fresh iter 1 (unconditional, regardless of in-flight state)
+state_checkout "$WORK/n12"; mkdir -p "$WORK/n12/grumpy-review"
+yq -n '.protocol="grumpy-review"|.instance="pr-99"|.state="review"|.iteration=2|.gates={}|.head_sha="x"|.history=[{"iteration":1,"feedback":"prev"}]' > "$WORK/n12/grumpy-review/pr-99.yaml"
+cas_push "$WORK/n12" "seed pr-99 active"
+A=$("$NEXT" "$WORK/n13" pr-99 "$PROTO" reset z999)
+check "reset/active: run-agent iter 1" '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
 
 # --- advance.sh: failed checks → iteration bump + feedback + re-dispatch intent
 W7="$WORK/w7"; rm -rf "$W7"
