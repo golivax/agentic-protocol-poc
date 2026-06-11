@@ -31,16 +31,16 @@ assert_check schema-valid.sh false "not an object" /tmp/ev-strfile.json
 echo '{"files":[{"path":"a.js","verdicts":"oops"}]}' > /tmp/ev-badverdicts.json
 assert_check schema-valid.sh false "verdicts" /tmp/ev-badverdicts.json
 
-assert_check rubric-coverage.sh true  ""                     "$FX/evidence-complete.json"
-assert_check rubric-coverage.sh false "security × src/auth.js" "$FX/evidence-lazy.json"
-assert_check rubric-coverage.sh false "duplication × src/report.js" "$FX/evidence-lazy.json"
+assert_check rubric-coverage.py true  ""                     "$FX/evidence-complete.json"
+assert_check rubric-coverage.py false "security × src/auth.js" "$FX/evidence-lazy.json"
+assert_check rubric-coverage.py false "duplication × src/report.js" "$FX/evidence-lazy.json"
 # duplicated verdict for one cell is also a failure:
 jq '.files[0].verdicts += [.files[0].verdicts[0]]' "$FX/evidence-complete.json" > /tmp/ev-dup.json
-assert_check rubric-coverage.sh false "naming × src/auth.js" /tmp/ev-dup.json
+assert_check rubric-coverage.py false "naming × src/auth.js" /tmp/ev-dup.json
 
 # changed-files without trailing newline must not exempt the last file:
 printf 'src/auth.js\nsrc/report.js' > /tmp/files-nonewline.txt
-assert_check rubric-coverage.sh false "src/report.js" "$FX/evidence-lazy.json" "$FX/diff-pr1.txt" /tmp/files-nonewline.txt
+assert_check rubric-coverage.py false "src/report.js" "$FX/evidence-lazy.json" "$FX/diff-pr1.txt" /tmp/files-nonewline.txt
 
 assert_check traces-exist-in-diff.sh true  ""                          "$FX/evidence-complete.json"
 assert_check traces-exist-in-diff.sh false "authenticateUser"          "$FX/evidence-fabricated.json"

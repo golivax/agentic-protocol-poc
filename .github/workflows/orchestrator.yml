@@ -151,19 +151,17 @@ jobs:
           RID: ${{ needs.dispatch.outputs.agent_run_id }}
           OK: ${{ needs.dispatch.outputs.agent_ok }}
         run: |
+          # The check LIST comes from protocol.json (not hardcoded here); run-checks.sh
+          # resolves each check to an executable in any language and aggregates verdicts.
           EV=/tmp/agent/evidence.json
-          RESULTS="[]"
-          for c in schema-valid rubric-coverage traces-exist-in-diff; do
-            if [ ! -f "$EV" ]; then
-              V=$(jq -nc --arg c "$c" --arg r "$RID" --arg ok "$OK" \
-                '{check:$c, pass:false, feedback:("agent run produced no evidence artifact (run " + $r + ", ok=" + $ok + ")")}')
-            else
-              V=$("protocols/grumpy/checks/$c.sh" "$EV" /tmp/diff.txt /tmp/files.txt)
-            fi
-            echo "$V"
-            RESULTS=$(jq -c --argjson v "$V" '. + [$v]' <<<"$RESULTS")
-          done
-          echo "verdicts=$(jq -c '{results: .}' <<<"$RESULTS")" >> "$GITHUB_OUTPUT"
+          if [ ! -f "$EV" ]; then
+            echo "WARNING: no evidence artifact (agent run $RID, ok=$OK); checks will report it" >&2
+            echo '{}' > "$EV"
+          fi
+          VERDICTS=$(.github/engine/run-checks.sh \
+            protocols/grumpy/protocol.json review "$EV" /tmp/diff.txt /tmp/files.txt)
+          jq . <<<"$VERDICTS"
+          echo "verdicts=$VERDICTS" >> "$GITHUB_OUTPUT"
 
   # ── Zone 4: engine-post. Reads check verdicts only; sole writer of state. ──
   advance:

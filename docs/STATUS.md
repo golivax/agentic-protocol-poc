@@ -68,6 +68,28 @@ before extending the system so you know which "missing" pieces are deliberate.
     concurrency group, so two PRs reviewed concurrently could misattribute
     runs. A production fix stamps a correlation id into the evidence artifact.
 
+## Post-v1 enhancements (added after the demos)
+
+- **Polyglot, data-driven checks.** `engine/run-checks.sh` reads the check list
+  from `protocol.json` (`.states[].checks[]`) and resolves each to an executable
+  in any language (`exec` path, or `checks/<name>.*` extension-agnostic). The
+  orchestrator no longer hardcodes the check names. `rubric-coverage` is now
+  Python (`rubric-coverage.py`); `schema-valid` and `traces-exist-in-diff` stay
+  bash — same ABI. New test suite `tests/test-runchecks.sh` (11 tests) covers
+  resolution and robustness (missing / non-executable / crashing / ambiguous).
+
+## Known engine couplings to generalise (not redesign)
+
+The engine scripts are meant to be protocol-agnostic and mostly are
+(`run-checks.sh` takes any `protocol.json`; `next.sh`/`advance.sh` take the
+protocol path as an argument). Two grumpy-specific literals remain baked in and
+should become parameters when a second protocol is added:
+
+- `next.sh` / `advance.sh` write `protocol: "grumpy-review"` into new state.
+- `lib.sh`'s `state_file` hardcodes the `grumpy/pr-<N>.yaml` path layout.
+
+These are small (instance-key + protocol-id as inputs), not architectural.
+
 ## Not exercised by this PoC (honest gaps)
 
 - **Checks that execute agent-authored code** (e.g. running the project's

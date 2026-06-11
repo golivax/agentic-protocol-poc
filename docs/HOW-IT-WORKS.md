@@ -96,19 +96,34 @@ protocols/grumpy/
   evidence.schema.json   # the rubric the agent must fill (the CONTRACT)
   checks/*.sh            # deterministic transition checks (FORM verification)
 
-.github/engine/
+.github/engine/            # GENERIC — protocol-agnostic
   lib.sh                 # state checkout, CAS push, status-comment upsert
   next.sh                # planner: (state, protocol) -> action JSON
   advance.sh             # sole state writer: verdicts -> mutate, publish, push
+  run-checks.sh          # resolve + run a state's checks (any language) -> verdicts
 
 .github/workflows/
-  orchestrator.yml       # hand-written: the 4 trust zones, one run per iteration
-  grumpy-agent.md        # gh-aw agent workflow (the one "agent" state)
+  orchestrator.yml       # the 4 trust zones; calls the engine + the protocol's checks
+  grumpy-agent.md        # gh-aw agent workflow for the example protocol
   grumpy-agent.lock.yml  # compiled output of grumpy-agent.md (committed)
 
 agentic-state branch
   grumpy/pr-<N>.yaml     # durable per-instance state (the source of truth)
 ```
+
+> **`grumpy-review` is an example protocol, not the engine.** Everything under
+> `.github/engine/` (and the orchestrator's plumbing) is generic: it interprets
+> *a* `protocol.json`, runs *its* checks, and advances *its* state. The grumpy
+> reviewer — its `protocol.json`, evidence schema, checks, and agent prompt —
+> lives entirely in `protocols/grumpy/` + `grumpy-agent.md` and exists to
+> exercise the engine. To build a different protocol (an incident-response
+> runbook, a release checklist, a compliance review) you write a new
+> `protocols/<name>/` and agent workflow; you do **not** touch the engine.
+>
+> *v1 caveat:* a few grumpy-specific names are still baked into the engine
+> scripts (the literal `"grumpy-review"` and the `grumpy/pr-<N>.yaml` state
+> path). Generalising those — instance key and protocol id as parameters — is a
+> small, known refactor tracked in `STATUS.md`, not a redesign.
 
 ### 3.2 The four trust zones (per iteration)
 
@@ -236,10 +251,35 @@ the agent examined, so the check can confirm the agent actually read the code.
 
 ### 4.3 Writing a deterministic check
 
-Contract: `check.sh <evidence.json> <diff.txt> <changed-files.txt>` →
-one line of JSON `{"check": "<name>", "pass": bool, "feedback": "<string>"}`,
-**always exit 0** (a non-zero exit means a runner error, not a failed check).
-Read the rubric from `protocol.json` — don't hardcode it.
+**The check contract is a language-agnostic CLI ABI**, not a bash convention:
+
+> An executable invoked as `<check> <evidence.json> <diff.txt> <changed-files.txt>`
+> that prints one JSON object `{"check","pass","feedback"}` to stdout and exits 0.
+
+Any language that can read three file paths and print a line of JSON qualifies.
+The engine's `run-checks.sh` reads the check *list* from `protocol.json`
+(`.states[].checks[]`) and resolves each entry to an executable:
+
+- if the entry sets `"exec": "<path>"`, it runs `<protocol-dir>/<path>`;
+- otherwise it finds `<protocol-dir>/checks/<run>` or `checks/<run>.*`
+  (extension-agnostic — so `checks/rubric-coverage.py` and
+  `checks/schema-valid.sh` are both first-class).
+
+So a Python check is just `checks/<name>.py` with `#!/usr/bin/env python3` and
+`chmod +x` — **no bash wrapper.** A wrapper is only worth writing when you're
+*adapting an existing tool* whose output isn't the verdict JSON (e.g. a
+`checks/tests-adapter.py` that runs `pytest` and translates its exit code into
+`{check,pass,feedback}`) — that adapter does real work, and it's exactly the
+"a check that runs agent-authored code in the credential-free zone-3 job" case.
+`run-checks.sh` turns a missing, non-executable, crashing, or malformed check
+into a *failing verdict* rather than aborting the run.
+
+In this example protocol, `rubric-coverage` is implemented in **Python** and the
+other two in **bash**, to demonstrate the mix; all three obey the same ABI.
+
+Whatever the language: **always exit 0** even when the check fails (a non-zero
+exit is reserved for a genuine runner error), and read the rubric from
+`protocol.json` rather than hardcoding it.
 
 Two rules that make checks trustworthy:
 
@@ -307,41 +347,72 @@ ERR=$(jq -r --argjson valid "$CATS_JSON" '
 if [ -n "$ERR" ]; then emit false "$ERR"; else emit true ""; fi
 ```
 
-#### `rubric-coverage.sh` — is every cell of the rubric filled exactly once?
+#### `rubric-coverage.py` — is every cell of the rubric filled exactly once?
 
-Ground truth is the changed-files list (the orchestrator fetches it with
-`gh pr diff --name-only`), filtered to `.js`. For every file × every category it
-counts verdicts and demands **exactly one** — so `0` (the agent skipped it,
-e.g. under sabotage) *and* `2+` (padding/duplication) both fail. The `read`
-loop tolerates a missing trailing newline and strips `\r`, so a file is never
-silently dropped from coverage.
+*(This one is **Python**, to show the ABI is language-agnostic — it's resolved
+and run by `run-checks.sh` exactly like the bash checks.)* Ground truth is the
+changed-files list (the orchestrator fetches it with `gh pr diff --name-only`),
+filtered to `.js`. For every file × every category it counts verdicts and
+demands **exactly one** — so `0` (the agent skipped it, e.g. under sabotage)
+*and* `2+` (padding/duplication) both fail. Malformed evidence is treated as
+"no verdicts" so this check reports missing cells rather than crashing
+(`schema-valid` reports the bad shape).
 
-```bash
-#!/usr/bin/env bash
+```python
+#!/usr/bin/env python3
 # Check: every reviewable changed file × every category has exactly one verdict.
-# Usage: rubric-coverage.sh <evidence.json> <diff.txt> <changed-files.txt>
-set -euo pipefail
-EV="$1"; FILES="$3"
-PROTO="$(cd "$(dirname "$0")/.." && pwd)/protocol.json"
+# Usage: rubric-coverage.py <evidence.json> <diff.txt> <changed-files.txt>
+import json, os, sys
 
-mapfile -t CATS < <(jq -r '.categories[]' "$PROTO")
-BAD=()
-while IFS= read -r f || [ -n "$f" ]; do
-  f="${f%$'\r'}"
-  case "$f" in *.js) ;; *) continue ;; esac
-  for c in "${CATS[@]}"; do
-    n=$(jq --arg p "$f" --arg c "$c" \
-      '[.files[]? | select(.path==$p) | .verdicts[]? | select(.category==$c)] | length' "$EV")
-    if [ "$n" != "1" ]; then BAD+=("$c × $f (verdicts: $n)"); fi
-  done
-done < "$FILES"
+def main() -> None:
+    ev_path, _diff, files_path = sys.argv[1], sys.argv[2], sys.argv[3]
+    proto = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "protocol.json"
+    )
+    with open(proto) as fh:
+        categories = json.load(fh)["categories"]
 
-if [ "${#BAD[@]}" -gt 0 ]; then
-  FB="Missing or duplicated rubric cells: $(IFS='; '; echo "${BAD[*]}")"
-  jq -n --arg f "$FB" '{check:"rubric-coverage", pass:false, feedback:$f}'
-else
-  jq -n '{check:"rubric-coverage", pass:true, feedback:""}'
-fi
+    try:
+        with open(ev_path) as fh:
+            evidence = json.load(fh)
+    except (OSError, ValueError):
+        evidence = {}
+    files = evidence.get("files", []) if isinstance(evidence, dict) else []
+
+    counts: dict[tuple, int] = {}
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path")
+        verdicts = entry.get("verdicts") or []
+        if not isinstance(verdicts, list):
+            continue
+        for verdict in verdicts:
+            if isinstance(verdict, dict):
+                key = (path, verdict.get("category"))
+                counts[key] = counts.get(key, 0) + 1
+
+    with open(files_path) as fh:
+        changed = [line.rstrip("\r\n") for line in fh]
+
+    bad = []
+    for path in changed:
+        if not path.endswith(".js"):
+            continue
+        for category in categories:
+            n = counts.get((path, category), 0)
+            if n != 1:
+                bad.append(f"{category} × {path} (verdicts: {n})")
+
+    if bad:
+        out = {"check": "rubric-coverage", "pass": False,
+               "feedback": "Missing or duplicated rubric cells: " + "; ".join(bad)}
+    else:
+        out = {"check": "rubric-coverage", "pass": True, "feedback": ""}
+    print(json.dumps(out, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()
 ```
 
 #### `traces-exist-in-diff.sh` — does every claim point at something real?
