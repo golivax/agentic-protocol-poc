@@ -9,7 +9,9 @@
           "findings": [
             {
               "existing_code": "function authenticateUser(credentials) {",
-              "comment": "Seriously? 'f', 'x', 'y'? In 2026?"
+              "comment": "Seriously? 'f', 'x', 'y'? In 2026?",
+              "side": "RIGHT",
+              "line": 1
             }
           ]
         },
@@ -19,7 +21,9 @@
           "findings": [
             {
               "existing_code": "fetch(\"https://api.example.com/login?token=\" + token);",
-              "comment": "Unawaited fetch, no error handling. What happens when this fails? Magic?"
+              "comment": "Unawaited fetch, no error handling. What happens when this fails? Magic?",
+              "side": "RIGHT",
+              "line": 8
             }
           ]
         },
@@ -45,7 +49,9 @@
           "findings": [
             {
               "existing_code": "fetch(\"https://api.example.com/login?token=\" + token);",
-              "comment": "Credentials in a URL query string. They end up in every proxy log on Earth."
+              "comment": "Credentials in a URL query string. They end up in every proxy log on Earth.",
+              "side": "RIGHT",
+              "line": 8
             }
           ]
         }
@@ -74,7 +80,9 @@
           "findings": [
             {
               "existing_code": "for (let j = 0; j < items.length; j++) {",
-              "comment": "Nested full scan. O(n²) duplicate detection. Ever heard of a Set?"
+              "comment": "Nested full scan. O(n²) duplicate detection. Ever heard of a Set?",
+              "side": "RIGHT",
+              "line": 4
             }
           ]
         },
@@ -84,7 +92,9 @@
           "findings": [
             {
               "existing_code": "function formatFooter(title) {",
-              "comment": "Copy-pasted from formatHeader. *Sighs in DRY principle*"
+              "comment": "Copy-pasted from formatHeader. *Sighs in DRY principle*",
+              "side": "RIGHT",
+              "line": 17
             }
           ]
         },

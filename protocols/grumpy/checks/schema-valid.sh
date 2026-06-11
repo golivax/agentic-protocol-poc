@@ -28,6 +28,12 @@ ERR=$(jq -r --argjson valid "$CATS_JSON" '
       then "issues-found with no findings: \(.category) × \($p)"
     elif .verdict == "issues-found" and ([(.findings // [])[] | ((.existing_code // "") | length) > 0 and ((.comment // "") | length) > 0] | all | not)
       then "finding with empty existing_code or comment: \(.category) × \($p)"
+    elif .verdict == "issues-found" and ([(.findings // [])[] |
+        ((.side == "RIGHT") or (.side == "LEFT"))
+        and ((.line | type) == "number") and (.line >= 1)
+        and ((.start_line == null) or (((.start_line | type) == "number") and (.start_line >= 1)))
+      ] | all | not)
+      then "finding missing valid line/side anchor: \(.category) × \($p)"
     elif .verdict == "none-found" and ((.examined // []) | length) == 0
       then "none-found with no examined identifiers: \(.category) × \($p)"
     else empty end

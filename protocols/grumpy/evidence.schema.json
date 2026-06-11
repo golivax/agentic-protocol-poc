@@ -23,10 +23,13 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "required": ["existing_code", "comment"],
+                    "required": ["existing_code", "comment", "side", "line"],
                     "properties": {
                       "existing_code": { "type": "string", "minLength": 1 },
-                      "comment": { "type": "string", "minLength": 1 }
+                      "comment": { "type": "string", "minLength": 1 },
+                      "side": { "enum": ["RIGHT", "LEFT"] },
+                      "line": { "type": "integer", "minimum": 1 },
+                      "start_line": { "type": "integer", "minimum": 1 }
                     }
                   }
                 },

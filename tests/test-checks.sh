@@ -31,6 +31,16 @@ assert_check schema-valid.sh false "not an object" /tmp/ev-strfile.json
 echo '{"files":[{"path":"a.js","verdicts":"oops"}]}' > /tmp/ev-badverdicts.json
 assert_check schema-valid.sh false "verdicts" /tmp/ev-badverdicts.json
 
+# issues-found findings must carry a valid line/side anchor:
+echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y"}]}]}]}' > /tmp/ev-noanchor.json
+assert_check schema-valid.sh false "anchor" /tmp/ev-noanchor.json
+echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":"3"}]}]}]}' > /tmp/ev-strline.json
+assert_check schema-valid.sh false "anchor" /tmp/ev-strline.json
+echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"UP","line":3}]}]}]}' > /tmp/ev-badside.json
+assert_check schema-valid.sh false "anchor" /tmp/ev-badside.json
+echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":3,"start_line":"two"}]}]}]}' > /tmp/ev-strstart.json
+assert_check schema-valid.sh false "anchor" /tmp/ev-strstart.json
+
 assert_check rubric-coverage.py true  ""                     "$FX/evidence-complete.json"
 assert_check rubric-coverage.py false "security × src/auth.js" "$FX/evidence-lazy.json"
 assert_check rubric-coverage.py false "duplication × src/report.js" "$FX/evidence-lazy.json"
