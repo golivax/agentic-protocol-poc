@@ -105,6 +105,14 @@ sed 's|b/src/auth.js|b/src/authXjs|; s|a/src/auth.js|a/src/authXjs|' "$FX/diff-p
 jq -n '{files:[{path:"src/auth.js",verdicts:[{category:"naming",verdict:"none-found",examined:["login"]}]}]}' > /tmp/ev-regexpath.json
 assert_check traces-exist-in-diff.py false "login" /tmp/ev-regexpath.json /tmp/diff-xjs.txt
 
+# missing args → clean JSON rejection, exit 0 (ABI contract):
+out=$(protocols/grumpy/checks/traces-exist-in-diff.py 2>/dev/null); rc=$?
+if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ]; then
+  PASS=$((PASS+1)); echo "ok: traces-exist-in-diff handles missing args"
+else
+  FAIL=$((FAIL+1)); echo "FAIL: traces-exist-in-diff missing-args rc=$rc out=$out"
+fi
+
 echo "-----"
 echo "checks tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

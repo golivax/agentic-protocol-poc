@@ -107,6 +107,14 @@ def verify_finding(f, fmap, path, cat):
 
 
 def main():
+    if len(sys.argv) < 4:
+        print(json.dumps({
+            "check": "traces-exist-in-diff",
+            "pass": False,
+            "feedback": "usage: traces-exist-in-diff.py <evidence.json> <diff.txt> <changed-files.txt>",
+        }))
+        sys.exit(0)
+    # _files (changed-files.txt) is unused: the diff is the source of truth here.
     ev_path, diff_path, _files = sys.argv[1], sys.argv[2], sys.argv[3]
     try:
         with open(ev_path) as fh:
