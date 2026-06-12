@@ -6,8 +6,8 @@ Usage: rubric-coverage.py <evidence.json> <diff.txt> <changed-files.txt>
 A polyglot example: this check honours the same ABI as the bash checks
 (3 path args in, one {check,pass,feedback} JSON object on stdout, exit 0) but is
 written in Python. Ground truth is the changed-files list (arg 3), filtered to
-.js; the diff (arg 2) is unused here. Categories come from the sibling
-protocol.json, never hardcoded.
+.js; the diff (arg 2) is unused here. Categories come from CHECK_PARAMS
+(engine-resolved, scoped to this check's node), never hardcoded.
 """
 import json
 import os
@@ -16,11 +16,18 @@ import sys
 
 def main() -> None:
     ev_path, _diff, files_path = sys.argv[1], sys.argv[2], sys.argv[3]
-    proto = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "protocol.json"
-    )
-    with open(proto) as fh:
-        categories = json.load(fh)["categories"]
+    try:
+        categories = json.loads(os.environ.get("CHECK_PARAMS", "")).get("categories")
+    except (ValueError, AttributeError):
+        categories = None
+    if not categories:
+        print(json.dumps({
+            "check": "rubric-coverage",
+            "pass": False,
+            "feedback": "rubric-coverage: no categories in CHECK_PARAMS "
+                        "(engine must pass params.categories for this check's node)",
+        }))
+        return
 
     # Evidence may be missing or malformed — treat as "no verdicts" so this check
     # reports missing cells rather than crashing (schema-valid reports the shape).

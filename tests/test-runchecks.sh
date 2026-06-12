@@ -21,8 +21,8 @@ OUT=$("$RC" "$P" review "$FX/evidence-lazy.json" "$FX/diff-pr1.txt" "$FX/changed
 chk "runner: lazy → rubric-coverage fails" '[ "$(jq -r ".results[]|select(.check==\"rubric-coverage\")|.pass" <<<"$OUT")" = false ]'
 chk "runner: lazy → schema-valid passes"   '[ "$(jq -r ".results[]|select(.check==\"schema-valid\")|.pass" <<<"$OUT")" = true ]'
 
-# Temp protocols must live alongside the real checks dir so resolution and the
-# checks' own protocol.json lookup (checks/../protocol.json) both work.
+# Temp protocols must live alongside the real checks dir so resolve_executable
+# finds checks/<name> relative to the protocol path.
 TP=protocols/grumpy/.test-proto.json
 trap 'rm -f "$TP"' EXIT
 

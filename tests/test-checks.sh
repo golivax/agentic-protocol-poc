@@ -72,6 +72,23 @@ assert_check rubric-coverage.py false "naming × src/auth.js" /tmp/ev-dup.json
 printf 'src/auth.js\nsrc/report.js' > /tmp/files-nonewline.txt
 assert_check rubric-coverage.py false "src/report.js" "$FX/evidence-lazy.json" "$FX/diff-pr1.txt" /tmp/files-nonewline.txt
 
+# rubric-coverage with empty CHECK_PARAMS → clean failing verdict, not a crash:
+out=$(CHECK_PARAMS='' protocols/grumpy/checks/rubric-coverage.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
+  PASS=$((PASS+1)); echo "ok: rubric-coverage handles missing CHECK_PARAMS"
+else
+  FAIL=$((FAIL+1)); echo "FAIL: rubric-coverage missing-params rc=$rc out=$out"
+fi
+
+# empty categories array is a misconfiguration → same clean "no categories" failure
+# (the `if not categories:` guard treats [] like missing):
+out=$(CHECK_PARAMS='{"categories":[]}' protocols/grumpy/checks/rubric-coverage.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
+  PASS=$((PASS+1)); echo "ok: rubric-coverage treats empty categories array as no-categories"
+else
+  FAIL=$((FAIL+1)); echo "FAIL: rubric-coverage empty-array rc=$rc out=$out"
+fi
+
 # --- traces-exist-in-diff: anchors resolve to the claimed line(s) on the claimed side ---
 assert_check traces-exist-in-diff.py true  "" "$FX/evidence-complete.json"
 
