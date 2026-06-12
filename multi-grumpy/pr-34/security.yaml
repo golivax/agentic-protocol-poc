@@ -1,11 +1,17 @@
 protocol: multi-grumpy
 instance: pr-34
 state: review
-iteration: 2
+iteration: 3
 gates: {}
 history:
   - iteration: 1
     agent_run_id: "27387628294"
+    checks:
+      "schema-valid": "pass"
+      "traces-exist-in-diff": "fail"
+    feedback: 'Unverifiable claims: line 1 not on RIGHT side of SABOTAGE.js''s diff (security)'
+  - iteration: 2
+    agent_run_id: "27387771213"
     checks:
       "schema-valid": "pass"
       "traces-exist-in-diff": "fail"
