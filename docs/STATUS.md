@@ -70,12 +70,14 @@ end records the multi-agent milestone (both are live-verified).
 10. **Accumulating status comment** — added after the demos, at user request:
     the single status comment is re-rendered from `state.history` each
     transition into a per-iteration checklist + a link to the state file.
-11. **Agent run-id resolver** is "newest `workflow_dispatch` run since T0".
+11. **Agent run-id resolver** was "newest `workflow_dispatch` run since T0".
     Correct only one-PR-at-a-time: the gh-aw agent workflow uses a *global*
     concurrency group, so two PRs reviewed concurrently could misattribute
-    runs. A production fix stamps a correlation id into the evidence artifact.
-    (Still deferred — now the **v3** milestone; see `BACKLOG.md`. v2's fan-out
-    *within* one PR is safe without it — see the v2 section's concurrency note.)
+    runs. **(RESOLVED in v3:** the resolver now matches a per-dispatch
+    correlation id stamped into the run's displayTitle and fails loudly on no
+    match — see the §"Concurrency — correlation-id resolver" section below and
+    `BACKLOG.md`. v2's fan-out *within* one PR was already safe without it — see
+    the v2 section's concurrency note.**)**
 
 ## Post-v1 enhancements (added after the demos)
 
@@ -289,12 +291,17 @@ and built so the v1 single-agent path stays byte-identical (the regression guard
   failure, with no silent gap.
   <https://github.com/golivax/agentic-protocol-poc/pull/28>
 
-## Concurrency — still deferred (now v3)
+## Concurrency — correlation-id resolver (v3, implemented)
 
-The correlation-id run resolver (v1 deviation #11) is **still deferred — now the
-v3 milestone** (see `BACKLOG.md`). v2 does **not** need it: fan-out **within one
-PR** is safe because grumpy and security are **distinct workflow files**, so each
-branch's "newest run since T0" resolver only ever sees its own workflow's runs —
-they can't misattribute to each other. The unsolved case remains **concurrent
-PRs of the *same* workflow**, which share a global concurrency group; that is
-the correlation-id problem deferred to v3. v2 was live-verified one PR at a time.
+The agent-run resolver no longer guesses "newest `workflow_dispatch` run since
+T0". The `dispatch` job mints a unique correlation id per dispatch
+(`<orchestrator_run_id>-<run_attempt>-<branch>`), threads it to the agent via
+`aw_context`, and the agent stamps it into its `run-name` (so it appears in the
+run's `displayTitle`). The resolver selects the run whose displayTitle carries
+the delimited token `cid:[<cid>]` (`match_run_by_cid` in `lib.sh`), and **fails
+loudly** if no run matches — never falling back to a recency heuristic. This makes
+**concurrent PRs of the same workflow** safe: each PR resolves only its own run.
+
+Known limitation (throughput, not correctness): the agent workflow's concurrency
+group is `gh-aw-${{ github.workflow }}`, so two PRs running the same agent
+*serialize* rather than run in parallel. Correctness is unaffected.

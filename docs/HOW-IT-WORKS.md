@@ -161,8 +161,9 @@ event (pull_request open/push, /grumpy comment, or repository_dispatch "protocol
             emits {action: run-agent|halt, iteration, feedback}
    │ run-agent
    ▼
-[dispatch]  workflow_dispatch the gh-aw agent with aw_context = {pr, iteration,
-            feedback, sabotage}; poll until it finishes; output its run id
+[dispatch]  mint a correlation id (cid); workflow_dispatch the gh-aw agent with
+            aw_context = {pr, iteration, feedback, sabotage, cid}; poll until it
+            finishes; resolve its run by cid in the run's displayTitle (§3.5)
    │
    ▼
 [checks]    download the agent's evidence artifact; re-fetch `gh pr diff`;
@@ -204,6 +205,32 @@ status_comment_id: 4673907543   # the single PR comment the engine re-renders
 
 Every transition is a commit to this file on the `agentic-state` branch, so
 `git log agentic-state -- grumpy-review/pr-<N>.yaml` is a complete, auditable history.
+
+### 3.5 Resolving the agent's run — the correlation id
+
+When the `dispatch` job launches the gh-aw agent it must later find *the exact
+run it started* to read that run's evidence artifact. The naive resolver —
+"newest `workflow_dispatch` run of this workflow since T0" — is correct only one
+PR at a time: the gh-aw agent workflow uses a *global* concurrency group, so two
+PRs reviewed concurrently by the same workflow could misattribute each other's
+runs.
+
+The fix is a **correlation id (cid)**:
+
+- `dispatch` mints a unique `cid = <orchestrator_run_id>-<run_attempt>-<branch>`
+  and threads it to the agent in the `aw_context` JSON.
+- Each agent `.md` sets its `run-name` to embed the delimited token
+  `cid:[<cid>]`; `gh aw compile` bakes this into the lock, so the cid lands in
+  the run's **displayTitle**.
+- The resolver (`match_run_by_cid` in `lib.sh`) selects the run whose
+  displayTitle carries that exact `cid:[<cid>]` token, and **fails loudly** if no
+  run matches — it never falls back to a recency heuristic. So **concurrent PRs
+  of the same workflow** each resolve only their own run.
+
+The bracket delimiters stop a prefix cid (e.g. `42-1-grumpy`) from matching a
+longer one. Throughput caveat (not correctness): the agent workflow's
+concurrency group serializes two PRs running the same agent rather than running
+them in parallel.
 
 ---
 
@@ -1074,14 +1101,16 @@ barrier.
 
 ### 8.10 Concurrency caveat
 
-Fan-out **within one PR** is safe even though both agents run concurrently,
-because `grumpy` and `security` are **distinct workflow files** — each branch's
-"newest run since T0" run resolver only ever sees its own workflow's runs, so the
-two legs can't misattribute each other's runs. The unsolved case is the same one
-as v1 (deviation #11): **concurrent PRs of the *same* workflow**, which share a
-global concurrency group. That correlation-id fix is the **v3** milestone (see
-`BACKLOG.md`); v2 was live-verified one PR at a time (PR #25 happy path, PR #28
-sabotage red gate — see `STATUS.md`).
+Fan-out **within one PR** was always safe even though both agents run
+concurrently, because `grumpy` and `security` are **distinct workflow files** —
+each branch's run resolver only ever sees its own workflow's runs, so the two
+legs can't misattribute each other's runs. The case v2 left unsolved was the
+same one as v1 (deviation #11): **concurrent PRs of the *same* workflow**, which
+share a global concurrency group. That is **fixed in v3** by the correlation-id
+resolver (§3.5): each dispatch stamps a `cid:[<cid>]` token into the run's
+displayTitle and `match_run_by_cid` resolves on it, failing loudly on no match
+(see `BACKLOG.md`). v2 itself was live-verified one PR at a time (PR #25 happy
+path, PR #28 sabotage red gate — see `STATUS.md`).
 
 ### 8.11 New tests
 
