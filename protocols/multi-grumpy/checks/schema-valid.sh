@@ -3,7 +3,6 @@
 # Usage: schema-valid.sh <evidence.json> <diff.txt> <changed-files.txt>
 set -euo pipefail
 EV="$1"
-PROTO="$(cd "$(dirname "$0")/.." && pwd)/protocol.json"
 
 emit() { jq -n --argjson p "$1" --arg f "$2" '{check:"schema-valid", pass:$p, feedback:$f}'; }
 
@@ -17,7 +16,10 @@ if ! jq -e '[.files[] | type == "object" and (.verdicts | type == "array")] | al
   emit false "a .files entry is not an object with a verdicts array; check that every file is an object and verdicts is an array"; exit 0
 fi
 
-CATS_JSON=$(jq -c '.categories' "$PROTO")
+CATS_JSON=$(printf '%s' "${CHECK_PARAMS:-}" | jq -c '(.categories // empty) | select(length > 0)' 2>/dev/null || true)
+if [ -z "$CATS_JSON" ]; then
+  emit false "schema-valid: no categories in CHECK_PARAMS (engine must pass params.categories for this check's node)"; exit 0
+fi
 ERR=$(jq -r --argjson valid "$CATS_JSON" '
   [ .files[] | .path as $p | .verdicts[]? |
     if (.category as $c | $valid | index($c) | not)

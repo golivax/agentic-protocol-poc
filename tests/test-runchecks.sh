@@ -69,6 +69,13 @@ OUT=$(BRANCH=security "$RC" "$MG" review "$FX/evidence-complete.json" "$FX/diff-
 chk "branch security → 2 checks run (no rubric-coverage)" \
   '[ "$(jq -r ".results|length" <<<"$OUT")" = 2 ] && ! jq -e ".results[]|select(.check==\"rubric-coverage\")" <<<"$OUT" >/dev/null'
 
+# security branch's params.categories is ["security"], so schema-valid must reject
+# evidence that carries any other category (the deterministic precision win that
+# replaces a prompt-only rule). evidence-complete.json contains naming/perf/etc.
+OUT=$(BRANCH=security "$RC" "$MG" review "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
+chk "branch security → schema-valid rejects non-security category" \
+  '[ "$(jq -r ".results[]|select(.check==\"schema-valid\")|.pass" <<<"$OUT")" = false ] && jq -r ".results[]|select(.check==\"schema-valid\")|.feedback" <<<"$OUT" | grep -q "illegal category"'
+
 # --- params forwarding: CHECK_PARAMS reflects the check-owning node ---
 # State-scoped params (BRANCH unset) and branch-scoped params (BRANCH set) are
 # each forwarded verbatim. A stub check echoes CHECK_PARAMS back as its feedback.

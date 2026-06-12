@@ -52,6 +52,15 @@ assert_check schema-valid.sh true "" /tmp/ev-okstart.json
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":0}]}]}]}' > /tmp/ev-zeroline.json
 assert_check schema-valid.sh false "anchor" /tmp/ev-zeroline.json
 
+# empty categories array is a misconfiguration → same clean "no categories" failure
+# as missing/null (must NOT fall through to per-category "illegal category" feedback):
+out=$(CHECK_PARAMS='{"categories":[]}' protocols/grumpy/checks/schema-valid.sh "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
+  PASS=$((PASS+1)); echo "ok: schema-valid treats empty categories array as no-categories"
+else
+  FAIL=$((FAIL+1)); echo "FAIL: schema-valid empty-array rc=$rc out=$out"
+fi
+
 assert_check rubric-coverage.py true  ""                     "$FX/evidence-complete.json"
 assert_check rubric-coverage.py false "security × src/auth.js" "$FX/evidence-lazy.json"
 assert_check rubric-coverage.py false "duplication × src/report.js" "$FX/evidence-lazy.json"
