@@ -30,6 +30,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: write   # POSTing a PR's issue-comment (the shared status comment) needs pull-requests:write, not just issues:write
       checks: write
     outputs:
       pr: ${{ steps.ctx.outputs.pr }}
