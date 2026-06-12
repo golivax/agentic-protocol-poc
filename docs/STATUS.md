@@ -19,9 +19,10 @@ end records the multi-agent milestone (both are live-verified).
   fast-forward (CAS) push.
 - Two acceptance demos: PR #4/#9 (sabotage → iterate → pass), PR #7 (clean
   negative control); native line-anchored inline review live-verified on PR #21.
-  86 local tests across four files: `tests/test-checks.sh` 34,
-  `tests/test-engine.sh` 30, `tests/test-runchecks.sh` 14,
-  `tests/test-publish.sh` 8.
+  147 assertions across eight local suites: `test-checks.sh` 34,
+  `test-engine.sh` 53, `test-runchecks.sh` 16, `test-publish.sh` 13,
+  `test-correlation.sh` 6, `test-status-comment.sh` 11, plus the two v2 suites
+  `test-join.sh` 10 and `test-fanout-e2e.sh` 4. Run all: `for t in tests/test-*.sh; do bash "$t"; done`.
 
 ## Simplifications declared up front (in the plan)
 
@@ -60,7 +61,7 @@ end records the multi-agent milestone (both are live-verified).
    PAT), but the agent's *network egress* is no longer restricted by AWF.
    Mitigations in place: read-only job token, read-only GitHub MCP, private
    repo. Restoring the firewall for a publicly-reachable, standard endpoint is
-   a v2 hardening.
+   a future hardening (still open after v2/v3).
 7. **Model pinned** to `claude-sonnet-4-6` (endpoint-specific).
 8. **Sabotage label read via the PAT** — reading PR labels needs the
    `pull-requests` scope; the default `GITHUB_TOKEN` 403s.
@@ -87,7 +88,7 @@ end records the multi-agent milestone (both are live-verified).
   orchestrator no longer hardcodes the check names. `rubric-coverage` is now
   Python (`rubric-coverage.py`); `rubric-coverage` AND `traces-exist-in-diff`
   are now Python, while `schema-valid` stays bash — same ABI. New test suite
-  `tests/test-runchecks.sh` (11 tests) covers resolution and robustness
+  `tests/test-runchecks.sh` (16 tests) covers resolution and robustness
   (missing / non-executable / crashing / ambiguous).
 
 - **Merge-gating via a check run.** `advance.sh`/`plan` emit a `grumpy-review`
@@ -96,7 +97,7 @@ end records the multi-agent milestone (both are live-verified).
   `failure` on exhausted). Emitting works on any repo; *blocking* the merge
   requires making `grumpy-review` a required status check in branch protection /
   rulesets (needs a public repo or a paid plan for private). `lib.sh`
-  `set_check_run`; engine tests assert the three outcomes (50 local tests total).
+  `set_check_run`; engine tests assert the three outcomes.
 
 - **Auto-review on open/push (`pull_request` trigger).** The orchestrator now
   triggers on `pull_request` `opened`/`synchronize`/`reopened`, so every PR is
@@ -115,8 +116,10 @@ end records the multi-agent milestone (both are live-verified).
 
 ## Engine couplings — resolved
 
-The engine is now fully protocol-agnostic (`grep -rin grumpy .github/engine/`
-is empty). The two previously noted couplings are gone:
+The engine carries no protocol-specific logic — the only `grumpy` mentions
+under `.github/engine/` are illustrative comments (cid examples, a note that
+grumpy's states happen to both be named `review`). The two previously noted
+couplings are gone:
 
 - **Protocol id from data.** `next.sh` and `advance.sh` read the protocol id
   from `protocol.json` `.name` via `protocol_id()` in `lib.sh`. The check-run
@@ -159,7 +162,8 @@ zone 4 (engine-post) holding the publish token; it is not a sandboxed check.
   evidence file and the independently-fetched diff, so the design's
   "zone-3 runs agent code with zero credentials" hardening was never tested.
 - gh-aw's egress firewall on the agent (disabled, see #6).
-- Human gates, multi-phase protocols, fan-out/join (all v2).
+- Fan-out/join **shipped in v2** (see the v2 section below); human gates and
+  sequential multi-phase protocols are still pending (human gates = v4 backlog).
 - The external web-app projection of the state branch.
 - `gh aw compile` changes to understand a `protocol:` block (the engine is
   vendored as repo scripts, not compiled into the lock file).
@@ -267,9 +271,10 @@ and built so the v1 single-agent path stays byte-identical (the regression guard
 
 - **New tests.** `tests/test-join.sh` (join aggregation + idempotency) and
   `tests/test-fanout-e2e.sh` (local end-to-end: fanout start → advance ×2 → join
-  success). The full local suite is now **6 files / 122 assertions, all green**
+  success). The full local suite is now **8 files / 147 assertions, all green**
   (the four v1 files — `test-checks.sh`, `test-engine.sh`, `test-runchecks.sh`,
-  `test-publish.sh` — plus these two).
+  `test-publish.sh` — plus `test-correlation.sh`, `test-status-comment.sh`, and
+  these two).
 
 ## Live verification
 

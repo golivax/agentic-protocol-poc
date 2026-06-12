@@ -1,21 +1,37 @@
 # agentic-protocol-poc
 
-PoC v1 of the agentic protocol engine: gh-aw agent workflows structured as a
+PoC of the agentic protocol engine: gh-aw agent workflows structured as a
 porch-style state machine with evidence schemas, deterministic transition
-checks, and bounded iterate-with-feedback. Comment `/grumpy` on a PR to run
-the protocol. Design spec lives in the parent project:
+checks, and bounded iterate-with-feedback. Opening a PR (or commenting
+`/grumpy`) runs the protocol. Design spec lives in the parent project:
 `docs/superpowers/specs/2026-06-10-agentic-protocol-engine-poc-design.md`.
 
-State: branch `agentic-state`, file `grumpy/pr-<N>.yaml`, advanced only by
-fast-forward push (CAS). Never force-push that branch.
+The engine is generic; `orchestrator.yml` currently deploys the **`multi-grumpy`**
+protocol (v2): a `review` phase that **fans out** to two parallel agents — the
+general `grumpy` reviewer and a `security` stub — each with its own bounded
+iterate loop and eager publish, joined under a strict AND-barrier that gates the
+merge. The v1 single-agent **`grumpy-review`** protocol still works and is the
+engine's regression-guard baseline. v3 added a correlation-id run resolver so
+concurrent PRs of the same agent workflow never misattribute runs. Read
+`docs/HOW-IT-WORKS.md` (design) and `docs/STATUS.md` (what is/isn't implemented)
+before extending.
 
-Test scaffolding: label `poc:sabotage` on a PR makes iteration 1 deliberately
-skip two rubric categories, to demo the failed-check → iterate loop.
+State: branch `agentic-state`. Single-agent path → `grumpy-review/pr-<N>.yaml`;
+fan-out path → one file per branch `multi-grumpy/pr-<N>/<branch>.yaml` plus a
+shared `multi-grumpy/pr-<N>/_instance.yaml`. Advanced only by fast-forward push
+(CAS). Never force-push that branch.
+
+Test scaffolding: label `poc:sabotage` on a PR drives the failed-check → iterate
+loop. `grumpy` sabotages **iteration 1 only** (omits two rubric categories →
+fails `rubric-coverage`, then self-recovers); `security` sabotages **every
+iteration** (fabricates a finding → fails `traces-exist-in-diff` → exhausts to
+`failed`, leaving the merge gate red).
 
 ## Security posture
 
-The agent workflow deliberately runs with `strict: false` and
-`sandbox.agent: false` because the LLM endpoint (base URL) is itself a secret
-and cannot be carried in AWF's static egress allowlist — do not copy this to
-production without restoring the firewall. The agent job is read-only;
-publication happens only in the orchestrator after deterministic checks pass.
+Each agent workflow (`grumpy-agent`, `security-agent`) deliberately runs with
+`strict: false` and `sandbox.agent: false` because the LLM endpoint (base URL)
+is itself a secret and cannot be carried in AWF's static egress allowlist — do
+not copy this to production without restoring the firewall. The agent jobs are
+read-only; publication happens only in the orchestrator after deterministic
+checks pass.

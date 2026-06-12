@@ -1061,8 +1061,9 @@ a thin gh-aw clone of grumpy-agent that emits grumpy-shaped evidence tagged
 `category:"security"`. Its sabotage knob differs from grumpy's on purpose, to
 demonstrate the red gate:
 
-- **grumpy:** iteration-1-only sabotage → fabricates once, then **self-recovers**
-  and reaches `done`.
+- **grumpy:** iteration-1-only sabotage → **omits** two rubric categories
+  (`security`, `duplication`) on iteration 1 so it fails `rubric-coverage`, then
+  **self-recovers** on the next iteration and reaches `done`.
 - **security:** **persistent** sabotage → while the `poc:sabotage` label is
   present it fabricates a finding **every** iteration → fails
   `traces-exist-in-diff` → exhausts to `failed`.
@@ -1116,4 +1117,5 @@ path, PR #28 sabotage red gate — see `STATUS.md`).
 
 `tests/test-join.sh` (join aggregation + idempotency) and
 `tests/test-fanout-e2e.sh` (local end-to-end: fanout start → advance ×2 → join
-success) bring the local suite to **6 files / 122 assertions**, all green.
+success) bring the local suite to **8 files / 147 assertions**, all green
+(the four v1 files plus `test-correlation.sh`, `test-status-comment.sh`, and these two).

@@ -6,11 +6,10 @@ engine** — it exists to exercise the protocol-agnostic machinery under
 `protocols/<name>/`; you do not touch the engine. See `docs/HOW-IT-WORKS.md` for
 the engine and trust-zone model.
 
-> **Status:** this README documents the protocol's design including the
-> line-anchored inline-review feature being rolled out per the plan referenced at
-> the bottom. The "Line anchoring" section below is the durable design rationale;
-> the inline-publish mechanics (the `traces-exist-in-diff.py` check and the
-> `comments[]` publish path) land with that plan.
+> **Status:** the line-anchored inline-review feature described here has
+> **shipped** and is live-verified (PR #21): `checks/traces-exist-in-diff.py`
+> verifies each finding's anchor and the publish hook posts native inline review
+> comments. The "Line anchoring" section below is the durable design rationale.
 
 ## What's in this directory
 
