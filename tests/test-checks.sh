@@ -60,6 +60,14 @@ if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .f
 else
   FAIL=$((FAIL+1)); echo "FAIL: schema-valid empty-array rc=$rc out=$out"
 fi
+# a non-array categories (malformed params) must also fail cleanly, NOT degrade to
+# jq substring matching that silently "accepts" some categories:
+out=$(CHECK_PARAMS='{"categories":"naming"}' protocols/grumpy/checks/schema-valid.sh "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
+  PASS=$((PASS+1)); echo "ok: schema-valid treats non-array categories as no-categories"
+else
+  FAIL=$((FAIL+1)); echo "FAIL: schema-valid non-array rc=$rc out=$out"
+fi
 
 assert_check rubric-coverage.py true  ""                     "$FX/evidence-complete.json"
 assert_check rubric-coverage.py false "security × src/auth.js" "$FX/evidence-lazy.json"
@@ -87,6 +95,14 @@ if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .f
   PASS=$((PASS+1)); echo "ok: rubric-coverage treats empty categories array as no-categories"
 else
   FAIL=$((FAIL+1)); echo "FAIL: rubric-coverage empty-array rc=$rc out=$out"
+fi
+# a non-array categories (malformed params) must also fail cleanly, NOT iterate a
+# string char-by-char as if it were a category list:
+out=$(CHECK_PARAMS='{"categories":"naming"}' protocols/grumpy/checks/rubric-coverage.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
+  PASS=$((PASS+1)); echo "ok: rubric-coverage treats non-array categories as no-categories"
+else
+  FAIL=$((FAIL+1)); echo "FAIL: rubric-coverage non-array rc=$rc out=$out"
 fi
 
 # --- traces-exist-in-diff: anchors resolve to the claimed line(s) on the claimed side ---

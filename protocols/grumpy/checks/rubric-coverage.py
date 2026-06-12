@@ -20,7 +20,7 @@ def main() -> None:
         categories = json.loads(os.environ.get("CHECK_PARAMS", "")).get("categories")
     except (ValueError, AttributeError):
         categories = None
-    if not categories:
+    if not isinstance(categories, list) or not categories:
         print(json.dumps({
             "check": "rubric-coverage",
             "pass": False,

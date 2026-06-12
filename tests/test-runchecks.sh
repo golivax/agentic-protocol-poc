@@ -39,7 +39,7 @@ chk "runner: exec override runs the file" '[ "$(jq -r ".results[0].pass" <<<"$OU
 
 # --- non-executable check file → fail verdict (not a crash) ---
 SBX=$(mktemp -d); mkdir -p "$SBX/checks"
-echo '{"name":"x","categories":[],"states":[{"id":"review","checks":[{"run":"noexec"}]}]}' > "$SBX/protocol.json"
+echo '{"name":"x","states":[{"id":"review","checks":[{"run":"noexec"}]}]}' > "$SBX/protocol.json"
 printf '#!/usr/bin/env bash\necho "{}"\n' > "$SBX/checks/noexec.sh"   # intentionally not chmod +x
 OUT=$("$RC" "$SBX/protocol.json" review "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
 chk "runner: non-executable check → fail verdict" '[ "$(jq -r ".results[0].pass" <<<"$OUT")" = false ]'

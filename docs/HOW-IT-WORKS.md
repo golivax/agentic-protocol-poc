@@ -367,7 +367,7 @@ if ! jq -e '[.files[] | type == "object" and (.verdicts | type == "array")] | al
 fi
 
 # Categories come from CHECK_PARAMS (node-scoped params forwarded by run-checks.sh).
-CATS_JSON=$(printf '%s' "${CHECK_PARAMS:-}" | jq -c '(.categories // empty) | select(length > 0)' 2>/dev/null || true)
+CATS_JSON=$(printf '%s' "${CHECK_PARAMS:-}" | jq -c '(.categories // empty) | select(type == "array" and length > 0)' 2>/dev/null || true)
 if [ -z "$CATS_JSON" ]; then
   emit false "schema-valid: no categories in CHECK_PARAMS (engine must pass params.categories for this check's node)"; exit 0
 fi
@@ -413,7 +413,7 @@ def main() -> None:
         categories = json.loads(os.environ.get("CHECK_PARAMS", "")).get("categories")
     except (ValueError, AttributeError):
         categories = None
-    if not categories:
+    if not isinstance(categories, list) or not categories:
         print(json.dumps({
             "check": "rubric-coverage",
             "pass": False,
