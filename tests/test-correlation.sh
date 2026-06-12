@@ -34,6 +34,12 @@ PFX='[{"databaseId":1,"displayTitle":"x cid:[42-1-grumpy2]"},{"databaseId":2,"di
 check "delimiter: prefix cid does not false-match" \
   '[ "$(match_run_by_cid "$PFX" "42-1-grumpy")" = "2" ]'
 
+# A queued run may have a null/absent displayTitle; it must NOT abort the match —
+# the real titled run is still resolved.
+NULLT='[{"databaseId":7,"displayTitle":null},{"databaseId":8,"displayTitle":"Grumpy Agent · cid:[42-1-grumpy]"}]'
+check "null displayTitle does not abort the match" \
+  '[ "$(match_run_by_cid "$NULLT" "42-1-grumpy")" = "8" ]'
+
 echo "-----"
 echo "correlation tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

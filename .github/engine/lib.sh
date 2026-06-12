@@ -187,9 +187,10 @@ set_check_run() {
 # "cid:[<cid>]" — the brackets stop a prefix cid (e.g. 42-1-grumpy) from
 # false-matching a longer one (42-1-grumpy2). Prints empty if none match; the
 # caller (orchestrator dispatch) treats empty as fail-loud, never a heuristic
-# fallback. Depends only on jq.
+# fallback. A null/absent displayTitle (e.g. a queued, not-yet-titled run) is
+# treated as a non-match, never an error. Depends only on jq.
 match_run_by_cid() {
   jq -r --arg needle "cid:[$2]" \
-    'first(.[] | select(.displayTitle | contains($needle)) | .databaseId) // empty' \
+    'first(.[] | select((.displayTitle // "") | contains($needle)) | .databaseId) // empty' \
     <<<"$1"
 }
