@@ -9,9 +9,10 @@ The remaining entries are smaller, unsequenced candidates.
 
 ## v3 — Correlation-id run resolver (DONE)
 
-**What:** Stamp a correlation id into each agent dispatch and the evidence
-artifact it returns, so the orchestrator resolves *the exact run it launched*
-instead of guessing "newest `workflow_dispatch` run of this workflow since T0".
+**What:** Stamp a correlation id into each agent dispatch and the launched run's
+name (so it appears in the run's displayTitle), so the orchestrator resolves
+*the exact run it launched* instead of guessing "newest `workflow_dispatch` run
+of this workflow since T0".
 
 **Why (the blocker it removes):** Today the agent run-id resolver is correct only
 **one PR at a time per workflow** (v1 deviation #11). The gh-aw agent workflow
