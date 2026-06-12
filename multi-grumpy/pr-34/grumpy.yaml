@@ -1,6 +1,13 @@
 protocol: multi-grumpy
 instance: pr-34
 state: review
-iteration: 1
+iteration: 2
 gates: {}
-history: []
+history:
+  - iteration: 1
+    agent_run_id: "27387626987"
+    checks:
+      "schema-valid": "pass"
+      "rubric-coverage": "fail"
+      "traces-exist-in-diff": "pass"
+    feedback: 'Missing or duplicated rubric cells: duplication × tests/fixtures/src/orders.js (verdicts: 0); security × tests/fixtures/src/orders.js (verdicts: 0)'
