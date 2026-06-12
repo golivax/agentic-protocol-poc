@@ -99,7 +99,10 @@ commands into the job holding the state PAT.
   exits 0** (non-zero is reserved for a genuine runner error). Resolved by
   `run-checks.sh` from `protocol.json` `.states[].checks[]`: `exec:` path, else
   `checks/<run>` or `checks/<run>.*` (extension-agnostic — a `.py` check needs no
-  bash wrapper). Read the rubric from `protocol.json`, never hardcode it.
+  bash wrapper). A check reads its node-scoped config (e.g. the rubric
+  `categories`) from the `CHECK_PARAMS` env var the runner forwards — the value of
+  the check-owning node's `params` object (the branch's when `BRANCH` is set, else
+  the state's). Never hardcode the rubric and never reach into `protocol.json`.
 - **Publish hook:** invoked as `<hook> <evidence.json> <instance-key>` with env
   `ENGINE_LOCAL`, `GITHUB_REPOSITORY`, `PUBLISH_TOKEN`, `PR`; prints
   `{"conclusion","summary"}`. Runs **trusted in zone 4** (NOT a sandboxed check).

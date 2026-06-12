@@ -241,13 +241,14 @@ them in parallel.
 ```jsonc
 {
   "name": "grumpy-review",
-  "categories": ["naming", "error-handling", "performance", "duplication", "security"],
   "states": [
     { "id": "review",
       "kind": "agent",                 // an LLM step; dispatched as a gh-aw workflow
       "workflow": "grumpy-agent",      // which gh-aw workflow to dispatch
       "evidence": "evidence.schema.json",
       "max_iterations": 3,
+      "params": { "categories": ["naming", "error-handling", "performance", "duplication", "security"] },
+                                       // node-scoped config; forwarded to checks as CHECK_PARAMS
       "checks": [                      // run in order between this state and `next`
         { "run": "schema-valid",        "on_fail": "iterate" },
         { "run": "rubric-coverage",     "on_fail": "iterate" },
@@ -314,8 +315,9 @@ implemented in **Python** and `schema-valid` in **bash**, to demonstrate the
 mix; all three obey the same ABI.
 
 Whatever the language: **always exit 0** even when the check fails (a non-zero
-exit is reserved for a genuine runner error), and read the rubric from
-`protocol.json` rather than hardcoding it.
+exit is reserved for a genuine runner error), and read node-scoped config (e.g.
+the rubric `categories`) from the `CHECK_PARAMS` env var rather than
+hardcoding it or reaching into `protocol.json`.
 
 Two rules that make checks trustworthy:
 
@@ -342,7 +344,8 @@ It guards three layers (parseable JSON → `.files` is an array → every entry 
 an object with a `verdicts` array) so a malformed file produces a verdict
 instead of crashing the main pass. Then one `jq` program collects *all* shape
 violations (not just the first) and joins them into the feedback. The legal
-categories come from `protocol.json`, never hardcoded.
+categories come from `CHECK_PARAMS` (the check-owning node's `params` object,
+forwarded by `run-checks.sh`), never hardcoded.
 
 ```bash
 #!/usr/bin/env bash
@@ -350,7 +353,6 @@ categories come from `protocol.json`, never hardcoded.
 # Usage: schema-valid.sh <evidence.json> <diff.txt> <changed-files.txt>
 set -euo pipefail
 EV="$1"
-PROTO="$(cd "$(dirname "$0")/.." && pwd)/protocol.json"
 
 emit() { jq -n --argjson p "$1" --arg f "$2" '{check:"schema-valid", pass:$p, feedback:$f}'; }
 
@@ -364,7 +366,11 @@ if ! jq -e '[.files[] | type == "object" and (.verdicts | type == "array")] | al
   emit false "a .files entry is not an object with a verdicts array; check that every file is an object and verdicts is an array"; exit 0
 fi
 
-CATS_JSON=$(jq -c '.categories' "$PROTO")
+# Categories come from CHECK_PARAMS (node-scoped params forwarded by run-checks.sh).
+CATS_JSON=$(printf '%s' "${CHECK_PARAMS:-}" | jq -c '(.categories // empty) | select(length > 0)' 2>/dev/null || true)
+if [ -z "$CATS_JSON" ]; then
+  emit false "schema-valid: no categories in CHECK_PARAMS (engine must pass params.categories for this check's node)"; exit 0
+fi
 ERR=$(jq -r --argjson valid "$CATS_JSON" '
   [ .files[] | .path as $p | .verdicts[]? |
     if (.category as $c | $valid | index($c) | not)
@@ -402,11 +408,19 @@ import json, os, sys
 
 def main() -> None:
     ev_path, _diff, files_path = sys.argv[1], sys.argv[2], sys.argv[3]
-    proto = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "protocol.json"
-    )
-    with open(proto) as fh:
-        categories = json.load(fh)["categories"]
+    # Categories come from CHECK_PARAMS (node-scoped params forwarded by run-checks.sh).
+    try:
+        categories = json.loads(os.environ.get("CHECK_PARAMS", "")).get("categories")
+    except (ValueError, AttributeError):
+        categories = None
+    if not categories:
+        print(json.dumps({
+            "check": "rubric-coverage",
+            "pass": False,
+            "feedback": "rubric-coverage: no categories in CHECK_PARAMS "
+                        "(engine must pass params.categories for this check's node)",
+        }))
+        return
 
     try:
         with open(ev_path) as fh:
@@ -933,18 +947,19 @@ barrier.
 ```jsonc
 {
   "name": "multi-grumpy",
-  "categories": ["naming","error-handling","performance","duplication","security"],
   "states": [
     { "id": "review",
       "kind": "fanout",                 // fan out to N parallel agent branches
       "branches": [
         { "id": "grumpy",   "workflow": "grumpy-agent",
           "evidence": "grumpy.evidence.schema.json",   "max_iterations": 3,
+          "params": { "categories": ["naming","error-handling","performance","duplication","security"] },
           "checks": [ {"run":"schema-valid"}, {"run":"rubric-coverage"},
                       {"run":"traces-exist-in-diff"} ],
           "publish": "publish-grumpy" },
         { "id": "security", "workflow": "security-agent",
           "evidence": "security.evidence.schema.json", "max_iterations": 3,
+          "params": { "categories": ["security"] },    // scoped: schema-valid rejects any other category
           "checks": [ {"run":"schema-valid"},
                       {"run":"traces-exist-in-diff"} ], // no rubric-coverage
           "publish": "publish-security" }
@@ -959,9 +974,10 @@ barrier.
 ```
 
 Each branch carries its **own** `workflow`, `evidence` schema, `max_iterations`,
-`checks`, and `publish` hook — so branches can differ. Here the **security branch
+`params`, `checks`, and `publish` hook — so branches can differ. Here the **security branch
 drops `rubric-coverage`** (it has no fixed file×category rubric); it runs only
-`schema-valid` + `traces-exist-in-diff`.
+`schema-valid` + `traces-exist-in-diff`. Its `params.categories: ["security"]` also
+means `schema-valid` deterministically rejects a verdict in any other category.
 
 ### 8.3 Per-branch state + the instance file
 
