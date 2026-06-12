@@ -1,7 +1,6 @@
 {
   "name": "grumpy-review",
   "version": "0.1.0",
-  "categories": ["naming", "error-handling", "performance", "duplication", "security"],
   "states": [
     {
       "id": "review",
