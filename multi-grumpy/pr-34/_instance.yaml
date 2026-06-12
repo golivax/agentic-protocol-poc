@@ -1,5 +1,5 @@
 protocol: multi-grumpy
 instance: pr-34
 head_sha: 401334f635343bc8d95a735ad757dad3e5e27781
-joined: false
+joined: true
 status_comment_id: 4686410422
