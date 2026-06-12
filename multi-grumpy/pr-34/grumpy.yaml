@@ -1,7 +1,7 @@
 protocol: multi-grumpy
 instance: pr-34
 state: review
-iteration: 2
+iteration: 3
 gates: {}
 history:
   - iteration: 1
@@ -11,3 +11,10 @@ history:
       "rubric-coverage": "fail"
       "traces-exist-in-diff": "pass"
     feedback: 'Missing or duplicated rubric cells: duplication × tests/fixtures/src/orders.js (verdicts: 0); security × tests/fixtures/src/orders.js (verdicts: 0)'
+  - iteration: 2
+    agent_run_id: "27389531305"
+    checks:
+      "schema-valid": "pass"
+      "rubric-coverage": "pass"
+      "traces-exist-in-diff": "fail"
+    feedback: 'Unverifiable claims: existing_code does not match RIGHT line(s) 5 of tests/fixtures/src/orders.js (naming); existing_code does not match RIGHT line(s) 12 of tests/fixtures/src/orders.js (error-handling); existing_code does not match RIGHT line(s) 11 of tests/fixtures/src/orders.js (performance); existing_code does not match RIGHT line(s) 9-14 of tests/fixtures/src/orders.js (duplication); existing_code does not match RIGHT line(s) 37-42 of tests/fixtures/src/orders.js (duplication); existing_code does not match RIGHT line(s) 10-12 of tests/fixtures/src/orders.js (security)'
