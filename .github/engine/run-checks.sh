@@ -22,6 +22,17 @@ source "$(dirname "$0")/lib.sh"
 PROTO="$1"; STATE="$2"; EV="$3"; DIFF="$4"; FILES="$5"
 PDIR="$(cd "$(dirname "$PROTO")" && pwd)"
 
+# Resolve the params object for the check-owning node (the branch when BRANCH is
+# set, otherwise the state) and forward it to every check as CHECK_PARAMS. Checks
+# read their scoped config (e.g. the rubric categories) from this blob instead of
+# reaching into protocol.json — the runner never interprets its contents.
+if [ -n "${BRANCH:-}" ]; then
+  PARAMS=$(jq -c --arg s "$STATE" --arg b "$BRANCH" \
+    '.states[] | select(.id==$s) | .branches[]? | select(.id==$b) | .params // {}' "$PROTO")
+else
+  PARAMS=$(jq -c --arg s "$STATE" '.states[] | select(.id==$s) | .params // {}' "$PROTO")
+fi
+
 fail_verdict() { jq -nc --arg c "$1" --arg f "$2" '{check:$c, pass:false, feedback:$f}'; }
 
 RESULTS="[]"
@@ -44,7 +55,7 @@ while IFS= read -r entry; do
     if [ ! -x "$path" ]; then
       V=$(fail_verdict "$name" "check is not executable: $path (chmod +x and add a shebang)")
     else
-      out=$("$path" "$EV" "$DIFF" "$FILES" 2>/dev/null) && rc=0 || rc=$?
+      out=$(CHECK_PARAMS="$PARAMS" "$path" "$EV" "$DIFF" "$FILES" 2>/dev/null) && rc=0 || rc=$?
       if [ "$rc" -ne 0 ]; then
         V=$(fail_verdict "$name" "check exited $rc (a check must exit 0 and print a JSON verdict)")
       elif ! jq -e 'type=="object" and has("check") and has("pass") and has("feedback")' <<<"$out" >/dev/null 2>&1; then

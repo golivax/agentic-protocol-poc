@@ -69,6 +69,28 @@ OUT=$(BRANCH=security "$RC" "$MG" review "$FX/evidence-complete.json" "$FX/diff-
 chk "branch security → 2 checks run (no rubric-coverage)" \
   '[ "$(jq -r ".results|length" <<<"$OUT")" = 2 ] && ! jq -e ".results[]|select(.check==\"rubric-coverage\")" <<<"$OUT" >/dev/null'
 
+# --- params forwarding: CHECK_PARAMS reflects the check-owning node ---
+# State-scoped params (BRANCH unset) and branch-scoped params (BRANCH set) are
+# each forwarded verbatim. A stub check echoes CHECK_PARAMS back as its feedback.
+SBX2=$(mktemp -d); mkdir -p "$SBX2/checks"
+cat > "$SBX2/protocol.json" <<'JSON'
+{"name":"p","states":[
+  {"id":"s","params":{"categories":["a","b"]},"checks":[{"run":"echo-params"}],
+   "branches":[{"id":"bx","params":{"categories":["only-b"]},"checks":[{"run":"echo-params"}]}]}
+]}
+JSON
+cat > "$SBX2/checks/echo-params.sh" <<'SH'
+#!/usr/bin/env bash
+jq -nc --arg f "${CHECK_PARAMS:-MISSING}" '{check:"echo-params",pass:true,feedback:$f}'
+SH
+chmod +x "$SBX2/checks/echo-params.sh"
+
+OUT=$("$RC" "$SBX2/protocol.json" s "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
+chk "params: state-scoped forwarded" 'jq -e ".results[0].feedback|fromjson|.categories==[\"a\",\"b\"]" <<<"$OUT" >/dev/null'
+OUT=$(BRANCH=bx "$RC" "$SBX2/protocol.json" s "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
+chk "params: branch-scoped overrides state" 'jq -e ".results[0].feedback|fromjson|.categories==[\"only-b\"]" <<<"$OUT" >/dev/null'
+rm -rf "$SBX2"
+
 echo "-----"
 echo "run-checks tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
