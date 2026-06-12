@@ -1,5 +1,6 @@
 ---
 name: "Grumpy Agent (protocol state: review)"
+run-name: "Grumpy Agent · cid:[${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}]"
 on:
   workflow_dispatch:
 strict: false

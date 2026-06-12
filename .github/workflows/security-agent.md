@@ -1,5 +1,6 @@
 ---
 name: "Security Agent (protocol state: review)"
+run-name: "Security Agent · cid:[${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}]"
 on:
   workflow_dispatch:
 strict: false
