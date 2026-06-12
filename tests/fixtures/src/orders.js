@@ -21,3 +21,10 @@ function lookupOrderRetry(req) {
 }
 
 module.exports = { lookupOrder, lookupOrderRetry };
+
+function refundOrder(req) {
+  const id = req.query.id;
+  const query = "SELECT * FROM orders WHERE id = '" + id + "'";
+  db.exec(query);
+  return calc(req.total, 0);
+}
