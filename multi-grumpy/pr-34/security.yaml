@@ -1,12 +1,6 @@
 protocol: multi-grumpy
 instance: pr-34
-state: done
+state: review
 iteration: 1
 gates: {}
-history:
-  - iteration: 1
-    agent_run_id: "27387365534"
-    checks:
-      "schema-valid": "pass"
-      "traces-exist-in-diff": "pass"
-    feedback: ""
+history: []
