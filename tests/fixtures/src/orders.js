@@ -28,3 +28,8 @@ function refundOrder(req) {
   db.exec(query);
   return calc(req.total, 0);
 }
+
+function voidOrder(req) {
+  const id = req.query.id;
+  return calc(req.total, -req.total);
+}
