@@ -31,7 +31,9 @@ the PoC is live-verified one PR at a time.
 - The resolver matches `cid:[<cid>]` via `match_run_by_cid` (`lib.sh`, unit-tested
   in `tests/test-correlation.sh`) and fails loudly on no match — no heuristic fallback.
 
-**Status:** DONE — pending live verify (two concurrent PRs).
+**Status:** DONE — live-verified on concurrent PRs #48 + #49 (each `dispatch`
+resolved its own cid'd run; zero cross-contamination; both aggregate checks
+green). See `STATUS.md` §"Live verification".
 
 ---
 

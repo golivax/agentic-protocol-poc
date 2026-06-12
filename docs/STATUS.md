@@ -291,6 +291,21 @@ and built so the v1 single-agent path stays byte-identical (the regression guard
   failure, with no silent gap.
   <https://github.com/golivax/agentic-protocol-poc/pull/28>
 
+- **PRs #48 + #49 — v3 correlation-id under concurrency.** Two PRs opened
+  seconds apart, both fanning out the same `grumpy` and `security` agent
+  workflows. The agents serialize in gh-aw's shared concurrency group, so the
+  two grumpy runs coexisted in the resolver's listing window (#49's run was the
+  *newer* one) — the exact collision the old "newest since T0" heuristic got
+  wrong. Each orchestrator's `dispatch` resolved its **own** run by cid: #48
+  (orchestrator `27393102307`) → grumpy `27393110562` / security `27393111753`;
+  #49 (orchestrator `27393109816`) → grumpy `27393117099` / security
+  `27393117043` — four distinct runs, each matched to `cid:[<orchestrator>-1-<branch>]`.
+  Every #48 review comment anchored on `concurrent_a.js`, every #49 comment on
+  `concurrent_b.js` — **zero cross-contamination**. Both aggregate `multi-grumpy`
+  checks went **success**.
+  <https://github.com/golivax/agentic-protocol-poc/pull/48>,
+  <https://github.com/golivax/agentic-protocol-poc/pull/49>
+
 ## Concurrency — correlation-id resolver (v3, implemented)
 
 The agent-run resolver no longer guesses "newest `workflow_dispatch` run since
