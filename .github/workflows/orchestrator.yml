@@ -16,7 +16,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: grumpy-${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}
+  # Scope the group by BRANCH (empty for pull_request/issue_comment) as well as instance:
+  # a fan-out iterates each branch via its own protocol-continue, and an instance-only
+  # group serialized them — so when two branch continues queued, GitHub evicted the
+  # pending one, stranding that branch mid-review (join then never reaches all-terminal).
+  # Per-branch groups let grumpy and security iterate independently. Branch state files
+  # are disjoint, so cas_push's rebase-once still applies cleanly under concurrency.
+  group: grumpy-${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}-${{ github.event.client_payload.branch }}
   cancel-in-progress: false
 
 jobs:
