@@ -179,3 +179,17 @@ set_check_run() {
   GH_TOKEN="$PUBLISH_TOKEN" gh api -X POST "repos/$GITHUB_REPOSITORY/check-runs" "${args[@]}" >/dev/null 2>&1 \
     || echo "[engine] check-run create failed (needs checks:write + Actions token; merge-gating needs branch protection)" >&2
 }
+
+# match_run_by_cid <runs-json> <cid>
+# Pure resolver for the dispatch→run problem (workflow_dispatch returns no run id).
+# <runs-json> is a `gh run list --json databaseId,displayTitle` array. Prints the
+# databaseId of the run whose displayTitle contains the DELIMITED token
+# "cid:[<cid>]" — the brackets stop a prefix cid (e.g. 42-1-grumpy) from
+# false-matching a longer one (42-1-grumpy2). Prints empty if none match; the
+# caller (orchestrator dispatch) treats empty as fail-loud, never a heuristic
+# fallback. Depends only on jq.
+match_run_by_cid() {
+  jq -r --arg needle "cid:[$2]" \
+    'first(.[] | select(.displayTitle | contains($needle)) | .databaseId) // empty' \
+    <<<"$1"
+}
