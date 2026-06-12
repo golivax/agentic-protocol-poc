@@ -187,6 +187,7 @@ jobs:
       matrix:
         branch: ${{ fromJSON(needs.plan.outputs.branches) }}
     steps:
+      - uses: actions/checkout@v4
       - id: wait
         env:
           GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
@@ -200,30 +201,39 @@ jobs:
           # uniformly iteration 1 / feedback "" (correct for a fresh branch); for a
           # branched continue there is exactly one matrix leg, so they are that
           # branch's values.
+          source .github/engine/lib.sh
+          # Correlation id: globally unique per dispatch — the orchestrator run id
+          # is unique, run_attempt disambiguates re-runs, branch disambiguates the
+          # two matrix legs. Threaded to the agent via aw_context; the agent stamps
+          # it into its run-name → displayTitle (see *-agent.md).
+          CID="${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.branch }}"
           CTX=$(jq -nc \
             --arg pr "$PR" \
             --arg iteration "$ITERATION" \
             --arg feedback "$FEEDBACK" \
             --argjson sabotage "$SABOTAGE" \
-            '{pr: $pr, iteration: $iteration, feedback: $feedback, sabotage: $sabotage}')
-          # Each branch dispatches its OWN agent workflow. Distinct lock files per
-          # branch keep the newest-since-T0 resolver unambiguous within one PR (the
-          # documented concurrent-PR limitation is unchanged and deferred).
+            --arg cid "$CID" \
+            '{pr: $pr, iteration: $iteration, feedback: $feedback, sabotage: $sabotage, cid: $cid}')
+          # Each branch dispatches its OWN agent workflow.
           WF="${{ matrix.branch }}-agent.lock.yml"
           mkdir -p /tmp/meta
           T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           gh workflow run "$WF" --repo "$REPO" -f aw_context="$CTX"
-          # PoC simplification (documented limitation): resolve the agent run as the
-          # newest workflow_dispatch run for THIS branch's workflow since T0.
+          # Resolve the agent run by correlation-id IDENTITY, not newest-since-T0.
+          # T0 only bounds the candidate list; the selection is by cid:[<CID>] in
+          # the run's displayTitle. An unresolved cid FAILS LOUDLY — never fall back
+          # to a recency heuristic, which is exactly the concurrent-PR misattribution
+          # this milestone removes.
           RID=""
           for i in $(seq 1 24); do
             sleep 5
-            RID=$(gh run list --repo "$REPO" \
+            RUNS=$(gh run list --repo "$REPO" \
               --workflow "$WF" --event workflow_dispatch \
-              --created ">=$T0" --json databaseId --jq '.[0].databaseId // empty')
+              --created ">=$T0" --json databaseId,displayTitle)
+            RID=$(match_run_by_cid "$RUNS" "$CID")
             [ -n "$RID" ] && break
           done
-          [ -n "$RID" ] || { echo "agent run never appeared"; exit 1; }
+          [ -n "$RID" ] || { echo "no agent run matched cid:[$CID] for $WF" >&2; exit 1; }
           # Write run_id as soon as it resolves so downstream can react even on agent
           # failure; agent_ok is written after the watch.
           printf '%s' "$RID" > /tmp/meta/run_id

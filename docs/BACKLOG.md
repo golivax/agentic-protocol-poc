@@ -3,15 +3,16 @@
 Running list of things we've decided to do but haven't yet. For "what is / isn't
 implemented today" see `STATUS.md`.
 
-The next two milestones are **v3 = correlation-id run resolver** and
-**v4 = human-in-the-loop (approval gate)**; both are written up first below.
+**v3 = correlation-id run resolver** is DONE (below); the next milestone is
+**v4 = human-in-the-loop (approval gate)**. Both are written up first below.
 The remaining entries are smaller, unsequenced candidates.
 
-## v3 — Correlation-id run resolver (next milestone)
+## v3 — Correlation-id run resolver (DONE)
 
-**What:** Stamp a correlation id into each agent dispatch and the evidence
-artifact it returns, so the orchestrator resolves *the exact run it launched*
-instead of guessing "newest `workflow_dispatch` run of this workflow since T0".
+**What:** Stamp a correlation id into each agent dispatch and the launched run's
+name (so it appears in the run's displayTitle), so the orchestrator resolves
+*the exact run it launched* instead of guessing "newest `workflow_dispatch` run
+of this workflow since T0".
 
 **Why (the blocker it removes):** Today the agent run-id resolver is correct only
 **one PR at a time per workflow** (v1 deviation #11). The gh-aw agent workflow
@@ -22,15 +23,15 @@ only sees its own workflow's runs (see `STATUS.md` §"v2 … Concurrency"). What
 fixes is the remaining case: **concurrent PRs of the same workflow.** Until then,
 the PoC is live-verified one PR at a time.
 
-**Sketch:**
-- `plan`/`dispatch` generate a correlation id (e.g. `${PR}-${branch}-${iteration}-${uuid}`)
-  and pass it into the `aw_context` the agent materializes.
-- The agent echoes it back into `evidence.json` (and/or the artifact name).
-- The run resolver matches on the correlation id rather than time-since-T0; the
-  `checks` job refuses an artifact whose id doesn't match (fail closed).
-- Tests: a resolver unit that rejects a mismatched/foreign run.
+**As built (Approach A — run-name):**
+- `dispatch` mints `cid = <orchestrator_run_id>-<run_attempt>-<branch>` and adds
+  it to the `aw_context` JSON.
+- Each agent `.md` sets `run-name: "<Agent> · cid:[${{ fromJSON(... aw_context).cid }}]"`;
+  `gh aw compile` bakes it into the lock, so the cid lands in the run's displayTitle.
+- The resolver matches `cid:[<cid>]` via `match_run_by_cid` (`lib.sh`, unit-tested
+  in `tests/test-correlation.sh`) and fails loudly on no match — no heuristic fallback.
 
-**Status:** not started — the designated v3 milestone.
+**Status:** DONE — pending live verify (two concurrent PRs).
 
 ---
 
@@ -141,4 +142,4 @@ the `grumpy-review` name has reported at least once, so it's selectable.
 
 ---
 
-## (See also `STATUS.md` and the v1 deviation list for other candidate work: restore the agent egress firewall for the now-public endpoint. The correlation-id run resolver is now the **v3** milestone, above.)
+## (See also `STATUS.md` and the v1 deviation list for other candidate work: restore the agent egress firewall for the now-public endpoint. The correlation-id run resolver shipped as **v3** (DONE), above.)
