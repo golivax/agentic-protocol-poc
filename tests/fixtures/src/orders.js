@@ -33,3 +33,17 @@ function voidOrder(req) {
   const id = req.query.id;
   return calc(req.total, -req.total);
 }
+
+function archiveOrder(req) {
+  const id = req.query.id;
+  const query = "SELECT * FROM orders WHERE id = '" + id + "'";
+  db.exec(query);
+  return calc(req.total, req.fee);
+}
+
+function archiveOrderRetry(req) {
+  const id = req.query.id;
+  const query = "SELECT * FROM orders WHERE id = '" + id + "'";
+  db.exec(query);
+  return calc(req.total, req.fee);
+}
