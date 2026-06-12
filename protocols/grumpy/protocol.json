@@ -9,6 +9,7 @@
       "workflow": "grumpy-agent",
       "evidence": "evidence.schema.json",
       "max_iterations": 3,
+      "params": { "categories": ["naming", "error-handling", "performance", "duplication", "security"] },
       "checks": [
         { "run": "schema-valid", "on_fail": "iterate" },
         { "run": "rubric-coverage", "on_fail": "iterate" },

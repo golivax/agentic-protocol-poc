@@ -4,6 +4,11 @@ cd "$(dirname "$0")/.."
 FX=tests/fixtures
 PASS=0; FAIL=0
 
+# These checks read their rubric from CHECK_PARAMS (the engine forwards it in
+# production). Direct invocations here must supply it; the grumpy rubric is the
+# full five-category set. Individual cases override this inline where needed.
+export CHECK_PARAMS='{"categories":["naming","error-handling","performance","duplication","security"]}'
+
 # assert_check <script> <expected_pass:true|false> <feedback_substring> <evidence> [diff] [files]
 assert_check() {
   local script="$1" expect="$2" substr="$3" ev="$4" diff="${5:-$FX/diff-pr1.txt}" files="${6:-$FX/changed-files-pr1.txt}"
