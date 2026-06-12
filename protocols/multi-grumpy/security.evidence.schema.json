@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Grumpy review evidence",
+  "title": "Security review evidence",
   "type": "object",
   "required": ["files"],
   "properties": {
@@ -17,7 +17,7 @@
               "type": "object",
               "required": ["category", "verdict"],
               "properties": {
-                "category": { "enum": ["naming", "error-handling", "performance", "duplication", "security"] },
+                "category": { "enum": ["security"] },
                 "verdict": { "enum": ["issues-found", "none-found"] },
                 "findings": {
                   "type": "array",
