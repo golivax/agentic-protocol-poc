@@ -7,7 +7,9 @@ ok(){ PASS=$((PASS+1)); echo "ok: $1"; }; bad(){ FAIL=$((FAIL+1)); echo "FAIL: $
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 export ENGINE_LOCAL=1 GITHUB_REPOSITORY="golivax/agentic-protocol-poc" PR=80 PR_HEAD_SHA="e2esha"
 WORK=$(mktemp -d); git init -q --bare "$WORK/origin.git"; export STATE_REMOTE="$WORK/origin.git"
-source .github/agent-factory/engine/lib.sh
+# Shell wrapper: delegate lib function to lib.py CLI.
+LIB_PY=.github/agent-factory/engine/lib.py
+state_checkout() { python3 "$LIB_PY" state-checkout "$@"; }
 PROTO=.github/agent-factory/protocols/multi-grumpy/protocol.json
 PASSV="$WORK/pass.json"; echo '{"results":[{"check":"x","pass":true,"feedback":""}]}' > "$PASSV"
 

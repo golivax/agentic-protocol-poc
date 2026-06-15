@@ -51,7 +51,9 @@ OUT=$("$RC" "$SBX/protocol.json" review "$FX/evidence-complete.json" "$FX/diff-p
 chk "runner: crashing check → fail verdict" '[ "$(jq -r ".results[0].pass" <<<"$OUT")" = false ]'
 
 # --- resolve_executable (shared resolver) direct unit checks ---
-source .github/agent-factory/engine/lib.sh
+# Shell wrapper: delegate lib function to lib.py CLI.
+LIB_PY=.github/agent-factory/engine/lib.py
+resolve_executable() { python3 "$LIB_PY" resolve-executable "$@"; }
 PDIR=".github/agent-factory/protocols/grumpy"
 TAB=$'\t'   # split helper: resolve_executable returns "<kind>\t<rest>"
 R=$(resolve_executable "$PDIR/checks" "schema-valid" "$PDIR" "")

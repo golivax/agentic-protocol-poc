@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit tests for lib.sh match_run_by_cid — the correlation-id run resolver.
+# Unit tests for match_run_by_cid (lib.py) — the correlation-id run resolver.
 # Pure: given a `gh run list --json databaseId,displayTitle` JSON array and a cid,
 # print the databaseId of the run whose displayTitle carries the delimited token
 # cid:[<cid>], else empty. No GitHub calls.

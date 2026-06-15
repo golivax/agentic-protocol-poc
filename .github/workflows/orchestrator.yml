@@ -146,11 +146,10 @@ jobs:
           SHA: ${{ steps.head.outputs.sha }}
           ITER: ${{ steps.plan.outputs.iteration }}
         run: |
-          source .github/agent-factory/engine/lib.sh
           # Mark the AGGREGATE "multi-grumpy" check-run in_progress — this is the
           # required gating check. It stays in_progress until join.sh completes it
           # (the per-branch advance writes "multi-grumpy/<branch>" sub-runs, not this).
-          set_check_run "multi-grumpy" "$SHA" in_progress "" "Review in progress" "Reviewing (iteration $ITER); merge is gated until the protocol completes."
+          python3 .github/agent-factory/engine/lib.py set-check-run "multi-grumpy" "$SHA" in_progress "" "Review in progress" "Reviewing (iteration $ITER); merge is gated until the protocol completes."
 
       - name: Ensure shared status comment
         if: steps.plan.outputs.action == 'run-fanout'
@@ -161,18 +160,13 @@ jobs:
           PR: ${{ steps.ctx.outputs.pr }}
           INSTANCE: ${{ steps.ctx.outputs.instance }}
         run: |
-          source .github/agent-factory/engine/lib.sh
           # next.sh already seeded + pushed _instance.yaml into /tmp/state at fan-out
           # start. Create the ONE shared progress comment up front (create-once:
           # skip if an id is already recorded), so the two parallel branch advances
           # and the join only ever PATCH it. Idempotent across re-runs of this job.
-          INF=$(instance_file /tmp/state multi-grumpy "$INSTANCE")
-          CID=$(yq -r '.status_comment_id // ""' "$INF" 2>/dev/null || echo "")
-          if [ -z "$CID" ]; then
-            BODY=$(render_fanout_status_body /tmp/state multi-grumpy "$INSTANCE" .github/agent-factory/protocols/multi-grumpy/protocol.json)
-            upsert_status_comment "$INF" "$PR" "$BODY"
-            cas_push /tmp/state "$INSTANCE: ensure shared status comment"
-          fi
+          python3 .github/agent-factory/engine/lib.py ensure-status-comment \
+            /tmp/state multi-grumpy "$INSTANCE" \
+            .github/agent-factory/protocols/multi-grumpy/protocol.json "$PR"
 
   # ── Zone 2: the sandboxed agents, fanned out one matrix leg per branch. ──
   # Matrix jobs share ONE job-level outputs map (last leg clobbers), so per-branch
@@ -201,7 +195,6 @@ jobs:
           # uniformly iteration 1 / feedback "" (correct for a fresh branch); for a
           # branched continue there is exactly one matrix leg, so they are that
           # branch's values.
-          source .github/agent-factory/engine/lib.sh
           # Correlation id: globally unique per dispatch — the orchestrator run id
           # is unique, run_attempt disambiguates re-runs, branch disambiguates the
           # two matrix legs. Threaded to the agent via aw_context; the agent stamps
@@ -230,7 +223,7 @@ jobs:
             RUNS=$(gh run list --repo "$REPO" \
               --workflow "$WF" --event workflow_dispatch \
               --created ">=$T0" --json databaseId,displayTitle)
-            RID=$(match_run_by_cid "$RUNS" "$CID")
+            RID=$(python3 .github/agent-factory/engine/lib.py match-run-by-cid "$RUNS" "$CID")
             [ -n "$RID" ] && break
           done
           [ -n "$RID" ] || { echo "no agent run matched cid:[$CID] for $WF" >&2; exit 1; }

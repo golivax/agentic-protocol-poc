@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit tests for lib.sh render_fanout_status_body — the combined fan-out PR
+# Unit tests for render_fanout_status_body (lib.py) — the combined fan-out PR
 # progress-comment body. Pure renderer: reads branch state files, echoes a string.
 set -euo pipefail
 cd "$(dirname "$0")/.."

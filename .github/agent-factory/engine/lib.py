@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Engine shared library. Importable by the engine scripts AND a thin CLI
-(`python3 lib.py <subcommand> ...`) for helpers the orchestrator calls inline.
-Ports .github/agent-factory/engine/lib.sh 1:1 — behavior must not change."""
+(`python3 lib.py <subcommand> ...`) for helpers the orchestrator calls inline."""
 import glob
 import json
 import os
@@ -285,6 +284,25 @@ def render_fanout_status_body(dir_, pid, instance, proto):
     return f"\U0001f50d **{pid} · {instance}**\n\n{sections}{headline}\n\n[Full state & audit trail]({link})\n"
 
 
+def ensure_status_comment(state_dir, pid, instance, proto_path, pr):
+    """
+    ensure_status_comment <state_dir> <pid> <instance> <protocol.json> <pr>
+    Create-once guard for the shared fan-out status comment.  Reads the
+    instance file's status_comment_id; if empty → render + upsert + cas_push;
+    if already set → no-op.  Reproduces the "Ensure shared status comment"
+    orchestrator block exactly, reusing the existing lib functions.
+    """
+    inf = instance_file(state_dir, pid, instance)
+    inst_data = load_yaml(inf) if os.path.isfile(inf) else {}
+    cid = inst_data.get("status_comment_id", "") or ""
+    if cid:
+        # Already created on a previous run — idempotent no-op.
+        return
+    body = render_fanout_status_body(state_dir, pid, instance, proto_path)
+    upsert_status_comment(inf, pr, body)
+    cas_push(state_dir, f"{instance}: ensure shared status comment")
+
+
 def _cli(argv):
     if not argv:
         sys.stderr.write("lib.py: no subcommand given\n")
@@ -321,6 +339,9 @@ def _cli(argv):
         print(resolve_executable(args[0], args[1], args[2], ex))
     elif cmd == "state-checkout":
         state_checkout(args[0])
+    elif cmd == "ensure-status-comment":
+        # ensure-status-comment <state_dir> <pid> <instance> <protocol.json> <pr>
+        ensure_status_comment(args[0], args[1], args[2], args[3], args[4])
     else:
         sys.stderr.write(f"lib.py: unknown subcommand {cmd}\n")
         sys.exit(2)

@@ -15,7 +15,12 @@ WORK=$(mktemp -d)
 git init -q --bare "$WORK/origin.git"
 export STATE_REMOTE="$WORK/origin.git"
 
-source .github/agent-factory/engine/lib.sh
+# Shell wrappers: delegate lib functions to lib.py CLI.
+LIB_PY=.github/agent-factory/engine/lib.py
+state_checkout()  { python3 "$LIB_PY" state-checkout  "$@"; }
+cas_push()        { python3 "$LIB_PY" cas-push         "$@"; }
+state_file()      { python3 "$LIB_PY" state-file       "$@"; }
+instance_file()   { python3 "$LIB_PY" instance-file    "$@"; }
 
 # --- lib: state checkout creates the branch on a bare origin
 S1="$WORK/s1"
