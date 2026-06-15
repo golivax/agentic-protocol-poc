@@ -16,8 +16,8 @@ A=$(.github/agent-factory/engine/next.py "$WORK/p" pr-80 "$PROTO" start e2esha)
 check "e2e: run-fanout" '[ "$(jq -r .action <<<"$A")" = run-fanout ]'
 
 # advance each branch to done (grumpy publishes grumpy; security publishes security)
-BRANCH=grumpy   .github/agent-factory/engine/advance.sh "$WORK/ag" pr-80 "$PROTO" "$PASSV" tests/fixtures/evidence-complete.json >/dev/null 2>&1
-BRANCH=security .github/agent-factory/engine/advance.sh "$WORK/as" pr-80 "$PROTO" "$PASSV" tests/fixtures/evidence-security.json >/dev/null 2>&1
+BRANCH=grumpy   .github/agent-factory/engine/advance.py "$WORK/ag" pr-80 "$PROTO" "$PASSV" tests/fixtures/evidence-complete.json >/dev/null 2>&1
+BRANCH=security .github/agent-factory/engine/advance.py "$WORK/as" pr-80 "$PROTO" "$PASSV" tests/fixtures/evidence-security.json >/dev/null 2>&1
 state_checkout "$WORK/v"
 check "e2e: grumpy done"   '[ "$(yq -r .state "$WORK/v/multi-grumpy/pr-80/grumpy.yaml")" = done ]'
 check "e2e: security done" '[ "$(yq -r .state "$WORK/v/multi-grumpy/pr-80/security.yaml")" = done ]'

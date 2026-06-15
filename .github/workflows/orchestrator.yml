@@ -383,5 +383,5 @@ jobs:
           fi
           printf '%s' "$VERDICTS" > /tmp/verdicts.json
           jq . /tmp/verdicts.json
-          BRANCH=${{ matrix.branch }} .github/agent-factory/engine/advance.sh /tmp/state "${{ needs.plan.outputs.instance }}" \
+          BRANCH=${{ matrix.branch }} .github/agent-factory/engine/advance.py /tmp/state "${{ needs.plan.outputs.instance }}" \
             .github/agent-factory/protocols/multi-grumpy/protocol.json /tmp/verdicts.json /tmp/agent/evidence.json

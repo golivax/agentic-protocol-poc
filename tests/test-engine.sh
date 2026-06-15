@@ -102,7 +102,7 @@ check "reset/active: run-agent iter 1" '[ "$(jq -r .action <<<"$A")" = run-agent
 W7="$WORK/w7"; rm -rf "$W7"
 FAILV='{"results":[{"check":"rubric-coverage","pass":false,"feedback":"Missing: duplication × src/report.js"},{"check":"schema-valid","pass":true,"feedback":""}]}'
 echo "$FAILV" > "$WORK/verdicts-fail.json"
-OUT=$(PR=8 AGENT_RUN_ID=200 .github/agent-factory/engine/advance.sh "$W7" pr-8 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1) || bad "advance(fail) exited nonzero"
+OUT=$(PR=8 AGENT_RUN_ID=200 .github/agent-factory/engine/advance.py "$W7" pr-8 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1) || bad "advance(fail) exited nonzero"
 git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify7"
 check "advance: iteration bumped"     '[ "$(yq -r .iteration "$WORK/verify7/grumpy-review/pr-8.yaml")" = 2 ]'
 check "advance: feedback in history"  'yq -r ".history[-1].feedback" "$WORK/verify7/grumpy-review/pr-8.yaml" | grep -q "duplication × src/report.js"'
@@ -112,7 +112,7 @@ check "advance: re-dispatch intended" 'grep -q "protocol-continue" <<<"$OUT"'
 W8="$WORK/w8"; rm -rf "$W8"
 PASSV='{"results":[{"check":"schema-valid","pass":true,"feedback":""},{"check":"rubric-coverage","pass":true,"feedback":""},{"check":"traces-exist-in-diff","pass":true,"feedback":""}]}'
 echo "$PASSV" > "$WORK/verdicts-pass.json"
-OUT=$(PR=8 AGENT_RUN_ID=201 .github/agent-factory/engine/advance.sh "$W8" pr-8 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(pass) exited nonzero"
+OUT=$(PR=8 AGENT_RUN_ID=201 .github/agent-factory/engine/advance.py "$W8" pr-8 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(pass) exited nonzero"
 check "single-agent comment keeps per-file blob link" 'grep -q "blob/agentic-state/grumpy-review/pr-8.yaml" <<<"$OUT"'
 git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify8"
 check "advance: state done"              '[ "$(yq -r .state "$WORK/verify8/grumpy-review/pr-8.yaml")" = done ]'
@@ -125,14 +125,14 @@ state_checkout "$W9"
 yq -i '.iteration = 3 | .state = "review"' "$W9/grumpy-review/pr-8.yaml"
 cas_push "$W9" "simulate iteration 3"
 W10="$WORK/w10"; rm -rf "$W10"
-OUT=$(PR=8 AGENT_RUN_ID=202 .github/agent-factory/engine/advance.sh "$W10" pr-8 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1) || bad "advance(exhaust) exited nonzero"
+OUT=$(PR=8 AGENT_RUN_ID=202 .github/agent-factory/engine/advance.py "$W10" pr-8 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1) || bad "advance(exhaust) exited nonzero"
 git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify9"
 check "advance: exhausted → failed" '[ "$(yq -r .state "$WORK/verify9/grumpy-review/pr-8.yaml")" = failed ]'
 
 # --- advance.sh: empty verdicts (checks produced nothing) must NOT publish
 W11="$WORK/w11"; rm -rf "$W11"
 echo '{"results":[]}' > "$WORK/verdicts-empty.json"
-OUT=$(PR=9 AGENT_RUN_ID=203 .github/agent-factory/engine/advance.sh "$W11" pr-9 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-empty.json" tests/fixtures/evidence-lazy.json 2>&1) || bad "advance(empty) exited nonzero"
+OUT=$(PR=9 AGENT_RUN_ID=203 .github/agent-factory/engine/advance.py "$W11" pr-9 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-empty.json" tests/fixtures/evidence-lazy.json 2>&1) || bad "advance(empty) exited nonzero"
 git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/verify11"
 check "advance: empty verdicts → not done"   '[ "$(yq -r .state "$WORK/verify11/grumpy-review/pr-9.yaml")" != done ]'
 check "advance: empty verdicts → no publish" '! grep -q "pulls/9/reviews" <<<"$OUT"'
@@ -140,15 +140,15 @@ check "advance: empty verdicts → no publish" '! grep -q "pulls/9/reviews" <<<"
 # --- advance.sh emits a grumpy-review check run reflecting the outcome ---
 export PR_HEAD_SHA="testsha123"
 # iterate (fail, iter<max) → in_progress
-OUT=$(PR=20 AGENT_RUN_ID=300 .github/agent-factory/engine/advance.sh "$WORK/c1" pr-20 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1)
+OUT=$(PR=20 AGENT_RUN_ID=300 .github/agent-factory/engine/advance.py "$WORK/c1" pr-20 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1)
 check "check-run: iterate → in_progress" 'grep -q "check-run grumpy-review sha=testsha123 status=in_progress" <<<"$OUT"'
 # pass with issues-found (evidence-complete has issues) → action_required
-OUT=$(PR=20 AGENT_RUN_ID=301 .github/agent-factory/engine/advance.sh "$WORK/c2" pr-20 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1)
+OUT=$(PR=20 AGENT_RUN_ID=301 .github/agent-factory/engine/advance.py "$WORK/c2" pr-20 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1)
 check "check-run: changes requested → failure" 'grep -q "status=completed conclusion=failure" <<<"$OUT"'
 # exhausted (fail at iter==max) → failure
 W12="$WORK/c3"; state_checkout "$W12"; yq -i '.iteration = 3 | .state = "review"' "$W12/grumpy-review/pr-21.yaml" 2>/dev/null || { mkdir -p "$W12/grumpy-review"; yq -n '.protocol="grumpy-review"|.instance="pr-21"|.state="review"|.iteration=3|.gates={}|.history=[]' > "$W12/grumpy-review/pr-21.yaml"; }
 cas_push "$W12" "seed pr-21 iter3"
-OUT=$(PR=21 AGENT_RUN_ID=302 .github/agent-factory/engine/advance.sh "$WORK/c4" pr-21 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1)
+OUT=$(PR=21 AGENT_RUN_ID=302 .github/agent-factory/engine/advance.py "$WORK/c4" pr-21 .github/agent-factory/protocols/grumpy/protocol.json "$WORK/verdicts-fail.json" tests/fixtures/evidence-lazy.json 2>&1)
 check "check-run: exhausted → failure" 'grep -q "status=completed conclusion=failure" <<<"$OUT"'
 
 # --- advance relays the publish hook's {conclusion,summary} (engine reads no schema)
@@ -163,7 +163,7 @@ echo '{"results":[{"check":"x","pass":true,"feedback":""}]}' > "$WORK/verdicts-s
 # would abort before the rm and leave stub-publish.sh in .github/agent-factory/protocols/grumpy/publish/,
 # which then makes resolve_executable see two matches (ambiguous) for every later run.
 trap 'rm -f "$STUB_HOOK" "$STUB_PROTO"' EXIT
-OUT=$(PR=8 AGENT_RUN_ID=400 .github/agent-factory/engine/advance.sh "$WORK/relay" pr-8 "$STUB_PROTO" "$WORK/verdicts-stub.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(relay) exited nonzero"
+OUT=$(PR=8 AGENT_RUN_ID=400 .github/agent-factory/engine/advance.py "$WORK/relay" pr-8 "$STUB_PROTO" "$WORK/verdicts-stub.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(relay) exited nonzero"
 rm -f "$STUB_HOOK" "$STUB_PROTO"; trap - EXIT
 check "advance: relays hook conclusion" 'grep -q "conclusion=success" <<<"$OUT"'
 check "advance: relays hook summary"    'grep -q "STUB-RELAYED-OK" <<<"$OUT"'
@@ -210,7 +210,7 @@ check "branch continue/absent: fresh run-agent iter 1" \
 cp .github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.sh .github/agent-factory/protocols/multi-grumpy/publish/publish-grumpy.sh
 chmod +x .github/agent-factory/protocols/multi-grumpy/publish/publish-grumpy.sh
 export PR_HEAD_SHA="mgsha1"
-OUT=$(BRANCH=grumpy PR=50 AGENT_RUN_ID=900 .github/agent-factory/engine/advance.sh "$WORK/advmg1" pr-50 \
+OUT=$(BRANCH=grumpy PR=50 AGENT_RUN_ID=900 .github/agent-factory/engine/advance.py "$WORK/advmg1" pr-50 \
   .github/agent-factory/protocols/multi-grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(mg grumpy) nonzero"
 git clone -q --branch agentic-state "$STATE_REMOTE" "$WORK/vmg1"
 check "advance branch: grumpy.yaml state done"    '[ "$(yq -r .state "$WORK/vmg1/multi-grumpy/pr-50/grumpy.yaml")" = done ]'
@@ -223,12 +223,12 @@ check "advance branch: shared comment not blob link"      '! grep -q "blob/agent
 # --- advance.sh fan-out signalling: terminal branch fires protocol-join; iterate carries branch ---
 # iterate (fail, iter<max) on a branch → protocol-continue WITH branch
 echo '{"results":[{"check":"schema-valid","pass":false,"feedback":"sec: bad anchor"}]}' > "$WORK/verdicts-secfail.json"
-OUT=$(BRANCH=security PR=50 AGENT_RUN_ID=901 .github/agent-factory/engine/advance.sh "$WORK/advmg2" pr-50 \
+OUT=$(BRANCH=security PR=50 AGENT_RUN_ID=901 .github/agent-factory/engine/advance.py "$WORK/advmg2" pr-50 \
   .github/agent-factory/protocols/multi-grumpy/protocol.json "$WORK/verdicts-secfail.json" tests/fixtures/evidence-lazy.json 2>&1)
 check "fanout iterate: protocol-continue fired" 'grep -q "protocol-continue" <<<"$OUT"'
 check "fanout iterate: payload carries branch"  'grep -q "client_payload\[branch\]=security" <<<"$OUT"'
 # terminal (done) on a branch → protocol-join fired
-OUT=$(BRANCH=grumpy PR=51 AGENT_RUN_ID=902 .github/agent-factory/engine/advance.sh "$WORK/advmg3" pr-51 \
+OUT=$(BRANCH=grumpy PR=51 AGENT_RUN_ID=902 .github/agent-factory/engine/advance.py "$WORK/advmg3" pr-51 \
   .github/agent-factory/protocols/multi-grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1)
 check "fanout done: protocol-join fired" 'grep -q "protocol-join" <<<"$OUT"'
 
