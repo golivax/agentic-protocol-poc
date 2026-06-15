@@ -20,7 +20,7 @@ jobs:
       contents: read
       checks: write
       issues: write
-      pull-requests: write   # join.sh PATCHes the PR's shared status comment (final headline); a PR comment needs pull-requests:write
+      pull-requests: write   # join.py PATCHes the PR's shared status comment (final headline); a PR comment needs pull-requests:write
     steps:
       - uses: actions/checkout@v4
       - name: Ensure yq
@@ -48,4 +48,4 @@ jobs:
           PR_HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
           PROTO=".github/agent-factory/protocols/${{ github.event.client_payload.protocol }}/protocol.json"
-          .github/agent-factory/engine/join.sh /tmp/state "${{ github.event.client_payload.instance }}" "$PROTO"
+          .github/agent-factory/engine/join.py /tmp/state "${{ github.event.client_payload.instance }}" "$PROTO"

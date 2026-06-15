@@ -23,7 +23,7 @@ check "e2e: grumpy done"   '[ "$(yq -r .state "$WORK/v/multi-grumpy/pr-80/grumpy
 check "e2e: security done" '[ "$(yq -r .state "$WORK/v/multi-grumpy/pr-80/security.yaml")" = done ]'
 
 # join: both done → aggregate success
-OUT=$(.github/agent-factory/engine/join.sh "$WORK/j" pr-80 "$PROTO" 2>&1)
+OUT=$(.github/agent-factory/engine/join.py "$WORK/j" pr-80 "$PROTO" 2>&1)
 check "e2e: join → success" 'grep -q "check-run multi-grumpy sha=e2esha status=completed conclusion=success" <<<"$OUT"'
 
 echo "-----"; echo "fanout-e2e: $PASS passed, $FAIL failed"; [ "$FAIL" -eq 0 ]
