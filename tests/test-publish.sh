@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PASS=0; FAIL=0
-HOOK=.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.sh
+HOOK=.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.py
 
 # run_local <evidence-file> → the JSON payload the hook would POST (ENGINE_LOCAL)
 run_local() {
@@ -48,7 +48,7 @@ check "clean → no comments"              '(.comments | length) == 0' "$Q"
 # pattern as run_local above — 2>&1 1>/dev/null swaps streams so stderr is piped).
 run_local_security() {
   ENGINE_LOCAL=1 GITHUB_REPOSITORY=acme/repo PR=8 \
-    .github/agent-factory/protocols/multi-grumpy/publish/publish-security.sh "$1" pr-8 2>&1 1>/dev/null \
+    .github/agent-factory/protocols/multi-grumpy/publish/publish-security.py "$1" pr-8 2>&1 1>/dev/null \
     | sed -n '/^{/,$p'
 }
 S=$(run_local_security tests/fixtures/evidence-security.json)
@@ -58,7 +58,7 @@ check "publish-security: has one inline comment"    '(.comments | length) == 1' 
 
 # The hook prints {conclusion,summary} on stdout; capture that separately.
 SEC_STDOUT=$(ENGINE_LOCAL=1 GITHUB_REPOSITORY=acme/repo PR=8 \
-  .github/agent-factory/protocols/multi-grumpy/publish/publish-security.sh tests/fixtures/evidence-security.json pr-8 2>/dev/null)
+  .github/agent-factory/protocols/multi-grumpy/publish/publish-security.py tests/fixtures/evidence-security.json pr-8 2>/dev/null)
 check "publish-security: conclusion=failure"  '.conclusion == "failure"'  "$SEC_STDOUT"
 check "publish-security: summary non-empty"   '(.summary | length) > 0'  "$SEC_STDOUT"
 

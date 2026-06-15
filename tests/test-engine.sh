@@ -212,8 +212,6 @@ check "branch continue/absent: fresh run-agent iter 1" \
   '[ "$(jq -r .action <<<"$A")" = run-agent ] && [ "$(jq -r .iteration <<<"$A")" = 1 ]'
 
 # --- advance.sh branch-scoped: grumpy branch, all pass → done + per-branch publish + branch check-run ---
-cp .github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.sh .github/agent-factory/protocols/multi-grumpy/publish/publish-grumpy.sh
-chmod +x .github/agent-factory/protocols/multi-grumpy/publish/publish-grumpy.sh
 export PR_HEAD_SHA="mgsha1"
 OUT=$(BRANCH=grumpy PR=50 AGENT_RUN_ID=900 .github/agent-factory/engine/advance.py "$WORK/advmg1" pr-50 \
   .github/agent-factory/protocols/multi-grumpy/protocol.json "$WORK/verdicts-pass.json" tests/fixtures/evidence-complete.json 2>&1) || bad "advance(mg grumpy) nonzero"
