@@ -108,7 +108,7 @@ jobs:
           # unbranched fan-out planning (run-fanout); set → branched continue for that
           # one branch (run-agent or halt). An UNBRANCHED continue on a fan-out protocol
           # errors (exit 2) — but pull_request/issue_comment never emit "continue".
-          BRANCH="${{ steps.ctx.outputs.branch }}" .github/agent-factory/engine/next.sh /tmp/state "${{ steps.ctx.outputs.instance }}" \
+          BRANCH="${{ steps.ctx.outputs.branch }}" .github/agent-factory/engine/next.py /tmp/state "${{ steps.ctx.outputs.instance }}" \
             .github/agent-factory/protocols/multi-grumpy/protocol.json "${{ steps.ctx.outputs.command }}" "$HEAD_SHA" > /tmp/action.json
           cat /tmp/action.json
           ACTION=$(jq -r .action /tmp/action.json)

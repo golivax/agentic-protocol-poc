@@ -12,7 +12,7 @@ PROTO=.github/agent-factory/protocols/multi-grumpy/protocol.json
 PASSV="$WORK/pass.json"; echo '{"results":[{"check":"x","pass":true,"feedback":""}]}' > "$PASSV"
 
 # plan: fanout start seeds both branches
-A=$(.github/agent-factory/engine/next.sh "$WORK/p" pr-80 "$PROTO" start e2esha)
+A=$(.github/agent-factory/engine/next.py "$WORK/p" pr-80 "$PROTO" start e2esha)
 check "e2e: run-fanout" '[ "$(jq -r .action <<<"$A")" = run-fanout ]'
 
 # advance each branch to done (grumpy publishes grumpy; security publishes security)

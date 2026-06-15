@@ -40,7 +40,7 @@ check "cas push survives concurrent writer" \
    grep -q 'state: review' '$WORK/verify2/grumpy/pr-2.yaml'"
 
 PROTO=.github/agent-factory/protocols/grumpy/protocol.json
-NEXT=.github/agent-factory/engine/next.sh
+NEXT=.github/agent-factory/engine/next.py
 
 # start on ABSENT → fresh review, run-agent iter 1, state pushed
 A=$("$NEXT" "$WORK/n1" pr-7 "$PROTO" start)
