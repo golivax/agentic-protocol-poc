@@ -10,12 +10,12 @@ evidence schemas, deterministic transition checks, and bounded
 iterate-with-feedback. A PR review runs on opening a PR or commenting `/grumpy`.
 
 Two example protocols exercise the engine:
-- **`grumpy-review`** (`protocols/grumpy/`) — the v1 single-agent PR reviewer.
+- **`grumpy-review`** (`.github/agent-factory/protocols/grumpy/`) — the v1 single-agent PR reviewer.
   Still fully supported by the engine and used as the regression-guard baseline.
-- **`multi-grumpy`** (`protocols/multi-grumpy/`) — the v2 fan-out protocol that
+- **`multi-grumpy`** (`.github/agent-factory/protocols/multi-grumpy/`) — the v2 fan-out protocol that
   reviews via two parallel agents (`grumpy` + a `security` stub) joined under a
   strict barrier. **This is the protocol `orchestrator.yml` currently deploys**
-  (it hardcodes `protocols/multi-grumpy/protocol.json`), so a live `/grumpy` or
+  (it hardcodes `.github/agent-factory/protocols/multi-grumpy/protocol.json`), so a live `/grumpy` or
   PR-open today runs the fan-out, not the single-agent path.
 
 The deep design rationale lives in `docs/HOW-IT-WORKS.md`; what is/isn't
@@ -44,7 +44,7 @@ deliberate.
 ## Architecture: engine vs. protocol (the key separation)
 
 ```
-.github/engine/        GENERIC — no protocol-specific logic (only a few grumpy
+.github/agent-factory/engine/   GENERIC — no protocol-specific logic (only a few grumpy
                        mentions in illustrative comments).
   lib.sh               state checkout, cas_push, status-comment upsert,
                        resolve_executable, set_check_run, match_run_by_cid
@@ -54,7 +54,7 @@ deliberate.
   run-checks.sh        resolve + run a state's checks (any language) -> verdicts
   join.sh              fan-out AND-barrier (v2)
 
-protocols/<name>/      A PROTOCOL — all protocol-specific logic lives here.
+.github/agent-factory/protocols/<name>/   A PROTOCOL — all protocol-specific logic lives here.
   protocol.json        states, checks, transitions, max_iterations (DATA)
   *.evidence.schema.json   the rubric the agent must fill (the CONTRACT)
   checks/*             deterministic checks (any language; see ABI below)
@@ -67,8 +67,8 @@ protocols/<name>/      A PROTOCOL — all protocol-specific logic lives here.
   protocol-join.yml    serialized join evaluator (v2)
 ```
 
-**To build a new protocol you write a new `protocols/<name>/` + agent workflow;
-you do NOT touch `.github/engine/`.** The engine reads the protocol id from
+**To build a new protocol you write a new `.github/agent-factory/protocols/<name>/` + agent workflow;
+you do NOT touch `.github/agent-factory/engine/`.** The engine reads the protocol id from
 `protocol.json` `.name`, derives the state path `<protocol-id>/<instance-key>.yaml`,
 and resolves checks/publish hooks from the protocol directory.
 
@@ -169,7 +169,7 @@ Key frontmatter facts (see `docs/STATUS.md` for the security rationale):
 
 ## v2 — fan-out / join (the `BRANCH` seam)
 
-v2 (`protocols/multi-grumpy/`) adds a `fanout` phase (N parallel agent branches,
+v2 (`.github/agent-factory/protocols/multi-grumpy/`) adds a `fanout` phase (N parallel agent branches,
 each with its own iterate loop + eager publish) and a strict `join` AND-barrier
 that gates merge. Design goal: **v1 stays byte-identical.** `next.sh`,
 `run-checks.sh`, and `advance.sh` read one env var, `BRANCH`:

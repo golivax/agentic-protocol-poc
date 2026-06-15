@@ -12,7 +12,7 @@ end records the multi-agent milestone (both are live-verified).
   `lib.sh` (compare-and-swap push to the state branch).
 - Three deterministic checks: `schema-valid`, `rubric-coverage`,
   `traces-exist-in-diff`.
-- Evidence-schema-as-contract (`protocols/grumpy/evidence.schema.json`).
+- Evidence-schema-as-contract (`.github/agent-factory/protocols/grumpy/evidence.schema.json`).
 - Four-trust-zone orchestrator (plan → dispatch → checks → advance).
 - Bounded iterate-with-feedback (`max_iterations`).
 - Durable state on the `agentic-state` branch, one file per PR, advanced by
@@ -117,7 +117,7 @@ end records the multi-agent milestone (both are live-verified).
 ## Engine couplings — resolved
 
 The engine carries no protocol-specific logic — the only `grumpy` mentions
-under `.github/engine/` are illustrative comments (cid examples, a note that
+under `.github/agent-factory/engine/` are illustrative comments (cid examples, a note that
 grumpy's states happen to both be named `review`). The two previously noted
 couplings are gone:
 
@@ -151,7 +151,7 @@ Two intentional v1 behavior divergences (documented, not defects):
 - `start` on Active → halt (prior design: resume).
 
 **Publication is a protocol publish hook.** `advance.sh` resolves and calls
-`protocols/grumpy/publish/publish-review-from-evidence.sh` via
+`.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.sh` via
 `resolve_executable` (the same mechanism as checks). The hook runs trusted in
 zone 4 (engine-post) holding the publish token; it is not a sandboxed check.
 
@@ -202,7 +202,7 @@ and built so the v1 single-agent path stays byte-identical (the regression guard
 
 - **New `fanout` + `join` protocol kinds (Approach C — data-driven).** Each
   branch reuses the v1 single-agent iterate loop *verbatim*; the only new logic
-  is the fan-out planner and the join barrier. `protocols/multi-grumpy/protocol.json`
+  is the fan-out planner and the join barrier. `.github/agent-factory/protocols/multi-grumpy/protocol.json`
   has a `review` state `kind:"fanout"` with a `branches[]` array (each branch:
   `id`, `workflow`, `evidence`, `max_iterations`, `checks`, `publish`) and a
   `join` state `kind:"join"`. The **security branch drops the `rubric-coverage`

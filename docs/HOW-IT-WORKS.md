@@ -97,13 +97,13 @@ PR, advanced one PR at a time; a PAT for cross-workflow triggering (the default
 ### 3.1 Components
 
 ```
-protocols/grumpy/
+.github/agent-factory/protocols/grumpy/
   protocol.json          # states, checks, transitions, max_iterations (DATA)
   evidence.schema.json   # the rubric the agent must fill (the CONTRACT)
   checks/*.sh            # deterministic transition checks (FORM verification)
   publish/publish-review-from-evidence.sh  # protocol's publish hook (zone 4)
 
-.github/engine/            # GENERIC — fully protocol-agnostic
+.github/agent-factory/engine/   # GENERIC — fully protocol-agnostic
   lib.sh                 # state checkout, CAS push, status-comment upsert,
                          #   resolve_executable, set_check_run
   next.sh                # planner: (state, protocol, command) -> action JSON
@@ -120,14 +120,14 @@ agentic-state branch
 ```
 
 > **`grumpy-review` is an example protocol, not the engine.** Everything under
-> `.github/engine/` is protocol-agnostic: it reads the protocol id from
+> `.github/agent-factory/engine/` is protocol-agnostic: it reads the protocol id from
 > `protocol.json` `.name`, resolves checks and publish hooks from the protocol
 > directory, and derives the state path as `<protocol-id>/<instance-key>.yaml`.
 > The grumpy reviewer — its `protocol.json`, evidence schema, checks, and
-> publish hook — lives entirely in `protocols/grumpy/` + `grumpy-agent.md` and
+> publish hook — lives entirely in `.github/agent-factory/protocols/grumpy/` + `grumpy-agent.md` and
 > exists to exercise the engine. To build a different protocol (an
 > incident-response runbook, a release checklist, a compliance review) you write
-> a new `protocols/<name>/` and agent workflow; you do **not** touch the engine.
+> a new `.github/agent-factory/protocols/<name>/` and agent workflow; you do **not** touch the engine.
 
 ### 3.2 The four trust zones (per iteration)
 
@@ -487,7 +487,7 @@ without a 422 from the GitHub reviews API. The check *is* the guarantee; the
 publish hook trusts it.
 
 For the full design rationale and the tradeoffs among the four possible
-anchoring strategies, see `protocols/grumpy/README.md` §"Line anchoring".
+anchoring strategies, see `.github/agent-factory/protocols/grumpy/README.md` §"Line anchoring".
 
 ```python
 #!/usr/bin/env python3
@@ -754,7 +754,7 @@ function used for checks (see §4.3), from the publish state's `.action` field:
 ```jsonc
 { "id": "publish",
   "kind": "deterministic",
-  "action": "publish-review-from-evidence"  // resolved in protocols/<name>/publish/
+  "action": "publish-review-from-evidence"  // resolved in .github/agent-factory/protocols/<name>/publish/
 }
 ```
 
@@ -778,7 +778,7 @@ systems. Do not conflate them: "resolved via `resolve_executable`" describes
 the *mechanical* resolution; the trust boundary is entirely different.
 
 For grumpy-review, the publish hook is
-`protocols/grumpy/publish/publish-review-from-evidence.sh`. It reads the
+`.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.sh`. It reads the
 evidence, posts a REQUEST_CHANGES or APPROVE review (COMMENT fallback if the
 repo setting is off), and returns `{"conclusion":"failure"|"success","summary":"…"}`.
 
@@ -938,7 +938,7 @@ each script simply reads one extra variable and selects the per-branch unit.
 
 ### 8.2 The `fanout` and `join` state kinds
 
-A new protocol, `protocols/multi-grumpy/protocol.json`, introduces two state
+A new protocol, `.github/agent-factory/protocols/multi-grumpy/protocol.json`, introduces two state
 kinds alongside v1's `agent`/`deterministic`. The chosen design (**Approach C —
 data-driven**) is that each branch **reuses the v1 single-agent iterate loop
 verbatim**; the only genuinely new logic is the fan-out planner and the join

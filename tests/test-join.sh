@@ -12,9 +12,9 @@ WORK=$(mktemp -d)
 git init -q --bare "$WORK/origin.git"
 export STATE_REMOTE="$WORK/origin.git"
 export PR_HEAD_SHA="joinsha"
-source .github/engine/lib.sh
-JOIN=.github/engine/join.sh
-PROTO=protocols/multi-grumpy/protocol.json
+source .github/agent-factory/engine/lib.sh
+JOIN=.github/agent-factory/engine/join.sh
+PROTO=.github/agent-factory/protocols/multi-grumpy/protocol.json
 
 seed() {  # seed <dir> <pr> <grumpy-state> <security-state>
   local d="$1" pr="$2" g="$3" s="$4"

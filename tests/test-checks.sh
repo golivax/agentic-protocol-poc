@@ -12,7 +12,7 @@ export CHECK_PARAMS='{"categories":["naming","error-handling","performance","dup
 # assert_check <script> <expected_pass:true|false> <feedback_substring> <evidence> [diff] [files]
 assert_check() {
   local script="$1" expect="$2" substr="$3" ev="$4" diff="${5:-$FX/diff-pr1.txt}" files="${6:-$FX/changed-files-pr1.txt}"
-  local out; out=$("protocols/grumpy/checks/$script" "$ev" "$diff" "$files") || true
+  local out; out=$(".github/agent-factory/protocols/grumpy/checks/$script" "$ev" "$diff" "$files") || true
   local got; got=$(jq -r .pass <<<"$out")
   local fb; fb=$(jq -r .feedback <<<"$out")
   if [ "$got" = "$expect" ] && { [ -z "$substr" ] || [[ "$fb" == *"$substr"* ]]; }; then
@@ -54,7 +54,7 @@ assert_check schema-valid.sh false "anchor" /tmp/ev-zeroline.json
 
 # empty categories array is a misconfiguration → same clean "no categories" failure
 # as missing/null (must NOT fall through to per-category "illegal category" feedback):
-out=$(CHECK_PARAMS='{"categories":[]}' protocols/grumpy/checks/schema-valid.sh "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+out=$(CHECK_PARAMS='{"categories":[]}' .github/agent-factory/protocols/grumpy/checks/schema-valid.sh "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
 if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
   PASS=$((PASS+1)); echo "ok: schema-valid treats empty categories array as no-categories"
 else
@@ -62,7 +62,7 @@ else
 fi
 # a non-array categories (malformed params) must also fail cleanly, NOT degrade to
 # jq substring matching that silently "accepts" some categories:
-out=$(CHECK_PARAMS='{"categories":"naming"}' protocols/grumpy/checks/schema-valid.sh "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+out=$(CHECK_PARAMS='{"categories":"naming"}' .github/agent-factory/protocols/grumpy/checks/schema-valid.sh "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
 if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
   PASS=$((PASS+1)); echo "ok: schema-valid treats non-array categories as no-categories"
 else
@@ -81,7 +81,7 @@ printf 'src/auth.js\nsrc/report.js' > /tmp/files-nonewline.txt
 assert_check rubric-coverage.py false "src/report.js" "$FX/evidence-lazy.json" "$FX/diff-pr1.txt" /tmp/files-nonewline.txt
 
 # rubric-coverage with empty CHECK_PARAMS → clean failing verdict, not a crash:
-out=$(CHECK_PARAMS='' protocols/grumpy/checks/rubric-coverage.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+out=$(CHECK_PARAMS='' .github/agent-factory/protocols/grumpy/checks/rubric-coverage.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
 if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
   PASS=$((PASS+1)); echo "ok: rubric-coverage handles missing CHECK_PARAMS"
 else
@@ -90,7 +90,7 @@ fi
 
 # empty categories array is a misconfiguration → same clean "no categories" failure
 # (the `if not categories:` guard treats [] like missing):
-out=$(CHECK_PARAMS='{"categories":[]}' protocols/grumpy/checks/rubric-coverage.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+out=$(CHECK_PARAMS='{"categories":[]}' .github/agent-factory/protocols/grumpy/checks/rubric-coverage.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
 if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
   PASS=$((PASS+1)); echo "ok: rubric-coverage treats empty categories array as no-categories"
 else
@@ -98,7 +98,7 @@ else
 fi
 # a non-array categories (malformed params) must also fail cleanly, NOT iterate a
 # string char-by-char as if it were a category list:
-out=$(CHECK_PARAMS='{"categories":"naming"}' protocols/grumpy/checks/rubric-coverage.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+out=$(CHECK_PARAMS='{"categories":"naming"}' .github/agent-factory/protocols/grumpy/checks/rubric-coverage.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
 if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
   PASS=$((PASS+1)); echo "ok: rubric-coverage treats non-array categories as no-categories"
 else
@@ -153,7 +153,7 @@ jq -n '{files:[{path:"src/auth.js",verdicts:[{category:"naming",verdict:"none-fo
 assert_check traces-exist-in-diff.py false "login" /tmp/ev-regexpath.json /tmp/diff-xjs.txt
 
 # missing args → clean JSON rejection, exit 0 (ABI contract):
-out=$(protocols/grumpy/checks/traces-exist-in-diff.py 2>/dev/null); rc=$?
+out=$(.github/agent-factory/protocols/grumpy/checks/traces-exist-in-diff.py 2>/dev/null); rc=$?
 if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ]; then
   PASS=$((PASS+1)); echo "ok: traces-exist-in-diff handles missing args"
 else

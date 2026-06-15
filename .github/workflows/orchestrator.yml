@@ -108,8 +108,8 @@ jobs:
           # unbranched fan-out planning (run-fanout); set → branched continue for that
           # one branch (run-agent or halt). An UNBRANCHED continue on a fan-out protocol
           # errors (exit 2) — but pull_request/issue_comment never emit "continue".
-          BRANCH="${{ steps.ctx.outputs.branch }}" .github/engine/next.sh /tmp/state "${{ steps.ctx.outputs.instance }}" \
-            protocols/multi-grumpy/protocol.json "${{ steps.ctx.outputs.command }}" "$HEAD_SHA" > /tmp/action.json
+          BRANCH="${{ steps.ctx.outputs.branch }}" .github/agent-factory/engine/next.sh /tmp/state "${{ steps.ctx.outputs.instance }}" \
+            .github/agent-factory/protocols/multi-grumpy/protocol.json "${{ steps.ctx.outputs.command }}" "$HEAD_SHA" > /tmp/action.json
           cat /tmp/action.json
           ACTION=$(jq -r .action /tmp/action.json)
           echo "action=$ACTION" >> "$GITHUB_OUTPUT"
@@ -146,7 +146,7 @@ jobs:
           SHA: ${{ steps.head.outputs.sha }}
           ITER: ${{ steps.plan.outputs.iteration }}
         run: |
-          source .github/engine/lib.sh
+          source .github/agent-factory/engine/lib.sh
           # Mark the AGGREGATE "multi-grumpy" check-run in_progress — this is the
           # required gating check. It stays in_progress until join.sh completes it
           # (the per-branch advance writes "multi-grumpy/<branch>" sub-runs, not this).
@@ -161,7 +161,7 @@ jobs:
           PR: ${{ steps.ctx.outputs.pr }}
           INSTANCE: ${{ steps.ctx.outputs.instance }}
         run: |
-          source .github/engine/lib.sh
+          source .github/agent-factory/engine/lib.sh
           # next.sh already seeded + pushed _instance.yaml into /tmp/state at fan-out
           # start. Create the ONE shared progress comment up front (create-once:
           # skip if an id is already recorded), so the two parallel branch advances
@@ -169,7 +169,7 @@ jobs:
           INF=$(instance_file /tmp/state multi-grumpy "$INSTANCE")
           CID=$(yq -r '.status_comment_id // ""' "$INF" 2>/dev/null || echo "")
           if [ -z "$CID" ]; then
-            BODY=$(render_fanout_status_body /tmp/state multi-grumpy "$INSTANCE" protocols/multi-grumpy/protocol.json)
+            BODY=$(render_fanout_status_body /tmp/state multi-grumpy "$INSTANCE" .github/agent-factory/protocols/multi-grumpy/protocol.json)
             upsert_status_comment "$INF" "$PR" "$BODY"
             cas_push /tmp/state "$INSTANCE: ensure shared status comment"
           fi
@@ -201,7 +201,7 @@ jobs:
           # uniformly iteration 1 / feedback "" (correct for a fresh branch); for a
           # branched continue there is exactly one matrix leg, so they are that
           # branch's values.
-          source .github/engine/lib.sh
+          source .github/agent-factory/engine/lib.sh
           # Correlation id: globally unique per dispatch — the orchestrator run id
           # is unique, run_attempt disambiguates re-runs, branch disambiguates the
           # two matrix legs. Threaded to the agent via aw_context; the agent stamps
@@ -304,8 +304,8 @@ jobs:
             echo "WARNING: no evidence artifact (agent run $RID, ok=$OK); checks will report it" >&2
             echo '{}' > "$EV"
           fi
-          VERDICTS=$(BRANCH=${{ matrix.branch }} .github/engine/run-checks.sh \
-            protocols/multi-grumpy/protocol.json review "$EV" /tmp/diff.txt /tmp/files.txt)
+          VERDICTS=$(BRANCH=${{ matrix.branch }} .github/agent-factory/engine/run-checks.sh \
+            .github/agent-factory/protocols/multi-grumpy/protocol.json review "$EV" /tmp/diff.txt /tmp/files.txt)
           jq . <<<"$VERDICTS"
           mkdir -p /tmp/verdicts
           printf '%s' "$VERDICTS" > /tmp/verdicts/verdicts.json
@@ -383,5 +383,5 @@ jobs:
           fi
           printf '%s' "$VERDICTS" > /tmp/verdicts.json
           jq . /tmp/verdicts.json
-          BRANCH=${{ matrix.branch }} .github/engine/advance.sh /tmp/state "${{ needs.plan.outputs.instance }}" \
-            protocols/multi-grumpy/protocol.json /tmp/verdicts.json /tmp/agent/evidence.json
+          BRANCH=${{ matrix.branch }} .github/agent-factory/engine/advance.sh /tmp/state "${{ needs.plan.outputs.instance }}" \
+            .github/agent-factory/protocols/multi-grumpy/protocol.json /tmp/verdicts.json /tmp/agent/evidence.json

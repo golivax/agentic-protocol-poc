@@ -47,5 +47,5 @@ jobs:
           PR: ${{ steps.head.outputs.pr }}
           PR_HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
-          PROTO="protocols/${{ github.event.client_payload.protocol }}/protocol.json"
-          .github/engine/join.sh /tmp/state "${{ github.event.client_payload.instance }}" "$PROTO"
+          PROTO=".github/agent-factory/protocols/${{ github.event.client_payload.protocol }}/protocol.json"
+          .github/agent-factory/engine/join.sh /tmp/state "${{ github.event.client_payload.instance }}" "$PROTO"

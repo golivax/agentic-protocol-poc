@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Tests for the data-driven, polyglot check runner (.github/engine/run-checks.sh).
+# Tests for the data-driven, polyglot check runner (.github/agent-factory/engine/run-checks.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 FX=tests/fixtures
-RC=.github/engine/run-checks.sh
-P=protocols/grumpy/protocol.json
+RC=.github/agent-factory/engine/run-checks.sh
+P=.github/agent-factory/protocols/grumpy/protocol.json
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "ok: $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
@@ -23,7 +23,7 @@ chk "runner: lazy → schema-valid passes"   '[ "$(jq -r ".results[]|select(.che
 
 # Temp protocols must live alongside the real checks dir so resolve_executable
 # finds checks/<name> relative to the protocol path.
-TP=protocols/grumpy/.test-proto.json
+TP=.github/agent-factory/protocols/grumpy/.test-proto.json
 trap 'rm -f "$TP"' EXIT
 
 # --- unknown check name → synthesized not-found failure, run still completes ---
@@ -51,8 +51,8 @@ OUT=$("$RC" "$SBX/protocol.json" review "$FX/evidence-complete.json" "$FX/diff-p
 chk "runner: crashing check → fail verdict" '[ "$(jq -r ".results[0].pass" <<<"$OUT")" = false ]'
 
 # --- resolve_executable (shared resolver) direct unit checks ---
-source .github/engine/lib.sh
-PDIR="protocols/grumpy"
+source .github/agent-factory/engine/lib.sh
+PDIR=".github/agent-factory/protocols/grumpy"
 TAB=$'\t'   # split helper: resolve_executable returns "<kind>\t<rest>"
 R=$(resolve_executable "$PDIR/checks" "schema-valid" "$PDIR" "")
 chk "resolve: finds checks/schema-valid.sh" '[ "${R%%$TAB*}" = OK ] && grep -q "checks/schema-valid.sh" <<<"$R"'
@@ -62,7 +62,7 @@ R=$(resolve_executable "$PDIR/checks" "ignored" "$PDIR" "checks/rubric-coverage.
 chk "resolve: explicit exec resolves" '[ "${R%%$TAB*}" = OK ] && grep -q "rubric-coverage.py" <<<"$R"'
 
 # --- branch-aware check list: BRANCH selects .branches[].checks ---
-MG=protocols/multi-grumpy/protocol.json
+MG=.github/agent-factory/protocols/multi-grumpy/protocol.json
 OUT=$(BRANCH=grumpy "$RC" "$MG" review "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
 chk "branch grumpy → 3 checks run"  '[ "$(jq -r ".results|length" <<<"$OUT")" = 3 ]'
 OUT=$(BRANCH=security "$RC" "$MG" review "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")

@@ -10,7 +10,7 @@ ok()   { PASS=$((PASS+1)); echo "ok: $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
-source .github/engine/lib.sh
+source .github/agent-factory/engine/lib.sh
 
 # Two concurrent runs of the SAME workflow, different cids. databaseId 222 is the
 # newest (listed first) — the matcher must pick by cid, NOT by recency.

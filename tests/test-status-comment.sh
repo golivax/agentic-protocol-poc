@@ -9,8 +9,8 @@ bad()  { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
 export ENGINE_LOCAL=1 GITHUB_REPOSITORY="golivax/agentic-protocol-poc"
-source .github/engine/lib.sh
-PROTO=protocols/multi-grumpy/protocol.json
+source .github/agent-factory/engine/lib.sh
+PROTO=.github/agent-factory/protocols/multi-grumpy/protocol.json
 WORK=$(mktemp -d)
 
 # seed_branch <dir> <instance> <branch> <state> <history-json>

@@ -2,8 +2,8 @@
 
 Grumpy is a sarcastic senior code reviewer. It is **an example protocol, not the
 engine** — it exists to exercise the protocol-agnostic machinery under
-`.github/engine/`. To build a different protocol you write a new
-`protocols/<name>/`; you do not touch the engine. See `docs/HOW-IT-WORKS.md` for
+`.github/agent-factory/engine/`. To build a different protocol you write a new
+`.github/agent-factory/protocols/<name>/`; you do not touch the engine. See `docs/HOW-IT-WORKS.md` for
 the engine and trust-zone model.
 
 > **Status:** the line-anchored inline-review feature described here has
