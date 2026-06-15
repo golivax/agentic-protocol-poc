@@ -23,13 +23,6 @@ jobs:
       pull-requests: write   # join.py PATCHes the PR's shared status comment (final headline); a PR comment needs pull-requests:write
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure yq
-        run: |
-          command -v yq >/dev/null || {
-            sudo wget -qO /usr/local/bin/yq \
-              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-            sudo chmod +x /usr/local/bin/yq
-          }
       - id: head
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

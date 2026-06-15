@@ -10,7 +10,7 @@ import os
 import sys
 
 # Allow importing lib from the same directory.
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib
 
 def main():

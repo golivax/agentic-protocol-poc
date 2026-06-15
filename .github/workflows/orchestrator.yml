@@ -51,13 +51,6 @@ jobs:
       branch: ${{ steps.ctx.outputs.branch }}
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure yq
-        run: |
-          command -v yq >/dev/null || {
-            sudo wget -qO /usr/local/bin/yq \
-              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-            sudo chmod +x /usr/local/bin/yq
-          }
       - id: ctx
         env:
           DISPATCH_INSTANCE: ${{ github.event.client_payload.instance }}
@@ -330,13 +323,6 @@ jobs:
       checks: write
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure yq
-        run: |
-          command -v yq >/dev/null || {
-            sudo wget -qO /usr/local/bin/yq \
-              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-            sudo chmod +x /usr/local/bin/yq
-          }
       - name: Download run meta
         uses: actions/download-artifact@v4
         with:

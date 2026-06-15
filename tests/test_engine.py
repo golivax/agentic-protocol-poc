@@ -218,17 +218,6 @@ def write_verdicts(tmp_path, name, content):
     return p
 
 
-def yq_set(path, expr):
-    """Apply a yq expression to a YAML file in-place."""
-    r = subprocess.run(["yq", "-i", expr, str(path)], check=True, text=True)
-
-
-def yq_read(path, expr):
-    """Read a yq expression from a YAML file; return stripped string."""
-    r = subprocess.run(["yq", "-r", expr, str(path)], check=True, text=True, capture_output=True)
-    return r.stdout.strip()
-
-
 def read_yaml(path):
     with open(path) as f:
         return yaml.safe_load(f)
