@@ -22,39 +22,39 @@ assert_check() {
   fi
 }
 
-assert_check schema-valid.sh true  ""                       "$FX/evidence-complete.json"
-assert_check schema-valid.sh true  ""                       "$FX/evidence-lazy.json"      # lazy is structurally valid; coverage catches it
-assert_check schema-valid.sh false "not valid JSON"         /dev/null
+assert_check schema-valid.py true  ""                       "$FX/evidence-complete.json"
+assert_check schema-valid.py true  ""                       "$FX/evidence-lazy.json"      # lazy is structurally valid; coverage catches it
+assert_check schema-valid.py false "not valid JSON"         /dev/null
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[]}]}]}' > /tmp/ev-nofindings.json
-assert_check schema-valid.sh false "no findings"            /tmp/ev-nofindings.json
+assert_check schema-valid.py false "no findings"            /tmp/ev-nofindings.json
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"vibes","verdict":"none-found","examined":["x"]}]}]}' > /tmp/ev-badcat.json
-assert_check schema-valid.sh false "illegal category"       /tmp/ev-badcat.json
+assert_check schema-valid.py false "illegal category"       /tmp/ev-badcat.json
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"none-found"}]}]}' > /tmp/ev-noexam.json
-assert_check schema-valid.sh false "no examined"            /tmp/ev-noexam.json
+assert_check schema-valid.py false "no examined"            /tmp/ev-noexam.json
 echo '{"files":["a.js"]}' > /tmp/ev-strfile.json
-assert_check schema-valid.sh false "not an object" /tmp/ev-strfile.json
+assert_check schema-valid.py false "not an object" /tmp/ev-strfile.json
 echo '{"files":[{"path":"a.js","verdicts":"oops"}]}' > /tmp/ev-badverdicts.json
-assert_check schema-valid.sh false "verdicts" /tmp/ev-badverdicts.json
+assert_check schema-valid.py false "verdicts" /tmp/ev-badverdicts.json
 
 # issues-found findings must carry a valid line/side anchor:
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y"}]}]}]}' > /tmp/ev-noanchor.json
-assert_check schema-valid.sh false "anchor" /tmp/ev-noanchor.json
+assert_check schema-valid.py false "anchor" /tmp/ev-noanchor.json
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":"3"}]}]}]}' > /tmp/ev-strline.json
-assert_check schema-valid.sh false "anchor" /tmp/ev-strline.json
+assert_check schema-valid.py false "anchor" /tmp/ev-strline.json
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"UP","line":3}]}]}]}' > /tmp/ev-badside.json
-assert_check schema-valid.sh false "anchor" /tmp/ev-badside.json
+assert_check schema-valid.py false "anchor" /tmp/ev-badside.json
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":3,"start_line":"two"}]}]}]}' > /tmp/ev-strstart.json
-assert_check schema-valid.sh false "anchor" /tmp/ev-strstart.json
+assert_check schema-valid.py false "anchor" /tmp/ev-strstart.json
 # integer start_line must be accepted:
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":5,"start_line":3}]}]}]}' > /tmp/ev-okstart.json
-assert_check schema-valid.sh true "" /tmp/ev-okstart.json
+assert_check schema-valid.py true "" /tmp/ev-okstart.json
 # line=0 must be rejected (minimum is 1):
 echo '{"files":[{"path":"a.js","verdicts":[{"category":"naming","verdict":"issues-found","findings":[{"existing_code":"x","comment":"y","side":"RIGHT","line":0}]}]}]}' > /tmp/ev-zeroline.json
-assert_check schema-valid.sh false "anchor" /tmp/ev-zeroline.json
+assert_check schema-valid.py false "anchor" /tmp/ev-zeroline.json
 
 # empty categories array is a misconfiguration → same clean "no categories" failure
 # as missing/null (must NOT fall through to per-category "illegal category" feedback):
-out=$(CHECK_PARAMS='{"categories":[]}' .github/agent-factory/protocols/grumpy/checks/schema-valid.sh "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+out=$(CHECK_PARAMS='{"categories":[]}' .github/agent-factory/protocols/grumpy/checks/schema-valid.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
 if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
   PASS=$((PASS+1)); echo "ok: schema-valid treats empty categories array as no-categories"
 else
@@ -62,7 +62,7 @@ else
 fi
 # a non-array categories (malformed params) must also fail cleanly, NOT degrade to
 # jq substring matching that silently "accepts" some categories:
-out=$(CHECK_PARAMS='{"categories":"naming"}' .github/agent-factory/protocols/grumpy/checks/schema-valid.sh "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
+out=$(CHECK_PARAMS='{"categories":"naming"}' .github/agent-factory/protocols/grumpy/checks/schema-valid.py "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt"); rc=$?
 if [ "$rc" = "0" ] && [ "$(jq -r .pass <<<"$out")" = "false" ] && [[ "$(jq -r .feedback <<<"$out")" == *"no categories"* ]]; then
   PASS=$((PASS+1)); echo "ok: schema-valid treats non-array categories as no-categories"
 else

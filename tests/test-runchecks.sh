@@ -33,7 +33,7 @@ chk "runner: unknown check → fail verdict" '[ "$(jq -r ".results[0].pass" <<<"
 chk "runner: unknown check → useful feedback" 'jq -r ".results[0].feedback" <<<"$OUT" | grep -q "no executable found"'
 
 # --- explicit exec override resolves a specific file ---
-jq '.states[0].checks = [{"run":"sv","exec":"checks/schema-valid.sh","on_fail":"iterate"}]' "$P" > "$TP"
+jq '.states[0].checks = [{"run":"sv","exec":"checks/schema-valid.py","on_fail":"iterate"}]' "$P" > "$TP"
 OUT=$("$RC" "$TP" review "$FX/evidence-complete.json" "$FX/diff-pr1.txt" "$FX/changed-files-pr1.txt")
 chk "runner: exec override runs the file" '[ "$(jq -r ".results[0].pass" <<<"$OUT")" = true ]'
 
@@ -57,7 +57,7 @@ resolve_executable() { python3 "$LIB_PY" resolve-executable "$@"; }
 PDIR=".github/agent-factory/protocols/grumpy"
 TAB=$'\t'   # split helper: resolve_executable returns "<kind>\t<rest>"
 R=$(resolve_executable "$PDIR/checks" "schema-valid" "$PDIR" "")
-chk "resolve: finds checks/schema-valid.sh" '[ "${R%%$TAB*}" = OK ] && grep -q "checks/schema-valid.sh" <<<"$R"'
+chk "resolve: finds checks/schema-valid.py" '[ "${R%%$TAB*}" = OK ] && grep -q "checks/schema-valid.py" <<<"$R"'
 R=$(resolve_executable "$PDIR/checks" "does-not-exist" "$PDIR" "")
 chk "resolve: missing → ERR" '[ "${R%%$TAB*}" = ERR ]'
 R=$(resolve_executable "$PDIR/checks" "ignored" "$PDIR" "checks/rubric-coverage.py")
