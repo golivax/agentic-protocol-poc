@@ -56,3 +56,27 @@ def read_state_yaml(path):
     """Load and return a state YAML file as a dict (yaml.safe_load)."""
     with open(path) as fh:
         return yaml.safe_load(fh)
+
+
+def run_check(check_path, evidence, diff, changed_files, check_params=None):
+    """Run a check executable and return the parsed JSON dict.
+
+    ``check_path`` is an absolute path to the check script.
+    ``evidence``, ``diff``, ``changed_files`` are path-like objects.
+    ``check_params`` is a dict or string; if a dict it is JSON-serialised.
+    If None the CHECK_PARAMS env var is not set (inherits from os.environ).
+    Returns the parsed ``{check, pass, feedback}`` dict.
+    """
+    env = dict(os.environ)
+    if check_params is not None:
+        if isinstance(check_params, dict):
+            env["CHECK_PARAMS"] = json.dumps(check_params)
+        else:
+            env["CHECK_PARAMS"] = check_params
+    r = subprocess.run(
+        ["python3", str(check_path), str(evidence), str(diff), str(changed_files)],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    return json.loads(r.stdout)
