@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 FX=tests/fixtures
-RC=.github/agent-factory/engine/run-checks.sh
+RC=.github/agent-factory/engine/run-checks.py
 P=.github/agent-factory/protocols/grumpy/protocol.json
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "ok: $1"; }

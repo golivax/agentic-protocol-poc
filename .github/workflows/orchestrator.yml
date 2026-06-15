@@ -304,7 +304,7 @@ jobs:
             echo "WARNING: no evidence artifact (agent run $RID, ok=$OK); checks will report it" >&2
             echo '{}' > "$EV"
           fi
-          VERDICTS=$(BRANCH=${{ matrix.branch }} .github/agent-factory/engine/run-checks.sh \
+          VERDICTS=$(BRANCH=${{ matrix.branch }} .github/agent-factory/engine/run-checks.py \
             .github/agent-factory/protocols/multi-grumpy/protocol.json review "$EV" /tmp/diff.txt /tmp/files.txt)
           jq . <<<"$VERDICTS"
           mkdir -p /tmp/verdicts
