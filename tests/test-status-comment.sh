@@ -9,7 +9,7 @@ bad()  { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
 export ENGINE_LOCAL=1 GITHUB_REPOSITORY="golivax/agentic-protocol-poc"
-source .github/agent-factory/engine/lib.sh
+LIB_PY=.github/agent-factory/engine/lib.py
 PROTO=.github/agent-factory/protocols/multi-grumpy/protocol.json
 WORK=$(mktemp -d)
 
@@ -26,7 +26,7 @@ seed_branch() {
 # both branches present: grumpy passed iter 1, security failed iter 1 → in progress
 seed_branch "$WORK/a" pr-80 grumpy   review '[{"iteration":1,"feedback":""}]'
 seed_branch "$WORK/a" pr-80 security review '[{"iteration":1,"feedback":"sec: bad anchor"}]'
-BODY=$(render_fanout_status_body "$WORK/a" multi-grumpy pr-80 "$PROTO")
+BODY=$(python3 "$LIB_PY" render-fanout-status-body "$WORK/a" multi-grumpy pr-80 "$PROTO")
 check "render: grumpy section present"      'grep -q "\*\*grumpy\*\*" <<<"$BODY"'
 check "render: security section present"     'grep -q "\*\*security\*\*" <<<"$BODY"'
 check "render: passed checklist line"        'grep -q "iteration 1/3 — all checks passed" <<<"$BODY"'
@@ -38,18 +38,18 @@ check "render: in-progress headline"         'grep -q "Review in progress" <<<"$
 # both done → complete headline
 seed_branch "$WORK/b" pr-81 grumpy   done '[{"iteration":1,"feedback":""}]'
 seed_branch "$WORK/b" pr-81 security done '[{"iteration":1,"feedback":""}]'
-BODY=$(render_fanout_status_body "$WORK/b" multi-grumpy pr-81 "$PROTO")
+BODY=$(python3 "$LIB_PY" render-fanout-status-body "$WORK/b" multi-grumpy pr-81 "$PROTO")
 check "render: complete headline" 'grep -q "Review complete" <<<"$BODY"'
 
 # done + failed → incomplete headline
 seed_branch "$WORK/c" pr-82 grumpy   done   '[{"iteration":1,"feedback":""}]'
 seed_branch "$WORK/c" pr-82 security failed '[{"iteration":3,"feedback":"exhausted"}]'
-BODY=$(render_fanout_status_body "$WORK/c" multi-grumpy pr-82 "$PROTO")
+BODY=$(python3 "$LIB_PY" render-fanout-status-body "$WORK/c" multi-grumpy pr-82 "$PROTO")
 check "render: incomplete headline" 'grep -q "Review incomplete" <<<"$BODY"'
 
 # only grumpy seeded (early/partial) → security renders _pending_, grumpy empty history note
 seed_branch "$WORK/d" pr-83 grumpy review '[]'
-BODY=$(render_fanout_status_body "$WORK/d" multi-grumpy pr-83 "$PROTO")
+BODY=$(python3 "$LIB_PY" render-fanout-status-body "$WORK/d" multi-grumpy pr-83 "$PROTO")
 check "render: missing branch file → _pending_"     'grep -q "_pending_" <<<"$BODY"'
 check "render: empty history → _no iterations yet_" 'grep -q "_no iterations yet_" <<<"$BODY"'
 
