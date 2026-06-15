@@ -21,7 +21,7 @@ def main():
         params = json.loads(os.environ.get("CHECK_PARAMS", "") or "{}")
     except Exception:
         params = {}
-    cats = params.get("categories")
+    cats = (params or {}).get("categories")  # CHECK_PARAMS="null" -> json None; stay exit-0
     if not (isinstance(cats, list) and len(cats) > 0):
         emit(False, "schema-valid: no categories in CHECK_PARAMS "
                     "(engine must pass params.categories for this check's node)")
