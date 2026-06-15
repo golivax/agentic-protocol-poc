@@ -46,13 +46,15 @@ deliberate.
 ```
 .github/agent-factory/engine/   GENERIC — no protocol-specific logic (only a few grumpy
                        mentions in illustrative comments).
-  lib.sh               state checkout, cas_push, status-comment upsert,
-                       resolve_executable, set_check_run, match_run_by_cid
-  next.sh              pure planner: (state, protocol, command) -> action JSON
-  advance.sh           the SOLE writer of non-initial state: verdicts -> mutate,
+  lib.py               state checkout, cas_push, status-comment upsert,
+                       resolve_executable, set_check_run, match_run_by_cid.
+                       Importable module + a `python3 lib.py <subcommand>` CLI
+                       (the orchestrator calls the CLI for inline helpers).
+  next.py              pure planner: (state, protocol, command) -> action JSON
+  advance.py           the SOLE writer of non-initial state: verdicts -> mutate,
                        publish, CAS-push, re-dispatch
-  run-checks.sh        resolve + run a state's checks (any language) -> verdicts
-  join.sh              fan-out AND-barrier (v2)
+  run-checks.py        resolve + run a state's checks (any language) -> verdicts
+  join.py              fan-out AND-barrier (v2)
 
 .github/agent-factory/protocols/<name>/   A PROTOCOL — all protocol-specific logic lives here.
   protocol.json        states, checks, transitions, max_iterations (DATA)
@@ -78,7 +80,7 @@ The invariant: **the engine and the agent never share a job or a credential.**
 
 | Zone | Job | Holds | Runs agent code? |
 |------|-----|-------|------------------|
-| 1. Engine-pre | `plan` | state-branch PAT | no — `next.sh` |
+| 1. Engine-pre | `plan` | state-branch PAT | no — `next.py` |
 | 2. Agent | `dispatch` → gh-aw workflow | read-only repo token + LLM creds | yes, sandboxed |
 | 3. Checks | `checks` | nothing (read-only default token) | no — over evidence + independently re-fetched diff |
 | 4. Engine-post | `advance` | state PAT + publish token | no — reads check verdicts only |
@@ -97,7 +99,7 @@ commands into the job holding the state PAT.
 - **Check:** an executable invoked as `<check> <evidence.json> <diff.txt> <changed-files.txt>`
   that prints one JSON object `{"check","pass","feedback"}` to stdout and **always
   exits 0** (non-zero is reserved for a genuine runner error). Resolved by
-  `run-checks.sh` from `protocol.json` `.states[].checks[]`: `exec:` path, else
+  `run-checks.py` from `protocol.json` `.states[].checks[]`: `exec:` path, else
   `checks/<run>` or `checks/<run>.*` (extension-agnostic — a `.py` check needs no
   bash wrapper). A check reads its node-scoped config (e.g. the rubric
   `categories`) from the `CHECK_PARAMS` env var the runner forwards — the value of
@@ -112,23 +114,28 @@ commands into the job holding the state PAT.
 
 ## Running tests
 
-Tests are standalone bash scripts under `tests/` — there is no Makefile, npm, or
-CI test runner. Each is self-contained (spins up a bare git repo as a fake
-`agentic-state` origin, runs with `ENGINE_LOCAL=1`).
+Tests are **pytest** modules under `tests/` (`test_*.py`). Shared fixtures live in
+`tests/conftest.py` (a bare git repo as a fake `agentic-state` origin, `ENGINE_LOCAL=1`
+env, and helpers `run_engine`/`run_check`/`read_state_yaml`). pytest is a dev-only
+dependency — it is NOT part of the vendored `.github/agent-factory/` unit, which needs
+only Python 3 + PyYAML at runtime.
 
 ```bash
-# Run one suite
-./tests/test-engine.sh
+# One-time: install dev deps (pytest + PyYAML)
+python3 -m pip install -r tests/requirements-dev.txt
 
-# Run all suites
-for t in tests/test-*.sh; do echo "== $t =="; bash "$t"; done
+# Run the whole suite
+pytest tests/ -q
+
+# Run one module, verbose
+pytest tests/test_engine.py -v
 ```
 
-Note: `tests/test-join.sh` is not chmod +x — invoke it as `bash tests/test-join.sh`.
-Suites: `test-engine.sh` (planner + lib CAS), `test-checks.sh`,
-`test-runchecks.sh` (check resolution/robustness), `test-publish.sh`,
-`test-correlation.sh` (cid resolver, pure), `test-join.sh`, `test-fanout-e2e.sh`,
-`test-status-comment.sh`.
+Modules: `test_engine.py` (planner + advance writer + lib CAS, the v1+v2 regression
+guard), `test_checks.py`, `test_runchecks.py` (check resolution/robustness),
+`test_publish.py`, `test_correlation.py` (cid resolver, pure), `test_join.py`,
+`test_fanout_e2e.py`, `test_status_comment.py`. Each is self-contained — pytest's
+`tmp_path` gives every test its own throwaway state dir.
 
 ## Editing a gh-aw agent
 
@@ -171,8 +178,8 @@ Key frontmatter facts (see `docs/STATUS.md` for the security rationale):
 
 v2 (`.github/agent-factory/protocols/multi-grumpy/`) adds a `fanout` phase (N parallel agent branches,
 each with its own iterate loop + eager publish) and a strict `join` AND-barrier
-that gates merge. Design goal: **v1 stays byte-identical.** `next.sh`,
-`run-checks.sh`, and `advance.sh` read one env var, `BRANCH`:
+that gates merge. Design goal: **v1 stays byte-identical.** `next.py`,
+`run-checks.py`, and `advance.py` read one env var, `BRANCH`:
 
 - **`BRANCH` empty/unset** → the exact v1 single-agent path (the regression guard).
 - **`BRANCH=<id>` set** → the same scripts operate on one fan-out branch (its
