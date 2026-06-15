@@ -1,0 +1,349 @@
+"""Port of tests/test-runchecks.sh — tests for the data-driven check runner (run-checks.py).
+
+Bash assertion → pytest mapping
+--------------------------------
+Happy path / aggregation (grumpy protocol.json, review state, evidence-complete)
+  1.  "runner: 3 results"
+      → test_runner_three_results
+  2.  "runner: all pass on complete"
+      → test_runner_all_pass_on_complete
+  3.  "runner: includes python rubric-coverage"
+      → test_runner_includes_rubric_coverage
+
+Lazy evidence
+  4.  "runner: lazy → rubric-coverage fails"
+      → test_runner_lazy_rubric_coverage_fails
+  5.  "runner: lazy → schema-valid passes"
+      → test_runner_lazy_schema_valid_passes
+
+Unknown check name
+  6.  "runner: unknown check → fail verdict"
+      → test_runner_unknown_check_fail_verdict
+  7.  "runner: unknown check → useful feedback"
+      → test_runner_unknown_check_useful_feedback
+
+Explicit exec override
+  8.  "runner: exec override runs the file"
+      → test_runner_exec_override
+
+Non-executable check file
+  9.  "runner: non-executable check → fail verdict"
+      → test_runner_non_executable_fail_verdict
+  10. "runner: non-executable → useful feedback"
+      → test_runner_non_executable_useful_feedback
+
+Crashing check
+  11. "runner: crashing check → fail verdict"
+      → test_runner_crashing_check_fail_verdict
+
+resolve_executable unit tests (via lib.py direct import)
+  12. "resolve: finds checks/schema-valid.py"
+      → test_resolve_finds_schema_valid
+  13. "resolve: missing → ERR"
+      → test_resolve_missing_returns_err
+  14. "resolve: explicit exec resolves"
+      → test_resolve_explicit_exec
+
+Branch-aware check list (multi-grumpy protocol)
+  15. "branch grumpy → 3 checks run"
+      → test_branch_grumpy_three_checks
+  16. "branch security → 2 checks run (no rubric-coverage)"
+      → test_branch_security_two_checks_no_rubric_coverage
+  17. "branch security → schema-valid rejects non-security category"
+      → test_branch_security_schema_valid_rejects_non_security
+
+Params forwarding
+  18. "params: state-scoped forwarded"
+      → test_params_state_scoped_forwarded
+  19. "params: branch-scoped overrides state"
+      → test_params_branch_scoped_overrides_state
+"""
+
+import json
+import os
+import stat
+import sys
+import pathlib
+
+import pytest
+
+# Direct import of lib — matches the pattern from test_correlation.py.
+ENGINE = pathlib.Path(__file__).resolve().parent.parent / ".github/agent-factory/engine"
+sys.path.insert(0, str(ENGINE))
+import lib  # noqa: E402
+
+from conftest import FIXTURES, PROTOCOLS, ENGINE as ENGINE_CONST, run_engine
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+GRUMPY_PROTO = PROTOCOLS / "grumpy/protocol.json"
+MULTI_GRUMPY_PROTO = PROTOCOLS / "multi-grumpy/protocol.json"
+GRUMPY_CHECKS_DIR = PROTOCOLS / "grumpy/checks"
+GRUMPY_PDIR = PROTOCOLS / "grumpy"
+
+EV_COMPLETE = FIXTURES / "evidence-complete.json"
+EV_LAZY = FIXTURES / "evidence-lazy.json"
+DIFF_PR1 = FIXTURES / "diff-pr1.txt"
+FILES_PR1 = FIXTURES / "changed-files-pr1.txt"
+
+
+def run_checks(proto, state_id, evidence, diff, files, branch=None, env=None):
+    """Invoke run-checks.py and return the parsed dict with 'results' list."""
+    stdout, stderr, rc = run_engine(
+        "run-checks.py",
+        proto, state_id, evidence, diff, files,
+        env=env,
+        branch=branch,
+    )
+    return json.loads(stdout)
+
+
+# ===========================================================================
+# Happy path — grumpy protocol, review state, evidence-complete
+# ===========================================================================
+
+# 1
+def test_runner_three_results():
+    """Bash assertion 1: 3 checks configured → 3 results."""
+    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert len(out["results"]) == 3
+
+# 2
+def test_runner_all_pass_on_complete():
+    """Bash assertion 2: all checks pass with evidence-complete."""
+    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert all(r["pass"] for r in out["results"])
+
+# 3
+def test_runner_includes_rubric_coverage():
+    """Bash assertion 3: rubric-coverage check is present in results."""
+    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    names = {r["check"] for r in out["results"]}
+    assert "rubric-coverage" in names
+
+
+# ===========================================================================
+# Lazy evidence — rubric-coverage fails, schema-valid passes
+# ===========================================================================
+
+# 4
+def test_runner_lazy_rubric_coverage_fails():
+    """Bash assertion 4: lazy evidence → rubric-coverage check fails."""
+    out = run_checks(GRUMPY_PROTO, "review", EV_LAZY, DIFF_PR1, FILES_PR1)
+    rc_result = next(r for r in out["results"] if r["check"] == "rubric-coverage")
+    assert rc_result["pass"] is False
+
+# 5
+def test_runner_lazy_schema_valid_passes():
+    """Bash assertion 5: lazy evidence → schema-valid check passes."""
+    out = run_checks(GRUMPY_PROTO, "review", EV_LAZY, DIFF_PR1, FILES_PR1)
+    sv_result = next(r for r in out["results"] if r["check"] == "schema-valid")
+    assert sv_result["pass"] is True
+
+
+# ===========================================================================
+# Unknown check name → synthesised not-found failure, run still completes
+# Bash uses a temp protocol file placed inside the grumpy dir so the resolver
+# can find checks/ relative to the protocol directory.
+# ===========================================================================
+
+@pytest.fixture
+def temp_proto_in_grumpy(tmp_path):
+    """Write a temp protocol.json inside the grumpy protocol dir; clean up after."""
+    tp = GRUMPY_PDIR / ".test-proto.json"
+    yield tp
+    if tp.exists():
+        tp.unlink()
+
+
+# 6
+def test_runner_unknown_check_fail_verdict(temp_proto_in_grumpy):
+    """Bash assertion 6: unknown check name → pass=false."""
+    proto_content = json.loads(GRUMPY_PROTO.read_text())
+    proto_content["states"][0]["checks"] = [{"run": "does-not-exist", "on_fail": "iterate"}]
+    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
+
+    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert out["results"][0]["pass"] is False
+
+# 7
+def test_runner_unknown_check_useful_feedback(temp_proto_in_grumpy):
+    """Bash assertion 7: unknown check → feedback contains 'no executable found'."""
+    proto_content = json.loads(GRUMPY_PROTO.read_text())
+    proto_content["states"][0]["checks"] = [{"run": "does-not-exist", "on_fail": "iterate"}]
+    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
+
+    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert "no executable found" in out["results"][0]["feedback"]
+
+
+# ===========================================================================
+# Explicit exec override
+# ===========================================================================
+
+# 8
+def test_runner_exec_override(temp_proto_in_grumpy):
+    """Bash assertion 8: exec override runs the named file → pass=true."""
+    proto_content = json.loads(GRUMPY_PROTO.read_text())
+    proto_content["states"][0]["checks"] = [
+        {"run": "sv", "exec": "checks/schema-valid.py", "on_fail": "iterate"}
+    ]
+    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
+
+    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert out["results"][0]["pass"] is True
+
+
+# ===========================================================================
+# Non-executable check file
+# ===========================================================================
+
+def _make_sandbox_proto(tmp_path, check_script_content, make_executable=False):
+    """Build a minimal temp protocol + checks dir in tmp_path. Returns protocol.json path."""
+    checks_dir = tmp_path / "checks"
+    checks_dir.mkdir(parents=True)
+    script = checks_dir / "noexec.sh"
+    script.write_text(check_script_content)
+    if make_executable:
+        script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    proto = tmp_path / "protocol.json"
+    proto.write_text(json.dumps({
+        "name": "x",
+        "states": [{"id": "review", "checks": [{"run": "noexec"}]}]
+    }))
+    return proto
+
+
+# 9
+def test_runner_non_executable_fail_verdict(tmp_path):
+    """Bash assertion 9: check file exists but not +x → pass=false."""
+    proto = _make_sandbox_proto(tmp_path, '#!/usr/bin/env bash\necho "{}"\n', make_executable=False)
+    out = run_checks(proto, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert out["results"][0]["pass"] is False
+
+# 10
+def test_runner_non_executable_useful_feedback(tmp_path):
+    """Bash assertion 10: non-executable check → feedback contains 'not executable'."""
+    proto = _make_sandbox_proto(tmp_path, '#!/usr/bin/env bash\necho "{}"\n', make_executable=False)
+    out = run_checks(proto, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert "not executable" in out["results"][0]["feedback"]
+
+
+# ===========================================================================
+# Crashing check (exit non-zero)
+# ===========================================================================
+
+# 11
+def test_runner_crashing_check_fail_verdict(tmp_path):
+    """Bash assertion 11: check exits non-zero → pass=false, run survives."""
+    proto = _make_sandbox_proto(tmp_path, '#!/usr/bin/env bash\nexit 3\n', make_executable=True)
+    out = run_checks(proto, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert out["results"][0]["pass"] is False
+
+
+# ===========================================================================
+# resolve_executable unit tests — direct import of lib
+# ===========================================================================
+
+PDIR_STR = str(GRUMPY_PDIR)
+CHECKS_STR = str(GRUMPY_CHECKS_DIR)
+
+# 12
+def test_resolve_finds_schema_valid():
+    """Bash assertion 12: resolve 'schema-valid' → OK + path contains checks/schema-valid.py."""
+    result = lib.resolve_executable(CHECKS_STR, "schema-valid", PDIR_STR, "")
+    kind, rest = result.split("\t", 1)
+    assert kind == "OK"
+    assert "checks/schema-valid.py" in rest
+
+# 13
+def test_resolve_missing_returns_err():
+    """Bash assertion 13: resolve 'does-not-exist' → ERR."""
+    result = lib.resolve_executable(CHECKS_STR, "does-not-exist", PDIR_STR, "")
+    kind, _ = result.split("\t", 1)
+    assert kind == "ERR"
+
+# 14
+def test_resolve_explicit_exec():
+    """Bash assertion 14: explicit exec 'checks/rubric-coverage.py' → OK + path contains rubric-coverage.py."""
+    result = lib.resolve_executable(CHECKS_STR, "ignored", PDIR_STR, "checks/rubric-coverage.py")
+    kind, rest = result.split("\t", 1)
+    assert kind == "OK"
+    assert "rubric-coverage.py" in rest
+
+
+# ===========================================================================
+# Branch-aware check list (multi-grumpy protocol)
+# ===========================================================================
+
+# 15
+def test_branch_grumpy_three_checks():
+    """Bash assertion 15: BRANCH=grumpy → 3 checks run."""
+    out = run_checks(MULTI_GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1, branch="grumpy")
+    assert len(out["results"]) == 3
+
+# 16
+def test_branch_security_two_checks_no_rubric_coverage():
+    """Bash assertion 16: BRANCH=security → 2 checks run, no rubric-coverage."""
+    out = run_checks(MULTI_GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1, branch="security")
+    assert len(out["results"]) == 2
+    names = {r["check"] for r in out["results"]}
+    assert "rubric-coverage" not in names
+
+# 17
+def test_branch_security_schema_valid_rejects_non_security():
+    """Bash assertion 17: BRANCH=security → schema-valid rejects non-security categories in evidence-complete."""
+    out = run_checks(MULTI_GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1, branch="security")
+    sv = next(r for r in out["results"] if r["check"] == "schema-valid")
+    assert sv["pass"] is False
+    assert "illegal category" in sv["feedback"]
+
+
+# ===========================================================================
+# Params forwarding via a stub protocol + echo-params.sh check
+# ===========================================================================
+
+@pytest.fixture
+def params_sandbox(tmp_path):
+    """Build a protocol with an echo-params.sh check that echoes CHECK_PARAMS as feedback."""
+    checks_dir = tmp_path / "checks"
+    checks_dir.mkdir()
+    echo_script = checks_dir / "echo-params.sh"
+    echo_script.write_text(
+        '#!/usr/bin/env bash\n'
+        'jq -nc --arg f "${CHECK_PARAMS:-MISSING}" \'{check:"echo-params",pass:true,feedback:$f}\'\n'
+    )
+    echo_script.chmod(echo_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    proto = tmp_path / "protocol.json"
+    proto.write_text(json.dumps({
+        "name": "p",
+        "states": [{
+            "id": "s",
+            "params": {"categories": ["a", "b"]},
+            "checks": [{"run": "echo-params"}],
+            "branches": [{
+                "id": "bx",
+                "params": {"categories": ["only-b"]},
+                "checks": [{"run": "echo-params"}]
+            }]
+        }]
+    }))
+    return proto
+
+# 18
+def test_params_state_scoped_forwarded(params_sandbox):
+    """Bash assertion 18: state-scoped params forwarded as CHECK_PARAMS (no BRANCH)."""
+    out = run_checks(params_sandbox, "s", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    feedback_parsed = json.loads(out["results"][0]["feedback"])
+    assert feedback_parsed["categories"] == ["a", "b"]
+
+# 19
+def test_params_branch_scoped_overrides_state(params_sandbox):
+    """Bash assertion 19: BRANCH=bx → branch-scoped params override state params."""
+    out = run_checks(params_sandbox, "s", EV_COMPLETE, DIFF_PR1, FILES_PR1, branch="bx")
+    feedback_parsed = json.loads(out["results"][0]["feedback"])
+    assert feedback_parsed["categories"] == ["only-b"]
