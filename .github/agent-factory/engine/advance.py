@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """advance.py <state_workdir> <instance-key> <protocol.json> <verdicts.json> <evidence.json>
-The ONLY writer of non-initial state. Reads check verdicts (never agent files,
+The ONLY writer of non-initial state. The iterate/done/failed decision is the pure
+lib.decide() fold over verdict severities. Reads check verdicts (never agent files,
 except evidence for publication AFTER checks passed), mutates state, CAS-pushes,
 and performs the consequent action: publish / re-dispatch / fail loudly.
 Tolerates a missing state file (recovers from a lost init, e.g. a plan job
@@ -241,10 +242,17 @@ def main():
         verdicts = json.load(f)
 
     results = verdicts.get("results", [])
-    all_pass = len(results) > 0 and all(r.get("pass", False) for r in results)
+    # DECIDE: the process axis (iterate/done/failed) is a pure fold over the
+    # verdicts + their on_fail severities. `blocking` (a block-severity fail)
+    # has no consumer in M1 — the M2 phase-gate will read it.
+    process, _blocking = lib.decide(results, iterations_remaining=(iter_ < max_iter))
 
-    # Compute feedback string
-    fb_parts = [r.get("feedback", "") for r in results if not r.get("pass", False)]
+    # Feedback fed back to the agent: only iterate-severity failures, since the
+    # agent cannot fix advisory/block facts by re-running. Defaulting on_fail to
+    # "iterate" keeps the single-agent regression path byte-identical (all v1
+    # checks are iterate-severity, so this is every non-pass verdict).
+    fb_parts = [r.get("feedback", "") for r in results
+                if not r.get("pass", False) and r.get("on_fail", "iterate") == "iterate"]
     fb = "; ".join(p for p in fb_parts if p)
     if not fb and len(results) == 0:
         fb = "no check verdicts produced (checks job failure?)"
@@ -271,7 +279,7 @@ def main():
     inf = lib.instance_file(dir_, pid, instance)
 
     # Branch: mutate state → publish/side-effects → status-comment → cas_push → dispatch
-    if all_pass:
+    if process == "done":
         # Mark done
         state_data = lib.load_yaml(sf)
         state_data["state"] = "done"
@@ -290,7 +298,7 @@ def main():
         lib.cas_push(dir_, f"{instance}: checks passed at iteration {iter_} → published, done")
         fire_join(pid, instance, branch)
 
-    elif iter_ < max_iter:
+    elif process == "iterate":
         next_iter = iter_ + 1
         state_data = lib.load_yaml(sf)
         state_data["iteration"] = next_iter
@@ -317,7 +325,7 @@ def main():
             "-F", f"client_payload[branch]={branch}",
         )
 
-    else:
+    else:  # process == "failed"
         # Exhausted
         state_data = lib.load_yaml(sf)
         state_data["state"] = "failed"
