@@ -36,15 +36,56 @@ def protocol_id(proto_path):
         return json.load(f)["name"]
 
 
-def state_file(d, pid, instance, branch=None):
+def state_file(d, pid, instance, branch=None, phase=None):
     """
-    state_file <dir> <protocol-id> <instance-key> [branch]
-      no branch → single-agent path        <dir>/<pid>/<instance>.yaml
-      branch    → fan-out per-branch path   <dir>/<pid>/<instance>/<branch>.yaml
+    state_file <dir> <protocol-id> <instance-key> [branch] [phase]
+      no branch, no phase → single-agent path     <dir>/<pid>/<instance>.yaml
+      branch, no phase    → fan-out per-branch     <dir>/<pid>/<instance>/<branch>.yaml
+      phase, no branch    → multi-phase agent      <dir>/<pid>/<instance>/<phase>.yaml
+      phase + branch      → multi-phase fan-out leg <dir>/<pid>/<instance>/<phase>.<branch>.yaml
     """
+    if phase and branch:
+        return f"{d}/{pid}/{instance}/{phase}.{branch}.yaml"
+    if phase:
+        return f"{d}/{pid}/{instance}/{phase}.yaml"
     if branch:
         return f"{d}/{pid}/{instance}/{branch}.yaml"
     return f"{d}/{pid}/{instance}.yaml"
+
+
+def state_by_id(protocol, state_id):
+    """Return the state dict with the given id, or None."""
+    for s in protocol.get("states", []):
+        if s.get("id") == state_id:
+            return s
+    return None
+
+
+def phase_states(protocol):
+    """The ordered list of 'phase' states — those of kind agent or fanout.
+    (join/deterministic states are transitions/terminals, not phases.)"""
+    return [s for s in protocol.get("states", []) if s.get("kind") in ("agent", "fanout")]
+
+
+def is_multiphase(protocol):
+    """A protocol is multi-phase iff it has more than one agent|fanout phase.
+    Single-phase protocols (grumpy=1 agent, multi-grumpy=1 fanout) keep the
+    legacy layout + code paths untouched."""
+    return len(phase_states(protocol)) > 1
+
+
+def next_phase_id(protocol, phase_id):
+    """The next PHASE (agent|fanout state) reached by following `.next` from
+    phase_id. Returns None if `.next` is absent or is not itself a phase
+    (e.g. a join or a terminal) — i.e. there is no further phase to launch."""
+    cur = state_by_id(protocol, phase_id)
+    if not cur:
+        return None
+    nxt = cur.get("next")
+    nxt_state = state_by_id(protocol, nxt) if nxt else None
+    if nxt_state and nxt_state.get("kind") in ("agent", "fanout"):
+        return nxt
+    return None
 
 
 def instance_file(d, pid, instance):
@@ -342,7 +383,7 @@ def _cli(argv):
     if cmd == "protocol-id":
         print(protocol_id(args[0]))
     elif cmd == "state-file":
-        # state-file <dir> <pid> <instance> [branch]
+        # state-file <dir> <pid> <instance> [branch] [phase]   (positional; pass "" for branch to get a phase-only path)
         print(state_file(*args))
     elif cmd == "instance-file":
         print(instance_file(*args))
