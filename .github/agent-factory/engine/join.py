@@ -42,17 +42,28 @@ def main():
     with open(proto) as f:
         protocol = json.load(f)
 
-    branches = []
-    for state in protocol.get("states", []):
-        if state.get("kind") == "fanout":
-            for b in state.get("branches", []):
-                branches.append(b["id"])
-            break
+    # Determine the fan-out phase to evaluate. Multi-phase: the cursor's phase.
+    # Single-phase (multi-grumpy): the sole fan-out state (cursor absent).
+    cursor_phase = instance_data.get("phase", "") or ""
+    multiphase = lib.is_multiphase(protocol)
+    fanout_state = None
+    if multiphase and cursor_phase:
+        st = lib.state_by_id(protocol, cursor_phase)
+        if st and st.get("kind") == "fanout":
+            fanout_state = st
+    if fanout_state is None:
+        for st in protocol.get("states", []):
+            if st.get("kind") == "fanout":
+                fanout_state = st
+                break
+
+    branches = [b["id"] for b in (fanout_state.get("branches", []) if fanout_state else [])]
+    phase_for_path = cursor_phase if (multiphase and cursor_phase) else None
 
     all_terminal = True
     all_done = True
     for b in branches:
-        sf = lib.state_file(dir_, pid, instance, b)
+        sf = lib.state_file(dir_, pid, instance, b, phase=phase_for_path)
         st = ""
         if os.path.isfile(sf):
             try:
@@ -89,9 +100,12 @@ def main():
     body = lib.render_fanout_status_body(dir_, pid, instance, proto)
     lib.upsert_status_comment(inf, pr, body)
 
+    # A fan-out phase is always terminal-before-join in the current model (its
+    # `.next` is the join state), so once all branches are terminal the instance
+    # is finalized here. A multi-fan-out pipeline would instead advance from the
+    # JOIN state's `.next`; that is intentionally not supported yet.
     instance_data["joined"] = True
     lib.dump_yaml(inf, instance_data)
-
     lib.cas_push(dir_, f"{instance}: join → {concl} (all branches terminal)")
 
 

@@ -284,3 +284,31 @@ def test_agent_phase_blocked_halts_pipeline(tmp_path, engine_env):
     inst = lib.load_yaml(str(work) + "/pipeline-mini/pr-1/_instance.yaml")
     assert inst["phase"] == "gate"
     assert "protocol-advance" not in r.stderr
+
+
+def test_join_reads_phase_prefixed_branch_states_and_finalizes(tmp_path, engine_env):
+    # Each run_next clones fresh from origin into its dir; use separate dirs.
+    run_next(tmp_path / "state1", "pr-1", MINI, "start", engine_env, head="abc")
+    work = tmp_path / "state2"
+    run_next(work, "pr-1", MINI, "advance-phase", engine_env, phase="work")
+    # mark the single branch leg done (in the seeded work.alpha.yaml) and push
+    sf = str(work) + "/pipeline-mini/pr-1/work.alpha.yaml"
+    data = lib.load_yaml(sf)
+    data["state"] = "done"
+    lib.dump_yaml(sf, data)
+    inf = str(work) + "/pipeline-mini/pr-1/_instance.yaml"
+    inst = lib.load_yaml(inf); inst["phase"] = "work"; lib.dump_yaml(inf, inst)
+    # commit+push the mutation so join's state_checkout (clone) sees it
+    import subprocess as sp
+    sp.run(["git", "-C", str(work), "add", "-A"], check=True, capture_output=True)
+    sp.run(["git", "-C", str(work), "-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-qm", "leg done"], check=True, capture_output=True)
+    sp.run(["git", "-C", str(work), "push", "-q", "origin", "agentic-state"], check=True, capture_output=True)
+    # run join in a fresh clone dir
+    work2 = tmp_path / "state3"
+    e = dict(engine_env); e["PR"] = "1"; e["PR_HEAD_SHA"] = "abc"
+    r = subprocess.run(["python3", str(ENGINE / "join.py"), str(work2), "pr-1", str(MINI)],
+                       text=True, capture_output=True, env=e)
+    assert r.returncode == 0, r.stderr
+    inst2 = lib.load_yaml(str(work2) + "/pipeline-mini/pr-1/_instance.yaml")
+    assert inst2["joined"] is True
