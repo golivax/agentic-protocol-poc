@@ -129,3 +129,67 @@ def test_conclude_gate_blocked_by_env(tmp_path):
     r = _run(MINI_DIR / "publish/conclude-gate.py", str(ev), "pr-1",
              env_extra={"BLOCKING": "1", "ENGINE_LOCAL": "1"})
     assert json.loads(r.stdout)["blocked"] is True
+
+
+from conftest import state_origin, engine_env  # noqa: F401  (pytest fixtures)
+
+
+def run_next(work_dir, instance, proto, command, env, phase="", branch="", head=""):
+    e = dict(env)
+    e["PHASE"] = phase
+    e["BRANCH"] = branch
+    r = subprocess.run(
+        ["python3", str(ENGINE / "next.py"), str(work_dir), instance, str(proto), command, head],
+        text=True, capture_output=True, env=e,
+    )
+    return r
+
+
+def test_multiphase_start_seeds_cursor_at_first_phase(tmp_path, engine_env):
+    work = tmp_path / "state"
+    r = run_next(work, "pr-1", MINI, "start", engine_env, head="abc")
+    assert r.returncode == 0, r.stderr
+    action = json.loads(r.stdout)
+    assert action["action"] == "run-agent"
+    assert action["phase"] == "gate"
+    inst = lib.load_yaml(str(work) + "/pipeline-mini/pr-1/_instance.yaml")
+    assert inst["phase"] == "gate"
+    assert inst["head_sha"] == "abc"
+    assert inst["joined"] is False
+    gate = lib.load_yaml(str(work) + "/pipeline-mini/pr-1/gate.yaml")
+    assert gate["state"] == "gate" and gate["iteration"] == 1
+
+
+def test_multiphase_start_does_not_seed_later_phases(tmp_path, engine_env):
+    work = tmp_path / "state"
+    run_next(work, "pr-1", MINI, "start", engine_env, head="abc")
+    assert not os.path.exists(str(work) + "/pipeline-mini/pr-1/work.alpha.yaml")
+
+
+def test_singlephase_grumpy_start_unchanged(tmp_path, engine_env):
+    work = tmp_path / "state"
+    r = run_next(work, "pr-1", GRUMPY, "start", engine_env, head="abc")
+    assert r.returncode == 0, r.stderr
+    action = json.loads(r.stdout)
+    assert action["action"] == "run-agent"
+    assert "phase" not in action
+    assert os.path.exists(str(work) + "/grumpy-review/pr-1.yaml")
+
+
+def test_singlephase_multigrumpy_start_unchanged(tmp_path, engine_env):
+    work = tmp_path / "state"
+    r = run_next(work, "pr-1", MULTI, "start", engine_env, head="abc")
+    assert r.returncode == 0, r.stderr
+    action = json.loads(r.stdout)
+    assert action["action"] == "run-fanout"
+    assert "phase" not in action
+    assert os.path.exists(str(work) + "/multi-grumpy/pr-1/_instance.yaml")
+    assert os.path.exists(str(work) + "/multi-grumpy/pr-1/grumpy.yaml")
+
+
+def test_seed_unknown_phase_exits_nonzero(tmp_path, engine_env):
+    # advance-phase with a PHASE that isn't a real state → clean non-zero exit
+    work = tmp_path / "state"
+    r = run_next(work, "pr-1", MINI, "advance-phase", engine_env, phase="nope")
+    assert r.returncode != 0
+    assert "unknown phase" in r.stderr

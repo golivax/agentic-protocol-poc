@@ -22,6 +22,7 @@ PROTO = sys.argv[3]
 COMMAND = sys.argv[4]
 HEAD_SHA = sys.argv[5] if len(sys.argv) > 5 else ""
 BRANCH = os.environ.get("BRANCH", "")
+PHASE = os.environ.get("PHASE", "")
 
 with open(PROTO) as f:
     proto_data = json.load(f)
@@ -89,11 +90,75 @@ def start_fanout():
     emit_run_fanout(branches)
 
 
+def seed_and_dispatch_phase(phase_id, command):
+    """Multi-phase: seed the named phase's state + the instance cursor, push,
+    and emit the phase's run action. Used for the first phase (start/reset) and
+    for each subsequent phase (advance-phase)."""
+    phase_state = lib.state_by_id(proto_data, phase_id)
+    if phase_state is None:
+        sys.stderr.write(f"[next] unknown phase '{phase_id}' in protocol\n")
+        sys.exit(1)
+    kind = phase_state.get("kind")
+    inf = lib.instance_file(DIR, PID, INSTANCE)
+    os.makedirs(os.path.dirname(inf), exist_ok=True)
+
+    inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+    inst.setdefault("protocol", PID)
+    inst.setdefault("instance", INSTANCE)
+    inst["phase"] = phase_id
+    if HEAD_SHA:
+        inst.setdefault("head_sha", HEAD_SHA)
+    inst.setdefault("joined", False)
+    lib.dump_yaml(inf, inst)
+
+    if kind == "fanout":
+        branches_config = phase_state.get("branches", [])
+        # Per-branch phase files carry head_sha (consistent with write_fresh_state;
+        # the legacy start_fanout omits it — deliberate divergence).
+        for b in branches_config:
+            sf = lib.state_file(DIR, PID, INSTANCE, b["id"], phase=phase_id)
+            os.makedirs(os.path.dirname(sf), exist_ok=True)
+            lib.dump_yaml(sf, {
+                "protocol": PID, "instance": INSTANCE, "state": phase_id,
+                "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": [],
+            })
+        lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter fan-out phase {phase_id} ({command})")
+        branches = [{"id": b["id"], "workflow": b["workflow"], "iteration": 1, "feedback": ""}
+                    for b in branches_config]
+        print(json.dumps({"action": "run-fanout", "iteration": 1, "feedback": "",
+                          "reason": f"phase:{phase_id}", "phase": phase_id, "branches": branches}))
+    else:
+        sf = lib.state_file(DIR, PID, INSTANCE, phase=phase_id)
+        os.makedirs(os.path.dirname(sf), exist_ok=True)
+        lib.dump_yaml(sf, {
+            "protocol": PID, "instance": INSTANCE, "state": phase_id,
+            "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": [],
+        })
+        lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter agent phase {phase_id} ({command})")
+        print(json.dumps({"action": "run-agent", "iteration": 1, "feedback": "",
+                          "reason": f"phase:{phase_id}", "phase": phase_id}))
+
+
 # Unbranched start/reset on a fan-out protocol routes to the planner BEFORE the
 # single-agent agent-unit discovery (which has no kind:"agent" state to read and
 # would error). The branched fan-out path (continue with BRANCH set) and the
 # single-agent path both fall through this guard unchanged.
-if not BRANCH and is_fanout():
+if lib.is_multiphase(proto_data) and not PHASE and not BRANCH:
+    # Multi-phase protocol, unbranched/unphased entry → seed the FIRST phase.
+    if COMMAND in ("start", "reset"):
+        first = lib.phase_states(proto_data)[0]["id"]
+        seed_and_dispatch_phase(first, COMMAND)
+        sys.exit(0)
+    else:
+        sys.stderr.write(f"[next] multi-phase '{COMMAND}' needs a PHASE\n")
+        sys.exit(2)
+
+if lib.is_multiphase(proto_data) and PHASE and COMMAND == "advance-phase":
+    # Phase transition (advance.py already set the cursor to PHASE) → seed+dispatch it.
+    seed_and_dispatch_phase(PHASE, COMMAND)
+    sys.exit(0)
+
+if not BRANCH and is_fanout() and not PHASE:
     if COMMAND in ("start", "reset"):
         start_fanout()
         sys.exit(0)
