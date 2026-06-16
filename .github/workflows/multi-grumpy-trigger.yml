@@ -1,0 +1,22 @@
+name: multi-grumpy
+# Thin per-protocol trigger shim. Declares the real `on:` triggers (which a
+# reusable workflow_call workflow cannot declare itself) and hands off to the
+# generic engine. The engine derives the command from the event via this
+# protocol's `triggers` block; the only protocol-specific value here is the path.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+  repository_dispatch:
+    types: [protocol-continue, protocol-advance]   # protocol-join is owned by protocol-join.yml
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    uses: ./.github/workflows/agentic-engine.yml
+    with:
+      protocol: .github/agent-factory/protocols/multi-grumpy/protocol.json
+    secrets: inherit
