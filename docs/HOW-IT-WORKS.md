@@ -100,15 +100,16 @@ PR, advanced one PR at a time; a PAT for cross-workflow triggering (the default
 .github/agent-factory/protocols/grumpy/
   protocol.json          # states, checks, transitions, max_iterations (DATA)
   evidence.schema.json   # the rubric the agent must fill (the CONTRACT)
-  checks/*.sh            # deterministic transition checks (FORM verification)
-  publish/publish-review-from-evidence.sh  # protocol's publish hook (zone 4)
+  checks/*.py            # deterministic transition checks (FORM verification)
+  publish/publish-review-from-evidence.py  # protocol's publish hook (zone 4)
 
 .github/agent-factory/engine/   # GENERIC — fully protocol-agnostic
-  lib.sh                 # state checkout, CAS push, status-comment upsert,
-                         #   resolve_executable, set_check_run
-  next.sh                # planner: (state, protocol, command) -> action JSON
-  advance.sh             # sole state writer: verdicts -> mutate, publish, push
-  run-checks.sh          # resolve + run a state's checks (any language) -> verdicts
+  lib.py                 # state checkout, CAS push, status-comment upsert,
+                         #   resolve_executable, set_check_run (importable module
+                         #   + a `python3 lib.py <subcommand>` CLI)
+  next.py                # planner: (state, protocol, command) -> action JSON
+  advance.py             # sole state writer: verdicts -> mutate, publish, push
+  run-checks.py          # resolve + run a state's checks (any language) -> verdicts
 
 .github/workflows/
   orchestrator.yml       # the 4 trust zones; maps events → commands; calls the engine
@@ -136,9 +137,9 @@ credentials:
 
 | Zone | Job | Holds | Runs agent code? |
 |------|-----|-------|------------------|
-| 1. Engine-pre | `plan` | state-branch PAT | no — deterministic `next.sh` |
+| 1. Engine-pre | `plan` | state-branch PAT | no — deterministic `next.py` |
 | 2. Agent | `dispatch` → the gh-aw workflow | read-only repo token + LLM creds | yes — sandboxed |
-| 3. Checks | `checks` | nothing (read-only default token) | no — bash/jq over evidence + diff |
+| 3. Checks | `checks` | nothing (read-only default token) | no — Python over evidence + diff |
 | 4. Engine-post | `advance` | state PAT + publish token | no — reads check verdicts only |
 
 The invariant: **the engine and the agent never share a job or a credential.**
@@ -156,7 +157,7 @@ event (pull_request open/push, /grumpy comment, or repository_dispatch "protocol
       synchronize → reset, issue_comment /grumpy → start, dispatch → continue
    │
    ▼
-[plan]      checkout agentic-state; next.sh <dir> <instance-key> <protocol.json>
+[plan]      checkout agentic-state; next.py <dir> <instance-key> <protocol.json>
             <command> [head_sha] reads/creates <protocol-id>/<instance-key>.yaml,
             emits {action: run-agent|halt, iteration, feedback}
    │ run-agent
@@ -177,7 +178,7 @@ event (pull_request open/push, /grumpy comment, or repository_dispatch "protocol
             • iterations exhausted → state=failed, CAS-push
 ```
 
-The loop terminates in at most `max_iterations` agent runs. `next.sh` independently
+The loop terminates in at most `max_iterations` agent runs. `next.py` independently
 halts on a terminal state, so a stray re-dispatch can never resurrect a finished
 instance.
 
@@ -222,7 +223,7 @@ The fix is a **correlation id (cid)**:
 - Each agent `.md` sets its `run-name` to embed the delimited token
   `cid:[<cid>]`; `gh aw compile` bakes this into the lock, so the cid lands in
   the run's **displayTitle**.
-- The resolver (`match_run_by_cid` in `lib.sh`) selects the run whose
+- The resolver (`match_run_by_cid` in `lib.py`) selects the run whose
   displayTitle carries that exact `cid:[<cid>]` token, and **fails loudly** if no
   run matches — it never falls back to a recency heuristic. So **concurrent PRs
   of the same workflow** each resolve only their own run.
@@ -293,13 +294,13 @@ the agent examined, so the check can confirm the agent actually read the code.
 > that prints one JSON object `{"check","pass","feedback"}` to stdout and exits 0.
 
 Any language that can read three file paths and print a line of JSON qualifies.
-The engine's `run-checks.sh` reads the check *list* from `protocol.json`
+The engine's `run-checks.py` reads the check *list* from `protocol.json`
 (`.states[].checks[]`) and resolves each entry to an executable:
 
 - if the entry sets `"exec": "<path>"`, it runs `<protocol-dir>/<path>`;
 - otherwise it finds `<protocol-dir>/checks/<run>` or `checks/<run>.*`
-  (extension-agnostic — so `checks/rubric-coverage.py` and
-  `checks/schema-valid.sh` are both first-class).
+  (extension-agnostic — so `checks/rubric-coverage.py` and a `checks/foo.sh`
+  bash check would both be first-class).
 
 So a Python check is just `checks/<name>.py` with `#!/usr/bin/env python3` and
 `chmod +x` — **no bash wrapper.** A wrapper is only worth writing when you're
@@ -307,12 +308,13 @@ So a Python check is just `checks/<name>.py` with `#!/usr/bin/env python3` and
 `checks/tests-adapter.py` that runs `pytest` and translates its exit code into
 `{check,pass,feedback}`) — that adapter does real work, and it's exactly the
 "a check that runs agent-authored code in the credential-free zone-3 job" case.
-`run-checks.sh` turns a missing, non-executable, crashing, or malformed check
+`run-checks.py` turns a missing, non-executable, crashing, or malformed check
 into a *failing verdict* rather than aborting the run.
 
-In this example protocol, `rubric-coverage` and `traces-exist-in-diff` are
-implemented in **Python** and `schema-valid` in **bash**, to demonstrate the
-mix; all three obey the same ABI.
+In this example protocol all three checks (`schema-valid`, `rubric-coverage`,
+`traces-exist-in-diff`) are implemented in **Python** — but that's incidental:
+the ABI is language-agnostic, so a check can be written in any language that
+honours the contract above, and all three obey it identically.
 
 Whatever the language: **always exit 0** even when the check fails (a non-zero
 exit is reserved for a genuine runner error), and read node-scoped config (e.g.
@@ -335,64 +337,84 @@ When a check fails, its `feedback` string is what gets injected into the next
 iteration's prompt, so make it specific and actionable ("Missing: security ×
 src/auth.js"), not "evidence invalid".
 
-The three shipped checks, in full. They are deliberately small (~30–40 lines of
-`bash` + `jq`) and share the contract above.
+The three shipped checks, in full. They are deliberately small (~30–60 lines of
+Python each) and share the contract above.
 
-#### `schema-valid.sh` — does the evidence have the right shape?
+#### `schema-valid.py` — does the evidence have the right shape?
 
-It guards three layers (parseable JSON → `.files` is an array → every entry is
-an object with a `verdicts` array) so a malformed file produces a verdict
-instead of crashing the main pass. Then one `jq` program collects *all* shape
-violations (not just the first) and joins them into the feedback. The legal
-categories come from `CHECK_PARAMS` (the check-owning node's `params` object,
-forwarded by `run-checks.sh`), never hardcoded.
+It guards three layers (parseable JSON → `.files` is a list → every entry is
+an object with a `verdicts` list) so a malformed file produces a verdict
+instead of crashing the main pass. It then walks every verdict and collects
+*all* shape violations (not just the first) before joining them into the
+feedback. The legal categories come from `CHECK_PARAMS` (the check-owning node's
+`params` object, forwarded by `run-checks.py`), never hardcoded — and because
+`CHECK_PARAMS` may arrive as the literal string `"null"` (JSON null), the check
+treats that as "no categories" and still exits 0 rather than throwing.
 
-```bash
-#!/usr/bin/env bash
-# Check: evidence file parses and matches the structural shape.
-# Usage: schema-valid.sh <evidence.json> <diff.txt> <changed-files.txt>
-set -euo pipefail
-EV="$1"
+```python
+#!/usr/bin/env python3
+import json, os, sys
 
-emit() { jq -n --argjson p "$1" --arg f "$2" '{check:"schema-valid", pass:$p, feedback:$f}'; }
+def emit(ok, feedback):
+    print(json.dumps({"check": "schema-valid", "pass": ok, "feedback": feedback}))
+    sys.exit(0)
 
-if ! jq -e . "$EV" >/dev/null 2>&1; then
-  emit false "evidence file is missing or not valid JSON"; exit 0
-fi
-if ! jq -e '.files | type == "array"' "$EV" >/dev/null 2>&1; then
-  emit false "top-level .files array is missing"; exit 0
-fi
-if ! jq -e '[.files[] | type == "object" and (.verdicts | type == "array")] | all' "$EV" >/dev/null 2>&1; then
-  emit false "a .files entry is not an object with a verdicts array; check that every file is an object and verdicts is an array"; exit 0
-fi
+def main():
+    ev_path = sys.argv[1]
+    try:
+        with open(ev_path) as f: ev = json.load(f)
+    except Exception:
+        emit(False, "evidence file is missing or not valid JSON")
+    if not isinstance(ev.get("files"), list):
+        emit(False, "top-level .files array is missing")
+    for fe in ev["files"]:
+        if not (isinstance(fe, dict) and isinstance(fe.get("verdicts"), list)):
+            emit(False, "a .files entry is not an object with a verdicts array; "
+                        "check that every file is an object and verdicts is an array")
+    try:
+        params = json.loads(os.environ.get("CHECK_PARAMS", "") or "{}")
+    except Exception:
+        params = {}
+    cats = (params or {}).get("categories")  # CHECK_PARAMS="null" -> json None; stay exit-0
+    if not (isinstance(cats, list) and len(cats) > 0):
+        emit(False, "schema-valid: no categories in CHECK_PARAMS "
+                    "(engine must pass params.categories for this check's node)")
+    errs = []
+    for fe in ev["files"]:
+        p = fe.get("path")
+        for v in fe.get("verdicts", []):
+            c = v.get("category"); verdict = v.get("verdict")
+            findings = v.get("findings") or []
+            if c not in cats:
+                errs.append(f"illegal category {c} in {p}")
+            elif verdict not in ("issues-found", "none-found"):
+                errs.append(f"illegal verdict {verdict} for {c} × {p}")
+            elif verdict == "issues-found" and len(findings) == 0:
+                errs.append(f"issues-found with no findings: {c} × {p}")
+            elif verdict == "issues-found" and not all(
+                    len(fd.get("existing_code") or "") > 0 and len(fd.get("comment") or "") > 0
+                    for fd in findings):
+                errs.append(f"finding with empty existing_code or comment: {c} × {p}")
+            elif verdict == "issues-found" and not all(
+                    fd.get("side") in ("RIGHT", "LEFT")
+                    and isinstance(fd.get("line"), int) and not isinstance(fd.get("line"), bool) and fd.get("line") >= 1
+                    and (fd.get("start_line") is None
+                         or (isinstance(fd.get("start_line"), int) and not isinstance(fd.get("start_line"), bool) and fd.get("start_line") >= 1))
+                    for fd in findings):
+                errs.append(f"finding missing valid line/side anchor: {c} × {p}")
+            elif verdict == "none-found" and len(v.get("examined") or []) == 0:
+                errs.append(f"none-found with no examined identifiers: {c} × {p}")
+    emit(len(errs) == 0, "; ".join(errs))
 
-# Categories come from CHECK_PARAMS (node-scoped params forwarded by run-checks.sh).
-CATS_JSON=$(printf '%s' "${CHECK_PARAMS:-}" | jq -c '(.categories // empty) | select(type == "array" and length > 0)' 2>/dev/null || true)
-if [ -z "$CATS_JSON" ]; then
-  emit false "schema-valid: no categories in CHECK_PARAMS (engine must pass params.categories for this check's node)"; exit 0
-fi
-ERR=$(jq -r --argjson valid "$CATS_JSON" '
-  [ .files[] | .path as $p | .verdicts[]? |
-    if (.category as $c | $valid | index($c) | not)
-      then "illegal category \(.category) in \($p)"
-    elif (.verdict != "issues-found" and .verdict != "none-found")
-      then "illegal verdict \(.verdict) for \(.category) × \($p)"
-    elif .verdict == "issues-found" and ((.findings // []) | length) == 0
-      then "issues-found with no findings: \(.category) × \($p)"
-    elif .verdict == "issues-found" and ([(.findings // [])[] | ((.existing_code // "") | length) > 0 and ((.comment // "") | length) > 0] | all | not)
-      then "finding with empty existing_code or comment: \(.category) × \($p)"
-    elif .verdict == "none-found" and ((.examined // []) | length) == 0
-      then "none-found with no examined identifiers: \(.category) × \($p)"
-    else empty end
-  ] | join("; ")' "$EV")
-
-if [ -n "$ERR" ]; then emit false "$ERR"; else emit true ""; fi
+if __name__ == "__main__":
+    main()
 ```
 
 #### `rubric-coverage.py` — is every cell of the rubric filled exactly once?
 
-*(This one is **Python**, to show the ABI is language-agnostic — it's resolved
-and run by `run-checks.sh` exactly like the bash checks.)* Ground truth is the
+*(Like the others, this one is **Python** — the ABI is language-agnostic, and
+`run-checks.py` resolves and runs it exactly the same way regardless of
+language.)* Ground truth is the
 changed-files list (the orchestrator fetches it with `gh pr diff --name-only`),
 filtered to `.js`. For every file × every category it counts verdicts and
 demands **exactly one** — so `0` (the agent skipped it, e.g. under sabotage)
@@ -408,7 +430,7 @@ import json, os, sys
 
 def main() -> None:
     ev_path, _diff, files_path = sys.argv[1], sys.argv[2], sys.argv[3]
-    # Categories come from CHECK_PARAMS (node-scoped params forwarded by run-checks.sh).
+    # Categories come from CHECK_PARAMS (node-scoped params forwarded by run-checks.py).
     try:
         categories = json.loads(os.environ.get("CHECK_PARAMS", "")).get("categories")
     except (ValueError, AttributeError):
@@ -713,7 +735,7 @@ job that holds the state PAT.
 
 ### 4.6 The command seam — trigger policy lives in the orchestrator, not the engine
 
-The engine (`next.sh`) receives a **command** and never sniffs GitHub events.
+The engine (`next.py`) receives a **command** and never sniffs GitHub events.
 The orchestrator translates events to commands:
 
 | GitHub event | Condition | Command |
@@ -739,7 +761,7 @@ Two intentional v1 divergences from the original design:
 - **`start` on Active → halt** (the prior design resumed; now a duplicate
   trigger on an in-flight review is silently ignored to avoid double-advancing).
 
-`head_sha` (the fifth argument to `next.sh`) is **recorded as metadata** only
+`head_sha` (the fifth argument to `next.py`) is **recorded as metadata** only
 (stored in the state file for check-run binding). The engine never compares it
 to decide policy — that comparison was removed. The orchestrator is where the
 policy lives: `synchronize` → `reset` is the mechanism that ensures a new push
@@ -747,7 +769,7 @@ invalidates the old review.
 
 ### 4.7 The publish hook
 
-When all checks pass, `advance.sh` calls the protocol's **publish hook** —
+When all checks pass, `advance.py` calls the protocol's **publish hook** —
 a protocol-provided executable resolved via the same `resolve_executable`
 function used for checks (see §4.3), from the publish state's `.action` field:
 
@@ -770,7 +792,7 @@ those to the check run.
 | Checks | 3 | nothing (read-only default token) | yes — zero credential |
 | Publish hook | 4 (engine-post) | publish token (PR reviews + check runs) | no — trusted, repo-authored |
 
-The publish hook runs **trusted in zone 4** alongside `advance.sh`, holding
+The publish hook runs **trusted in zone 4** alongside `advance.py`, holding
 the publish token. It has the authority to post PR reviews and check runs.
 A check (zone 3) has no credentials and is explicitly designed to run code
 that touches agent-influenced data without being able to affect external
@@ -778,7 +800,7 @@ systems. Do not conflate them: "resolved via `resolve_executable`" describes
 the *mechanical* resolution; the trust boundary is entirely different.
 
 For grumpy-review, the publish hook is
-`.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.sh`. It reads the
+`.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.py`. It reads the
 evidence, posts a REQUEST_CHANGES or APPROVE review (COMMENT fallback if the
 repo setting is off), and returns `{"conclusion":"failure"|"success","summary":"…"}`.
 
@@ -832,13 +854,13 @@ on the PR's head commit, reflecting protocol state:
 
 The check run binds to the head SHA. A push mid-review invalidates the old
 verdict: the orchestrator maps `pull_request synchronize` → command `reset`,
-which tells `next.sh` to **unconditionally start a fresh review** of the new
+which tells `next.py` to **unconditionally start a fresh review** of the new
 commit (the prior review stays in the state branch's git history). The engine
 does not compare head SHAs itself — trigger policy lives in the orchestrator
 (see §4.6). So the gate can never go green on un-reviewed code. The check is
 emitted with the Actions `GITHUB_TOKEN` (the Checks API is App/Actions-token
-only — a PAT can't create check runs), via `set_check_run` in `lib.sh`, from the
-`plan` job (initial `in_progress`) and `advance.sh` (terminal/iterate states).
+only — a PAT can't create check runs), via `set_check_run` in `lib.py`, from the
+`plan` job (initial `in_progress`) and `advance.py` (terminal/iterate states).
 The relevant jobs carry `checks: write`.
 
 > **Fork PRs are out of scope.** `pull_request` runs from forks get no secrets
@@ -923,8 +945,8 @@ environment variable, not a second code path.
 
 ### 8.1 The `BRANCH` env seam
 
-`next.sh`, `run-checks.sh`, and `advance.sh` all read one new env var,
-`BRANCH` (and `lib.sh` provides the branch-aware `state_file`/`instance_file`
+`next.py`, `run-checks.py`, and `advance.py` all read one new env var,
+`BRANCH` (and `lib.py` provides the branch-aware `state_file`/`instance_file`
 helpers they pass it to):
 
 - **`BRANCH` empty/unset** → the exact v1 single-agent path (the regression
@@ -1021,9 +1043,9 @@ A valid review **with comments** is a process **success**, published normally;
 its per-branch check-run conclusion `failure` then means *"changes requested,"*
 **not** process failure. **The strict join gate is about the process axis only.**
 
-### 8.5 `join.sh` and the serialized join workflow
+### 8.5 `join.py` and the serialized join workflow
 
-`advance.sh`, when a branch reaches a terminal state, emits a
+`advance.py`, when a branch reaches a terminal state, emits a
 `repository_dispatch: protocol-join` (and now also carries `client_payload[branch]`
 on its `protocol-continue` iterate dispatch). That dispatch fires a dedicated
 workflow:
@@ -1031,7 +1053,7 @@ workflow:
 - **`.github/workflows/protocol-join.yml`** — runs **serialized** (concurrency
   group `join-<instance>`, `cancel-in-progress: false`) so two near-simultaneous
   branch completions can't double-evaluate the barrier.
-- **`engine/join.sh`** (new) — reads **every** branch state file; once all are
+- **`engine/join.py`** (new) — reads **every** branch state file; once all are
   terminal **and** `_instance.yaml.joined` is still false, it sets the aggregate
   check-run (`success` iff every branch is `done`, else `failure`), re-renders
   the status comment, flips `joined: true`, and CAS-pushes. It is **idempotent**:
@@ -1045,7 +1067,7 @@ workflow:
 | `multi-grumpy/security` | per-branch | informational — the security leg's outcome |
 | `multi-grumpy` | aggregate | **the required gating check** |
 
-`plan` marks the aggregate `in_progress`; `join.sh` completes it. Make the
+`plan` marks the aggregate `in_progress`; `join.py` completes it. Make the
 aggregate `multi-grumpy` the required status check (same mechanism as §5.1).
 
 ### 8.7 The orchestrator as a branch matrix — and why artifacts, not job outputs
@@ -1053,9 +1075,9 @@ aggregate `multi-grumpy` the required status check (same mechanism as §5.1).
 `orchestrator.yml` is rewritten so the agent-bearing jobs run as a matrix over
 branches:
 
-- **`plan`** runs `next.sh` **unbranched** for `pull_request`/`issue_comment`
+- **`plan`** runs `next.py` **unbranched** for `pull_request`/`issue_comment`
   (→ action `run-fanout`, `branches: [grumpy, security]`), and **branched**
-  (`BRANCH=<payload.branch> next.sh … continue`) for `repository_dispatch:
+  (`BRANCH=<payload.branch> next.py … continue`) for `repository_dispatch:
   protocol-continue` (→ exactly one branch).
 - **`dispatch` → `checks` → `advance`** become a `strategy.matrix.branch`
   (`fail-fast: false`), gated `if: needs.plan.outputs.branches != '[]'`. Each leg
@@ -1091,7 +1113,7 @@ each agent self-decides what to do with it.
 
 ```
 event (pull_request open/push, /grumpy comment)
-   │  plan (UNBRANCHED): next.sh → run-fanout, branches=[grumpy, security]
+   │  plan (UNBRANCHED): next.py → run-fanout, branches=[grumpy, security]
    ▼
 review  ── fan out ──┬─────────────────────────┬──────────────────────────
                      │ branch: grumpy           │ branch: security
@@ -1104,7 +1126,7 @@ review  ── fan out ──┬────────────────
                      │    protocol-join          │    protocol-join
                      └────────────┬─────────────┘
                                   ▼  protocol-join.yml (SERIALIZED, concurrency join-<instance>)
-                              [join] join.sh: all branches terminal & not joined?
+                              [join] join.py: all branches terminal & not joined?
                                   • all `done`  → aggregate `multi-grumpy` = success (green gate)
                                   • any `failed`→ aggregate `multi-grumpy` = failure (red gate)
                                   flip _instance.yaml joined:true, CAS-push (idempotent)
@@ -1131,7 +1153,9 @@ path, PR #28 sabotage red gate — see `STATUS.md`).
 
 ### 8.11 New tests
 
-`tests/test-join.sh` (join aggregation + idempotency) and
-`tests/test-fanout-e2e.sh` (local end-to-end: fanout start → advance ×2 → join
-success) bring the local suite to **8 files / 147 assertions**, all green
-(the four v1 files plus `test-correlation.sh`, `test-status-comment.sh`, and these two).
+`tests/test_join.py` (join aggregation + idempotency) and
+`tests/test_fanout_e2e.py` (local end-to-end: fanout start → advance ×2 → join
+success) bring the local suite to **154 pytest tests across 8 modules**, all green:
+`test_checks.py` (39), `test_engine.py` (52), `test_runchecks.py` (19),
+`test_publish.py` (13), `test_correlation.py` (6), `test_status_comment.py` (11),
+`test_join.py` (10), and `test_fanout_e2e.py` (4). Run them with `pytest tests/ -q`.

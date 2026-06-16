@@ -8,8 +8,8 @@ end records the multi-agent milestone (both are live-verified).
 
 ## Proven end-to-end (real GitHub Actions)
 
-- Engine: `next.sh` (planner), `advance.sh` (sole state writer + publisher),
-  `lib.sh` (compare-and-swap push to the state branch).
+- Engine: `next.py` (planner), `advance.py` (sole state writer + publisher),
+  `lib.py` (compare-and-swap push to the state branch).
 - Three deterministic checks: `schema-valid`, `rubric-coverage`,
   `traces-exist-in-diff`.
 - Evidence-schema-as-contract (`.github/agent-factory/protocols/grumpy/evidence.schema.json`).
@@ -19,14 +19,15 @@ end records the multi-agent milestone (both are live-verified).
   fast-forward (CAS) push.
 - Two acceptance demos: PR #4/#9 (sabotage → iterate → pass), PR #7 (clean
   negative control); native line-anchored inline review live-verified on PR #21.
-  147 assertions across eight local suites: `test-checks.sh` 34,
-  `test-engine.sh` 53, `test-runchecks.sh` 16, `test-publish.sh` 13,
-  `test-correlation.sh` 6, `test-status-comment.sh` 11, plus the two v2 suites
-  `test-join.sh` 10 and `test-fanout-e2e.sh` 4. Run all: `for t in tests/test-*.sh; do bash "$t"; done`.
+  154 tests across eight pytest modules: `test_checks.py` 39,
+  `test_engine.py` 52, `test_runchecks.py` 19, `test_publish.py` 13,
+  `test_correlation.py` 6, `test_status_comment.py` 11, plus the two v2 modules
+  `test_join.py` 10 and `test_fanout_e2e.py` 4. Run all: `pytest tests/ -q`
+  (shared fixtures live in `tests/conftest.py`).
 
 ## Simplifications declared up front (in the plan)
 
-1. **Agent output is only `evidence.json`.** `advance.sh` derives the PR review
+1. **Agent output is only `evidence.json`.** `advance.py` derives the PR review
    deterministically from checked evidence (any `issues-found` →
    REQUEST_CHANGES, else APPROVE). The spec's alternative — the agent emits
    staged safe-outputs that advance executes — was dropped. Same guarantee
@@ -65,7 +66,7 @@ end records the multi-agent milestone (both are live-verified).
 7. **Model pinned** to `claude-sonnet-4-6` (endpoint-specific).
 8. **Sabotage label read via the PAT** — reading PR labels needs the
    `pull-requests` scope; the default `GITHUB_TOKEN` 403s.
-9. **APPROVE→COMMENT fallback** in `advance.sh` — the repo's "Allow GitHub
+9. **APPROVE→COMMENT fallback** in `advance.py` — the repo's "Allow GitHub
    Actions to approve pull requests" setting is off, so a fully-clean result
    degrades to a COMMENT review instead of APPROVE.
 10. **Accumulating status comment** — added after the demos, at user request:
@@ -82,21 +83,21 @@ end records the multi-agent milestone (both are live-verified).
 
 ## Post-v1 enhancements (added after the demos)
 
-- **Polyglot, data-driven checks.** `engine/run-checks.sh` reads the check list
+- **Polyglot, data-driven checks.** `engine/run-checks.py` reads the check list
   from `protocol.json` (`.states[].checks[]`) and resolves each to an executable
   in any language (`exec` path, or `checks/<name>.*` extension-agnostic). The
-  orchestrator no longer hardcodes the check names. `rubric-coverage` is now
-  Python (`rubric-coverage.py`); `rubric-coverage` AND `traces-exist-in-diff`
-  are now Python, while `schema-valid` stays bash — same ABI. New test suite
-  `tests/test-runchecks.sh` (16 tests) covers resolution and robustness
+  orchestrator no longer hardcodes the check names. The ABI is language-agnostic;
+  here all three checks (`schema-valid.py`, `rubric-coverage.py`,
+  `traces-exist-in-diff.py`) happen to be Python — same ABI. New test module
+  `tests/test_runchecks.py` (19 tests) covers resolution and robustness
   (missing / non-executable / crashing / ambiguous).
 
-- **Merge-gating via a check run.** `advance.sh`/`plan` emit a `grumpy-review`
+- **Merge-gating via a check run.** `advance.py`/`plan` emit a `grumpy-review`
   check run on the PR head SHA reflecting protocol state (in_progress while
   reviewing, `action_required` on changes-requested, `success` on clean,
   `failure` on exhausted). Emitting works on any repo; *blocking* the merge
   requires making `grumpy-review` a required status check in branch protection /
-  rulesets (needs a public repo or a paid plan for private). `lib.sh`
+  rulesets (needs a public repo or a paid plan for private). `lib.py`
   `set_check_run`; engine tests assert the three outcomes.
 
 - **Auto-review on open/push (`pull_request` trigger).** The orchestrator now
@@ -121,13 +122,13 @@ under `.github/agent-factory/engine/` are illustrative comments (cid examples, a
 grumpy's states happen to both be named `review`). The two previously noted
 couplings are gone:
 
-- **Protocol id from data.** `next.sh` and `advance.sh` read the protocol id
-  from `protocol.json` `.name` via `protocol_id()` in `lib.sh`. The check-run
+- **Protocol id from data.** `next.py` and `advance.py` read the protocol id
+  from `protocol.json` `.name` via `protocol_id()` in `lib.py`. The check-run
   name, status-comment headline, and state-path prefix all derive from it.
-- **State path from data.** `lib.sh`'s `state_file` returns
+- **State path from data.** `lib.py`'s `state_file` returns
   `<dir>/<protocol-id>/<instance-key>.yaml` (e.g. `grumpy-review/pr-<N>.yaml`).
 
-**Trigger policy lives in `orchestrator.yml`, not the engine.** `next.sh`
+**Trigger policy lives in `orchestrator.yml`, not the engine.** `next.py`
 accepts a command (`start` / `reset` / `continue`); the orchestrator maps
 GitHub events to commands:
 
@@ -150,8 +151,8 @@ Two intentional v1 behavior divergences (documented, not defects):
 - `start` on Terminal → fresh re-review (prior design: halt).
 - `start` on Active → halt (prior design: resume).
 
-**Publication is a protocol publish hook.** `advance.sh` resolves and calls
-`.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.sh` via
+**Publication is a protocol publish hook.** `advance.py` resolves and calls
+`.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.py` via
 `resolve_executable` (the same mechanism as checks). The hook runs trusted in
 zone 4 (engine-post) holding the publish token; it is not a sandboxed check.
 
@@ -191,8 +192,8 @@ and built so the v1 single-agent path stays byte-identical (the regression guard
 
 ## What shipped
 
-- **The `BRANCH` engine seam.** `next.sh`, `run-checks.sh`, and
-  `advance.sh` all read a `BRANCH` env var (`lib.sh` provides the branch-aware
+- **The `BRANCH` engine seam.** `next.py`, `run-checks.py`, and
+  `advance.py` all read a `BRANCH` env var (`lib.py` provides the branch-aware
   `state_file`/`instance_file` helpers they pass it to). **Empty/unset = the original v1
   single-agent grumpy path, byte-identical** (this is the regression guard —
   the whole v1 suite still passes unchanged). **Set = operate on one fan-out
@@ -235,22 +236,22 @@ and built so the v1 single-agent path stays byte-identical (the regression guard
 
 - **Three check-runs.** Two informational per-branch runs `multi-grumpy/grumpy`
   and `multi-grumpy/security`, plus the aggregate `multi-grumpy` — the **required
-  gating check**. `plan` marks the aggregate `in_progress`; `join.sh` completes
+  gating check**. `plan` marks the aggregate `in_progress`; `join.py` completes
   it (success iff all branches `done`, else failure).
 
-- **`join.sh`** (new engine script). Reads every branch state file; once all are
+- **`join.py`** (new engine script). Reads every branch state file; once all are
   terminal and `_instance.yaml` is not yet joined, sets the aggregate check-run,
   renders the status comment, flips `joined`, and CAS-pushes. **Idempotent.** It
   runs in a dedicated **serialized** workflow `.github/workflows/protocol-join.yml`
   (concurrency `join-<instance>`, `cancel-in-progress: false`), fired by a
-  `repository_dispatch: protocol-join` that `advance.sh` emits whenever a branch
-  reaches a terminal state. `advance.sh` also now carries `client_payload[branch]`
+  `repository_dispatch: protocol-join` that `advance.py` emits whenever a branch
+  reaches a terminal state. `advance.py` also now carries `client_payload[branch]`
   on its `protocol-continue` iterate dispatch.
 
 - **Orchestrator = branch matrix.** `.github/workflows/orchestrator.yml` was
-  rewritten. `plan` runs `next.sh` **unbranched** for `pull_request`/`issue_comment`
+  rewritten. `plan` runs `next.py` **unbranched** for `pull_request`/`issue_comment`
   (→ action `run-fanout`, `branches=[grumpy,security]`) and **branched**
-  (`BRANCH=<payload.branch> next.sh … continue`) for `repository_dispatch:
+  (`BRANCH=<payload.branch> next.py … continue`) for `repository_dispatch:
   protocol-continue` (→ one branch). `dispatch`/`checks`/`advance` are a
   `strategy.matrix.branch` (`fail-fast: false`), gated `if: needs.plan.outputs.branches
   != '[]'`. **Per-branch data (agent run-id, verdicts) flows between the matrixed
@@ -269,11 +270,11 @@ and built so the v1 single-agent path stays byte-identical (the regression guard
   then self-recover). The orchestrator's sabotage step now reports the label
   regardless of iteration; each agent self-decides what to do with it.
 
-- **New tests.** `tests/test-join.sh` (join aggregation + idempotency) and
-  `tests/test-fanout-e2e.sh` (local end-to-end: fanout start → advance ×2 → join
-  success). The full local suite is now **8 files / 147 assertions, all green**
-  (the four v1 files — `test-checks.sh`, `test-engine.sh`, `test-runchecks.sh`,
-  `test-publish.sh` — plus `test-correlation.sh`, `test-status-comment.sh`, and
+- **New tests.** `tests/test_join.py` (join aggregation + idempotency) and
+  `tests/test_fanout_e2e.py` (local end-to-end: fanout start → advance ×2 → join
+  success). The full local suite is now **8 modules / 154 tests, all green**
+  (the four v1 modules — `test_checks.py`, `test_engine.py`, `test_runchecks.py`,
+  `test_publish.py` — plus `test_correlation.py`, `test_status_comment.py`, and
   these two).
 
 ## Live verification
@@ -318,7 +319,7 @@ T0". The `dispatch` job mints a unique correlation id per dispatch
 (`<orchestrator_run_id>-<run_attempt>-<branch>`), threads it to the agent via
 `aw_context`, and the agent stamps it into its `run-name` (so it appears in the
 run's `displayTitle`). The resolver selects the run whose displayTitle carries
-the delimited token `cid:[<cid>]` (`match_run_by_cid` in `lib.sh`), and **fails
+the delimited token `cid:[<cid>]` (`match_run_by_cid` in `lib.py`), and **fails
 loudly** if no run matches — never falling back to a recency heuristic. This makes
 **concurrent PRs of the same workflow** safe: each PR resolves only its own run.
 
