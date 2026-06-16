@@ -28,8 +28,8 @@ the PoC is live-verified one PR at a time.
   it to the `aw_context` JSON.
 - Each agent `.md` sets `run-name: "<Agent> · cid:[${{ fromJSON(... aw_context).cid }}]"`;
   `gh aw compile` bakes it into the lock, so the cid lands in the run's displayTitle.
-- The resolver matches `cid:[<cid>]` via `match_run_by_cid` (`lib.sh`, unit-tested
-  in `tests/test-correlation.sh`) and fails loudly on no match — no heuristic fallback.
+- The resolver matches `cid:[<cid>]` via `match_run_by_cid` (`lib.py`, unit-tested
+  in `tests/test_correlation.py`) and fails loudly on no match — no heuristic fallback.
 
 **Status:** DONE — live-verified on concurrent PRs #48 + #49 (each `dispatch`
 resolved its own cid'd run; zero cross-contamination; both aggregate checks
@@ -56,7 +56,7 @@ existence; runs are heartbeats" model — a protocol can sit gated for weeks.
   orchestrator, per the command seam — to a `resolve-gate` command that records
   the decision and outcome in the state file and advances (or halts) accordingly.
 - Reuse the existing trust-zone split: the human's input is an *event* (a
-  wake-up), and `advance.sh` remains the sole state writer.
+  wake-up), and `advance.py` remains the sole state writer.
 
 **Status:** not started — the designated v4 milestone.
 
@@ -68,7 +68,7 @@ existence; runs are heartbeats" model — a protocol can sit gated for weeks.
 only the immediately-preceding iteration's feedback (today's behavior) or the
 cumulative feedback across all prior iterations.
 
-**Why:** Today `next.sh` injects `history[-1].feedback`, so iteration N only sees
+**Why:** Today `next.py` injects `history[-1].feedback`, so iteration N only sees
 iteration N-1's rejection reasons. For longer or stricter protocols it can help
 the agent to see the full history ("you've now failed coverage twice for the
 same cell"), at the cost of a longer prompt.
@@ -77,12 +77,12 @@ same cell"), at the cost of a longer prompt.
 - Add a protocol option, e.g. top-level or on the agent state in
   `protocol.json`: `"feedback_scope": "last" | "cumulative"` (default `"last"`).
   Optionally a `"feedback_window": N` for "last N iterations".
-- In `next.sh`, when emitting feedback on resume:
+- In `next.py`, when emitting feedback on resume:
   - `last` → `.history[-1].feedback` (current).
   - `cumulative` → join non-empty feedback across history, labelled by
     iteration, e.g. `"iter 1: …; iter 2: …"`.
 - Keep the empty-history guard. Cumulative output can grow; consider a sane cap.
-- Tests: extend `tests/test-engine.sh` next.sh cases to assert each mode.
+- Tests: extend `tests/test_engine.py` next.py cases to assert each mode.
 
 **Status:** not started. Requested 2026-06-11.
 
@@ -98,13 +98,13 @@ degrading to a `COMMENT`.
 authors from reviewing their own PR. But the bot can't submit `APPROVE` unless
 the repo setting *Settings → Actions → General → "Allow GitHub Actions to create
 and approve pull requests"* is enabled (off by default, off here — it's a
-guardrail against automation self-approving/merging). So `advance.sh` falls back
+guardrail against automation self-approving/merging). So `advance.py` falls back
 APPROVE→COMMENT. `REQUEST_CHANGES` and `COMMENT` are not gated, so only the
 all-clean path is affected.
 
 **Options (pick per deployment):**
 1. **Enable the repo setting** (`can_approve_pull_request_reviews=true`). Simplest;
-   then `advance.sh` submits `APPROVE` and the fallback never fires. It is a
+   then `advance.py` submits `APPROVE` and the fallback never fires. It is a
    repo-wide security-control change, so it must be a deliberate owner decision.
 2. **Publish under a dedicated identity** — a GitHub App or a separate bot
    account that is *not* the PR author and is permitted to approve. More
@@ -122,7 +122,7 @@ Keep the COMMENT fallback regardless, as the safe default when neither is set up
 **What:** Configure branch protection / a ruleset so the `grumpy-review` check
 run actually *blocks* merges, not just shows red.
 
-**Why deferred:** The producer side is done — `advance.sh`/`plan` emit the
+**Why deferred:** The producer side is done — `advance.py`/`plan` emit the
 `grumpy-review` check on the PR head SHA (in_progress → failure on
 changes-requested → success on clean), verified live on PR #15. What's left is a
 one-time GitHub *config* step, deferred so it's a deliberate choice (turning it
