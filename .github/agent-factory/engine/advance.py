@@ -420,14 +420,19 @@ def main():
         )
         lib.cas_push(dir_, f"{instance}: iteration {iter_} failed checks → iteration {next_iter}")
 
-        # Re-dispatch
-        gh_api(
+        # Re-dispatch. Carry `phase` so a multi-phase agent/fan-out phase resumes
+        # in the SAME phase on re-entry (the orchestrator relays payload.phase ->
+        # PHASE). Empty/absent for single-phase protocols → byte-identical payload.
+        redispatch = [
             f"repos/{github_repository}/dispatches",
             "-f", "event_type=protocol-continue",
             "-F", f"client_payload[protocol]={pid}",
             "-F", f"client_payload[instance]={instance}",
             "-F", f"client_payload[branch]={branch}",
-        )
+        ]
+        if phase:
+            redispatch += ["-F", f"client_payload[phase]={phase}"]
+        gh_api(*redispatch)
 
     else:  # process == "failed"
         # Exhausted
