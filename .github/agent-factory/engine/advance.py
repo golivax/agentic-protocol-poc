@@ -115,6 +115,33 @@ def run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid
     return {"conclusion": "neutral", "summary": "publish hook returned no verdict"}
 
 
+def run_conclude_hook(proto_path, proto, state_id, evid, instance, blocking):
+    """Resolve+run the optional `conclude` hook for an agent state. Returns
+    {conclusion,summary,blocked} or None if the state declares none. Trusted
+    (zone 4). Receives BLOCKING via env."""
+    state = lib.state_by_id(proto, state_id)
+    action = (state or {}).get("conclude") or None
+    if not action:
+        return None
+    pdir = os.path.dirname(os.path.abspath(proto_path))
+    res = lib.resolve_executable(f"{pdir}/publish", action, pdir, "")
+    kind, path = res.split("\t", 1)
+    if kind == "ERR" or not os.access(path, os.X_OK):
+        sys.stderr.write(f"[advance] conclude hook unresolved/not-exec: {path}\n")
+        return {"conclusion": "neutral", "summary": "conclude hook unresolved", "blocked": False}
+    env = dict(os.environ)
+    env["BLOCKING"] = "1" if blocking else "0"
+    result = subprocess.run([path, evid, instance], text=True,
+                            stdout=subprocess.PIPE, env=env)
+    try:
+        parsed = json.loads(result.stdout.strip())
+        if isinstance(parsed, dict) and "blocked" in parsed:
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return {"conclusion": "neutral", "summary": "conclude hook returned no verdict", "blocked": False}
+
+
 def render_status_body(sf, headline, pid, instance, max_iter, github_repository):
     """Render the status-comment body as a projection of state.history.
     Byte-identical to the bash render_status_body function."""
@@ -166,6 +193,7 @@ def main():
     evid = sys.argv[5]
 
     branch = os.environ.get("BRANCH", "")
+    phase = os.environ.get("PHASE", "")
     pr = os.environ.get("PR", instance)
     agent_run_id = os.environ.get("AGENT_RUN_ID", "unknown")
     github_repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -176,8 +204,34 @@ def main():
 
     pid = lib.protocol_id(proto_path)
 
-    # Resolve agent_state and max_iterations
-    if branch:
+    # NOTE: this PHASE/branch agent-unit resolution mirrors next.py's. The two
+    # should be extracted into a shared lib.resolve_agent_unit() in M2b (deferred
+    # to avoid touching the byte-identical legacy branches this milestone).
+
+    # Resolve agent_state and max_iterations. PHASE-first (multi-phase), mirroring
+    # next.py: find the phase state by id; if fanout, resolve the branch within it;
+    # else the phase itself is the agent unit. The elif/else branches are the v1/v2
+    # regression baseline and must stay byte-identical to the pre-multiphase code.
+    if phase:
+        phase_state = lib.state_by_id(proto, phase)
+        if phase_state and phase_state.get("kind") == "fanout":
+            agent_state = branch
+            max_iter = None
+            found = False
+            for b in phase_state.get("branches", []):
+                if b["id"] == branch:
+                    max_iter = b.get("max_iterations")
+                    found = True
+                    break
+            if not found:
+                sys.stderr.write(f"[advance] no branch '{branch}' in fanout phase '{phase}'\n")
+                sys.exit(1)
+            life_state = phase
+        else:
+            agent_state = phase
+            max_iter = phase_state.get("max_iterations") if phase_state else None
+            life_state = phase
+    elif branch:
         agent_state = branch
         max_iter = None
         for state in proto.get("states", []):
@@ -210,8 +264,14 @@ def main():
         life_state = agent_state
 
     # State file and check-run name
-    sf = lib.state_file(dir_, pid, instance, branch)
-    if branch:
+    sf = lib.state_file(dir_, pid, instance,
+                        branch=(branch if branch else None),
+                        phase=(phase if phase else None))
+    if phase and branch:
+        cr_name = f"{pid}/{phase}/{branch}"
+    elif phase:
+        cr_name = f"{pid}/{phase}"
+    elif branch:
         cr_name = f"{pid}/{branch}"
     else:
         cr_name = pid
@@ -245,7 +305,7 @@ def main():
     # DECIDE: the process axis (iterate/done/failed) is a pure fold over the
     # verdicts + their on_fail severities. `blocking` (a block-severity fail)
     # has no consumer in M1 — the M2 phase-gate will read it.
-    process, _blocking = lib.decide(results, iterations_remaining=(iter_ < max_iter))
+    process, blocking = lib.decide(results, iterations_remaining=(iter_ < max_iter))
 
     # Feedback fed back to the agent: only iterate-severity failures, since the
     # agent cannot fix advisory/block facts by re-running. Defaulting on_fail to
@@ -280,23 +340,67 @@ def main():
 
     # Branch: mutate state → publish/side-effects → status-comment → cas_push → dispatch
     if process == "done":
-        # Mark done
+        # Mark this phase/unit done.
         state_data = lib.load_yaml(sf)
         state_data["state"] = "done"
         lib.dump_yaml(sf, state_data)
 
-        hook = run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid)
-        concl = hook.get("conclusion", "neutral")
-        csum = hook.get("summary", "")
+        this_state = lib.state_by_id(proto, agent_state)
+        is_agent_phase = phase and this_state and this_state.get("kind") == "agent"
+        conclude = run_conclude_hook(proto_path, proto, agent_state, evid, instance, blocking) if is_agent_phase else None
 
-        lib.set_check_run(cr_name, sha, "completed", concl, "Review complete", csum)
-        update_status_comment(
-            sf, inf, branch, pr, pid, instance, proto_path, dir_,
-            "✅ done — published.",
-            max_iter, github_repository
-        )
-        lib.cas_push(dir_, f"{instance}: checks passed at iteration {iter_} → published, done")
-        fire_join(pid, instance, branch)
+        # Always run publish for side-effects (e.g. post the review). For an agent
+        # phase with a `conclude` hook, conclude overrides only the verdict axis
+        # (conclusion/summary); publish still fires.
+        hook = run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid)
+        if conclude is not None:
+            concl = conclude.get("conclusion", "neutral")
+            csum = conclude.get("summary", "")
+        else:
+            concl = hook.get("conclusion", "neutral")
+            csum = hook.get("summary", "")
+
+        if is_agent_phase and conclude is not None and conclude.get("blocked") and (this_state.get("on_blocked") == "halt"):
+            # GATE BLOCKED → terminate the pipeline before the next phase.
+            state_data = lib.load_yaml(sf)
+            state_data["state"] = "failed"
+            lib.dump_yaml(sf, state_data)
+            lib.set_check_run(pid, sha, "completed", "failure", "Gate blocked",
+                              csum or "A required gate did not pass; pipeline halted.")
+            lib.set_check_run(cr_name, sha, "completed", "failure", "Gate blocked", csum)
+            lib.cas_push(dir_, f"{instance}: phase {phase} blocked → pipeline halted")
+        elif is_agent_phase:
+            # GATE CLEAR → advance the cursor and launch the next phase.
+            nxt = lib.next_phase_id(proto, agent_state)
+            lib.set_check_run(cr_name, sha, "completed",
+                              "success" if concl != "blocked" else "failure",
+                              "Gate complete", csum)
+            inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+            if nxt:
+                inst["phase"] = nxt
+                lib.dump_yaml(inf, inst)
+                lib.cas_push(dir_, f"{instance}: phase {phase} clear → advancing to {nxt}")
+                gh_api(
+                    f"repos/{github_repository}/dispatches",
+                    "-f", "event_type=protocol-advance",
+                    "-F", f"client_payload[protocol]={pid}",
+                    "-F", f"client_payload[instance]={instance}",
+                    "-F", f"client_payload[phase]={nxt}",
+                )
+            else:
+                # No further phase → close the pipeline-level (aggregate) check-run.
+                lib.set_check_run(pid, sha, "completed", "success", "Complete", csum)
+                lib.cas_push(dir_, f"{instance}: phase {phase} clear → done (no further phase)")
+        else:
+            # Single-agent or fan-out leg → today's behavior unchanged.
+            lib.set_check_run(cr_name, sha, "completed", concl, "Review complete", csum)
+            update_status_comment(
+                sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                "✅ done — published.",
+                max_iter, github_repository
+            )
+            lib.cas_push(dir_, f"{instance}: checks passed at iteration {iter_} → published, done")
+            fire_join(pid, instance, branch)
 
     elif process == "iterate":
         next_iter = iter_ + 1

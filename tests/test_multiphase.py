@@ -234,3 +234,53 @@ def test_phase_continue_terminal_halts(tmp_path, engine_env):
     r = run_next(work2, "pr-1", MINI, "continue", engine_env, phase="gate")
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["action"] == "halt"
+
+
+def run_advance(work_dir, instance, proto, verdicts_path, evidence_path, env,
+                phase="", branch=""):
+    e = dict(env)
+    e["PHASE"] = phase
+    e["BRANCH"] = branch
+    r = subprocess.run(
+        ["python3", str(ENGINE / "advance.py"), str(work_dir), instance, str(proto),
+         str(verdicts_path), str(evidence_path)],
+        text=True, capture_output=True, env=e,
+    )
+    return r
+
+
+def _verdicts_pass(p):
+    p.write_text(json.dumps({"results": [{"check": "always-pass", "pass": True,
+                                          "feedback": "", "on_fail": "iterate"}]}))
+    return p
+
+
+def test_agent_phase_clear_advances_cursor_and_fires_protocol_advance(tmp_path, engine_env):
+    # `start` seeds + pushes the gate state to origin; advance re-clones into a
+    # fresh dir (state_checkout always clones, mirroring the plan/advance job split).
+    run_next(tmp_path / "state1", "pr-1", MINI, "start", engine_env, head="abc")
+    work = tmp_path / "state2"
+    v = _verdicts_pass(tmp_path / "v.json")
+    ev = tmp_path / "ev.json"; ev.write_text(json.dumps({"gate": "clear"}))
+    r = run_advance(work, "pr-1", MINI, v, ev, engine_env, phase="gate")
+    assert r.returncode == 0, r.stderr
+    inst = lib.load_yaml(str(work) + "/pipeline-mini/pr-1/_instance.yaml")
+    assert inst["phase"] == "work"
+    gate = lib.load_yaml(str(work) + "/pipeline-mini/pr-1/gate.yaml")
+    assert gate["state"] == "done"
+    assert "protocol-advance" in r.stderr
+    assert "work" in r.stderr  # the next phase named in the dispatch intent
+
+
+def test_agent_phase_blocked_halts_pipeline(tmp_path, engine_env):
+    run_next(tmp_path / "state1", "pr-1", MINI, "start", engine_env, head="abc")
+    work = tmp_path / "state2"
+    v = _verdicts_pass(tmp_path / "v.json")
+    ev = tmp_path / "ev.json"; ev.write_text(json.dumps({"gate": "blocked"}))
+    r = run_advance(work, "pr-1", MINI, v, ev, engine_env, phase="gate")
+    assert r.returncode == 0, r.stderr
+    gate = lib.load_yaml(str(work) + "/pipeline-mini/pr-1/gate.yaml")
+    assert gate["state"] == "failed"
+    inst = lib.load_yaml(str(work) + "/pipeline-mini/pr-1/_instance.yaml")
+    assert inst["phase"] == "gate"
+    assert "protocol-advance" not in r.stderr
