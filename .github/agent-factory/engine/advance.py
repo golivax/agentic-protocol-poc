@@ -204,64 +204,25 @@ def main():
 
     pid = lib.protocol_id(proto_path)
 
-    # NOTE: this PHASE/branch agent-unit resolution mirrors next.py's. The two
-    # should be extracted into a shared lib.resolve_agent_unit() in M2b (deferred
-    # to avoid touching the byte-identical legacy branches this milestone).
-
-    # Resolve agent_state and max_iterations. PHASE-first (multi-phase), mirroring
-    # next.py: find the phase state by id; if fanout, resolve the branch within it;
-    # else the phase itself is the agent unit. The elif/else branches are the v1/v2
-    # regression baseline and must stay byte-identical to the pre-multiphase code.
-    if phase:
-        phase_state = lib.state_by_id(proto, phase)
-        if phase_state and phase_state.get("kind") == "fanout":
-            agent_state = branch
-            max_iter = None
-            found = False
-            for b in phase_state.get("branches", []):
-                if b["id"] == branch:
-                    max_iter = b.get("max_iterations")
-                    found = True
-                    break
-            if not found:
-                sys.stderr.write(f"[advance] no branch '{branch}' in fanout phase '{phase}'\n")
-                sys.exit(1)
-            life_state = phase
+    # Resolve the agent unit (agent_state, max_iterations, life_state) via the
+    # shared ladder. Error messages mapped back to the original advance.py / engine
+    # prefixes. The "no branch in fanout phase" message keeps its [advance] prefix
+    # and "fanout phase" wording to preserve the original advance.py error text.
+    try:
+        _unit = lib.resolve_agent_unit(proto, phase, branch)
+    except ValueError as e:
+        _msg = str(e)
+        if "in phase '" in _msg:
+            # "no branch '<b>' in phase '<p>'" → [advance] prefix + "fanout phase" wording
+            sys.stderr.write(f"[advance] no branch '{branch}' in fanout phase '{phase}'\n")
+        elif _msg.startswith("no phase") or _msg.startswith("PHASE="):
+            sys.stderr.write(f"[advance] {_msg}\n")
         else:
-            agent_state = phase
-            max_iter = phase_state.get("max_iterations") if phase_state else None
-            life_state = phase
-    elif branch:
-        agent_state = branch
-        max_iter = None
-        for state in proto.get("states", []):
-            if state.get("kind") == "fanout":
-                for b in state.get("branches", []):
-                    if b["id"] == branch:
-                        max_iter = b.get("max_iterations")
-                        break
-                break
-        # LIFE_STATE: the owning fan-out state's id
-        life_state = None
-        for state in proto.get("states", []):
-            if state.get("kind") == "fanout":
-                life_state = state["id"]
-                break
-    else:
-        agent_state = None
-        for state in proto.get("states", []):
-            if state.get("kind") == "agent":
-                agent_state = state["id"]
-                break
-        if not agent_state:
-            sys.stderr.write("[engine] protocol has no agent state\n")
-            sys.exit(1)
-        max_iter = None
-        for state in proto.get("states", []):
-            if state.get("id") == agent_state:
-                max_iter = state.get("max_iterations")
-                break
-        life_state = agent_state
+            sys.stderr.write(f"[engine] {_msg}\n")
+        sys.exit(1)
+    agent_state = _unit["agent_state"]
+    max_iter = _unit["max_iterations"]
+    life_state = _unit["life_state"]
 
     # State file and check-run name
     sf = lib.state_file(dir_, pid, instance,

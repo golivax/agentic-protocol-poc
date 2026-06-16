@@ -169,79 +169,26 @@ if not BRANCH and is_fanout() and not PHASE:
         sys.stderr.write(f"[next] unknown command: {COMMAND}\n")
         sys.exit(2)
 
-# The "agent unit" (its id + max_iterations) comes from a fan-out BRANCH when
-# BRANCH is set, else from the single-agent state. Single-agent path is the
-# regression-guarded baseline and must stay byte-for-byte identical.
-# Multi-phase: when PHASE is set, the agent unit is looked up inside that phase.
-if PHASE:
-    phase_state = lib.state_by_id(proto_data, PHASE)
-    if not phase_state:
-        sys.stderr.write(f"[next] no phase '{PHASE}' in protocol\n")
-        sys.exit(1)
-    if phase_state.get("kind") == "fanout":
-        if not BRANCH:
-            sys.stderr.write(f"[next] PHASE='{PHASE}' is a fanout phase but BRANCH is empty\n")
-            sys.exit(1)
-        AGENT_STATE = None
-        MAX = None
-        for b in phase_state.get("branches", []):
-            if b["id"] == BRANCH:
-                AGENT_STATE = b["id"]
-                MAX = b.get("max_iterations")
-                break
-        if not AGENT_STATE:
-            sys.stderr.write(f"[next] no branch '{BRANCH}' in phase '{PHASE}'\n")
-            sys.exit(1)
+# The "agent unit" (its id + max_iterations + life_state) comes from
+# lib.resolve_agent_unit: PHASE-first → BRANCH → single-agent.
+# Single-agent path is the regression-guarded baseline and must stay byte-for-byte
+# identical. Error messages are mapped back to the original next.py / engine prefixes.
+try:
+    _unit = lib.resolve_agent_unit(proto_data, PHASE, BRANCH)
+except ValueError as e:
+    _msg = str(e)
+    if _msg.startswith("no phase") or _msg.startswith("PHASE=") or "in phase '" in _msg:
+        sys.stderr.write(f"[next] {_msg}\n")
     else:
-        AGENT_STATE = PHASE
-        MAX = phase_state.get("max_iterations")
-elif BRANCH:
-    AGENT_STATE = None
-    MAX = None
-    for s in proto_data.get("states", []):
-        if s.get("kind") == "fanout":
-            for b in s.get("branches", []):
-                if b["id"] == BRANCH:
-                    AGENT_STATE = b["id"]
-                    MAX = b.get("max_iterations")
-                    break
-    if not AGENT_STATE:
-        sys.stderr.write(f"[engine] no branch '{BRANCH}' in protocol\n")
-        sys.exit(1)
-else:
-    AGENT_STATE = None
-    MAX = None
-    for s in proto_data.get("states", []):
-        if s.get("kind") == "agent":
-            AGENT_STATE = s["id"]
-            MAX = s.get("max_iterations")
-            break
-    if not AGENT_STATE:
-        sys.stderr.write("[engine] protocol has no agent state\n")
-        sys.exit(1)
+        sys.stderr.write(f"[engine] {_msg}\n")
+    sys.exit(1)
+AGENT_STATE = _unit["agent_state"]
+MAX = _unit["max_iterations"]
+LIFE_STATE = _unit["life_state"]
 
 if MAX is None:
     sys.stderr.write(f"[engine] agent unit '{AGENT_STATE}' has no max_iterations\n")
     sys.exit(1)
-
-# LIFE_STATE is the value a live state file's .state carries while the agent unit
-# is in flight, and is what both write_fresh_state stamps and the lifecycle check
-# compares against. Single-agent: the agent state id. Fan-out branch: the owning
-# fan-out state's id (a branch's per-branch file records the fan-out state, not the
-# branch id). For grumpy these are both "review", so the single-agent path is
-# byte-for-byte unchanged.
-# Multi-phase: the live state value is the phase id itself — seed_and_dispatch_phase
-# stamps state=<phase_id> into the agent phase file AND each fanout branch file.
-if PHASE:
-    LIFE_STATE = PHASE
-elif BRANCH:
-    LIFE_STATE = None
-    for s in proto_data.get("states", []):
-        if s.get("kind") == "fanout":
-            LIFE_STATE = s["id"]
-            break
-else:
-    LIFE_STATE = AGENT_STATE
 
 # BRANCH/PHASE empty → single-agent path (branch=None, phase=None)
 SF = lib.state_file(DIR, PID, INSTANCE,
