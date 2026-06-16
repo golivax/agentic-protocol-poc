@@ -85,3 +85,47 @@ def test_next_phase_id_unknown_is_none():
 def test_state_by_id():
     assert lib.state_by_id(load(MINI), "join")["kind"] == "join"
     assert lib.state_by_id(load(MINI), "missing") is None
+
+
+# --- fixture stub sanity (the engine resolves+runs these) ---
+
+MINI_DIR = FIXTURES / "pipeline-mini"
+
+
+def _run(path, *args, env_extra=None):
+    env = dict(os.environ)
+    if env_extra:
+        env.update(env_extra)
+    return subprocess.run([str(path), *args], text=True, capture_output=True, env=env)
+
+
+def test_always_pass_check_abi():
+    r = _run(MINI_DIR / "checks/always-pass.py", "ev", "diff", "files")
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out == {"check": "always-pass", "pass": True, "feedback": ""}
+
+
+def test_conclude_gate_clear_by_default(tmp_path):
+    ev = tmp_path / "ev.json"
+    ev.write_text(json.dumps({"gate": "clear"}))
+    r = _run(MINI_DIR / "publish/conclude-gate.py", str(ev), "pr-1",
+             env_extra={"BLOCKING": "0", "ENGINE_LOCAL": "1"})
+    out = json.loads(r.stdout)
+    assert out["blocked"] is False and out["conclusion"] and out["summary"]
+
+
+def test_conclude_gate_blocked_by_evidence(tmp_path):
+    ev = tmp_path / "ev.json"
+    ev.write_text(json.dumps({"gate": "blocked"}))
+    r = _run(MINI_DIR / "publish/conclude-gate.py", str(ev), "pr-1",
+             env_extra={"BLOCKING": "0", "ENGINE_LOCAL": "1"})
+    assert json.loads(r.stdout)["blocked"] is True
+
+
+def test_conclude_gate_blocked_by_env(tmp_path):
+    ev = tmp_path / "ev.json"
+    ev.write_text(json.dumps({"gate": "clear"}))
+    r = _run(MINI_DIR / "publish/conclude-gate.py", str(ev), "pr-1",
+             env_extra={"BLOCKING": "1", "ENGINE_LOCAL": "1"})
+    assert json.loads(r.stdout)["blocked"] is True
