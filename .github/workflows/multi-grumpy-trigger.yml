@@ -18,8 +18,19 @@ on:
   repository_dispatch:
     types: [protocol-continue, protocol-advance]   # protocol-join is owned by protocol-join.yml
 
+# The calling job's permissions are the CEILING for the reusable engine: a
+# called workflow cannot request more than the caller grants (else GitHub fails
+# the run at startup). So grant the UNION of what the engine's jobs need —
+# plan/advance: issues+pull-requests+checks write; checks: actions+pull-requests
+# read. The engine's per-job `permissions:` then scope down within this ceiling.
+# (State writes use the POC_DISPATCH_TOKEN PAT, not GITHUB_TOKEN, so contents
+# stays read.)
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
+  checks: write
+  actions: read
 
 concurrency:
   # Scope by instance AND branch (empty for entry events / agent phases): a fan-out
