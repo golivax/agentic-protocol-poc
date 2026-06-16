@@ -74,6 +74,55 @@ def is_multiphase(protocol):
     return len(phase_states(protocol)) > 1
 
 
+def match_trigger(protocol, event_name, action="", comment_body=""):
+    """Map an ENTRY GitHub event to an engine command via protocol["triggers"].
+    Returns the command ("start"/"reset"/...) or "" if nothing matches (the
+    workflow then no-ops). Internal re-entry dispatches (protocol-continue /
+    protocol-advance / protocol-join) are generic and NOT handled here."""
+    for t in protocol.get("triggers", []):
+        if t.get("on") != event_name:
+            continue
+        if event_name == "issue_comment":
+            prefix = t.get("comment_prefix", "")
+            if not prefix or comment_body.startswith(prefix):
+                return t.get("command", "")
+        elif event_name == "pull_request":
+            actions = t.get("actions", [])
+            if not actions or action in actions:
+                return t.get("command", "")
+        else:
+            # generic event (e.g. workflow_dispatch): match on `on` alone.
+            return t.get("command", "")
+    return ""
+
+
+def agent_workflow(protocol, phase="", branch=""):
+    """Resolve the gh-aw agent workflow basename for a leg.
+    phase set + fanout phase -> that branch's workflow;
+    phase set + agent phase  -> the phase state's workflow;
+    branch only (single-phase fanout) -> that branch's workflow;
+    neither -> the first agent state's workflow. "" if unresolved."""
+    if phase:
+        st = state_by_id(protocol, phase)
+        if st and st.get("kind") == "fanout":
+            for b in st.get("branches", []):
+                if b["id"] == branch:
+                    return b.get("workflow", "")
+            return ""
+        return (st or {}).get("workflow", "")
+    if branch:
+        for st in protocol.get("states", []):
+            if st.get("kind") == "fanout":
+                for b in st.get("branches", []):
+                    if b["id"] == branch:
+                        return b.get("workflow", "")
+        return ""
+    for st in protocol.get("states", []):
+        if st.get("kind") == "agent":
+            return st.get("workflow", "")
+    return ""
+
+
 def next_phase_id(protocol, phase_id):
     """The next PHASE (agent|fanout state) reached by following `.next` from
     phase_id. Returns None if `.next` is absent or is not itself a phase
@@ -414,6 +463,21 @@ def _cli(argv):
     elif cmd == "ensure-status-comment":
         # ensure-status-comment <state_dir> <pid> <instance> <protocol.json> <pr>
         ensure_status_comment(args[0], args[1], args[2], args[3], args[4])
+    elif cmd == "match-trigger":
+        # match-trigger <protocol.json> <event_name> <action> <comment_body>
+        with open(args[0]) as f:
+            proto = json.load(f)
+        ev = args[1] if len(args) > 1 else ""
+        act = args[2] if len(args) > 2 else ""
+        body = args[3] if len(args) > 3 else ""
+        print(match_trigger(proto, ev, act, body))
+    elif cmd == "agent-workflow":
+        # agent-workflow <protocol.json> <phase> <branch>
+        with open(args[0]) as f:
+            proto = json.load(f)
+        ph = args[1] if len(args) > 1 else ""
+        br = args[2] if len(args) > 2 else ""
+        print(agent_workflow(proto, ph, br))
     else:
         sys.stderr.write(f"lib.py: unknown subcommand {cmd}\n")
         sys.exit(2)
