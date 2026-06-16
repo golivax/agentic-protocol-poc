@@ -3,6 +3,13 @@ name: multi-grumpy
 # reusable workflow_call workflow cannot declare itself) and hands off to the
 # generic engine. The engine derives the command from the event via this
 # protocol's `triggers` block; the only protocol-specific value here is the path.
+#
+# run-name + concurrency live HERE (the caller), not in the reusable engine:
+# both must use the SAME instance expression so a repository_dispatch
+# (client_payload.instance="pr-N") and a pull_request (number N) label the same
+# logical instance — GHA has no top-level anchors, keep them in sync.
+run-name: "multi-grumpy · ${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}"
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -13,6 +20,13 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  # Scope by instance AND branch (empty for entry events / agent phases): a fan-out
+  # iterates each branch via its own protocol-continue; an instance-only group would
+  # let one queued branch-continue evict another, stranding a branch mid-review.
+  group: multi-grumpy-${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}-${{ github.event.client_payload.branch }}
+  cancel-in-progress: false
 
 jobs:
   engine:

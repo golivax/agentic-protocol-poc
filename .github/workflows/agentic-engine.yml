@@ -1,10 +1,13 @@
 name: Agentic Engine
 # Reusable, protocol-agnostic engine. A per-protocol trigger shim declares the
 # real `on:` triggers and calls this workflow with the protocol.json path.
-# run-name + concurrency use the SAME instance expression so a repository_dispatch
-# (client_payload.instance="pr-N") and a pull_request (number N) label the same
-# logical instance. GHA has no top-level anchors — keep them in sync.
-run-name: "${{ inputs.protocol }} · ${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}"
+#
+# run-name + concurrency are owned by the CALLER (the shim), not here: a
+# workflow_call workflow cannot reliably reference `inputs` in workflow-level
+# run-name/concurrency (it causes a startup_failure), and the run's identity +
+# serialization are properly the triggering workflow's concern. The shim sets a
+# concurrency group keyed by instance+branch so each fan-out branch's
+# protocol-continue serializes independently.
 
 on:
   workflow_call:
@@ -16,13 +19,6 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  # Scope by instance AND branch (empty for entry events / agent phases): a fan-out
-  # iterates each branch via its own protocol-continue; an instance-only group would
-  # let one queued branch-continue evict another, stranding a branch mid-review.
-  group: engine-${{ inputs.protocol }}-${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}-${{ github.event.client_payload.branch }}
-  cancel-in-progress: false
 
 jobs:
   # ── Zone 1: engine-pre. Holds the state PAT; never runs agent code. ──
