@@ -26,8 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib
 
 
-def fail_verdict(name, feedback):
-    return {"check": name, "pass": False, "feedback": feedback}
+def fail_verdict(name, feedback, on_fail="iterate"):
+    return {"check": name, "pass": False, "feedback": feedback, "on_fail": on_fail}
 
 
 def main():
@@ -74,13 +74,14 @@ def main():
     for entry in checks_list:
         name = entry.get("run", "")
         ex = entry.get("exec", "") or ""
+        on_fail = entry.get("on_fail", "iterate")
 
         # Resolve the check executable
         res = lib.resolve_executable(f"{pdir}/checks", name, pdir, ex)
         kind, rest = res.split("\t", 1)
 
         if kind == "ERR":
-            results.append(fail_verdict(name, rest))
+            results.append(fail_verdict(name, rest, on_fail))
             continue
 
         path = rest
@@ -88,7 +89,8 @@ def main():
         if not os.access(path, os.X_OK):
             results.append(fail_verdict(
                 name,
-                f"check is not executable: {path} (chmod +x and add a shebang)"
+                f"check is not executable: {path} (chmod +x and add a shebang)",
+                on_fail,
             ))
             continue
 
@@ -104,13 +106,14 @@ def main():
                 env=child_env
             )
         except OSError as exc:
-            results.append(fail_verdict(name, f"check runner error: {exc}"))
+            results.append(fail_verdict(name, f"check runner error: {exc}", on_fail))
             continue
 
         if result.returncode != 0:
             results.append(fail_verdict(
                 name,
-                f"check exited {result.returncode} (a check must exit 0 and print a JSON verdict)"
+                f"check exited {result.returncode} (a check must exit 0 and print a JSON verdict)",
+                on_fail,
             ))
             continue
 
@@ -127,16 +130,19 @@ def main():
             ):
                 results.append(fail_verdict(
                     name,
-                    "check did not print a valid {check,pass,feedback} JSON verdict"
+                    "check did not print a valid {check,pass,feedback} JSON verdict",
+                    on_fail,
                 ))
                 continue
         except json.JSONDecodeError:
             results.append(fail_verdict(
                 name,
-                "check did not print a valid {check,pass,feedback} JSON verdict"
+                "check did not print a valid {check,pass,feedback} JSON verdict",
+                on_fail,
             ))
             continue
 
+        verdict["on_fail"] = on_fail
         results.append(verdict)
 
     print(json.dumps({"results": results}, separators=(",", ":")))

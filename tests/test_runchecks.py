@@ -347,3 +347,33 @@ def test_params_branch_scoped_overrides_state(params_sandbox):
     out = run_checks(params_sandbox, "s", EV_COMPLETE, DIFF_PR1, FILES_PR1, branch="bx")
     feedback_parsed = json.loads(out["results"][0]["feedback"])
     assert feedback_parsed["categories"] == ["only-b"]
+
+
+def test_runner_stamps_default_on_fail_iterate():
+    """Every verdict carries on_fail; absent in protocol.json ⇒ 'iterate'."""
+    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    results = out["results"]
+    assert results, "expected verdicts"
+    assert all(v.get("on_fail") == "iterate" for v in results), results
+
+
+def test_runner_stamps_declared_on_fail_on_failure_verdict(temp_proto_in_grumpy):
+    """A failure verdict is stamped with the entry's DECLARED on_fail (not the default)."""
+    proto_content = json.loads(GRUMPY_PROTO.read_text())
+    proto_content["states"][0]["checks"] = [{"run": "does-not-exist", "on_fail": "block"}]
+    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
+    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert out["results"][0]["pass"] is False
+    assert out["results"][0]["on_fail"] == "block"
+
+
+def test_runner_stamps_declared_on_fail_on_passing_verdict(temp_proto_in_grumpy):
+    """A declared non-default on_fail is stamped onto a PASSING verdict too."""
+    proto_content = json.loads(GRUMPY_PROTO.read_text())
+    proto_content["states"][0]["checks"] = [
+        {"run": "schema-valid", "on_fail": "advisory"}
+    ]
+    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
+    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    assert out["results"][0]["pass"] is True
+    assert out["results"][0]["on_fail"] == "advisory"

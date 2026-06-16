@@ -105,6 +105,10 @@ commands into the job holding the state PAT.
   `categories`) from the `CHECK_PARAMS` env var the runner forwards — the value of
   the check-owning node's `params` object (the branch's when `BRANCH` is set, else
   the state's). Never hardcode the rubric and never reach into `protocol.json`.
+  Each check entry may declare `on_fail` (`"iterate"` default | `"advisory"` |
+  `"block"`); the runner stamps it onto the verdict, and the engine's `decide()`
+  fold uses it — `iterate` drives the retry loop, `block` blocks the conclusion
+  without iterating, `advisory` is recorded only.
 - **Publish hook:** invoked as `<hook> <evidence.json> <instance-key>` with env
   `ENGINE_LOCAL`, `GITHUB_REPOSITORY`, `PUBLISH_TOKEN`, `PR`; prints
   `{"conclusion","summary"}`. Runs **trusted in zone 4** (NOT a sandboxed check).
