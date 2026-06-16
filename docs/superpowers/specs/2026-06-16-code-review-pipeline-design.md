@@ -76,7 +76,7 @@ authoring only **(i)** the gh-aw agent markdown, **(ii)** `protocol.json`, and
 | 5 | Phase transition | **Decision A** — `advance` fires `repository_dispatch protocol-advance`; orchestrator re-enters `plan` at the new phase | Reuses the "events are wake-ups" dispatch pattern (`protocol-continue`/`protocol-join`) |
 | 6 | State layout | **Decision B** — multi-phase instance is a dir with `_instance.yaml` phase cursor; existing single-/fan-out layouts unchanged | Keeps the regression guard strong; generalization is additive |
 | 7 | Check-runs | **Decision C** — one aggregate `code-review-pipeline` run + per-phase sub-runs | Mirrors today's aggregate-vs-sub fan-out model |
-| 8 | Checks to port | All *implemented* custody checks; skip `local-review-evidence` (`todo`) | The implemented gate, faithfully |
+| 8 | Checks to port | All *implemented* custody checks; skip `local-review-evidence` (`todo`). **Divergence:** `spec-present`/`plan-present` are `block` (required), not custody's advisory warn | A stricter gate — a spec and plan must exist, else the pipeline fails before review |
 | 9 | `verdict.json` | `conclude` also emits the custody-shaped `verdict.json` (`records[]` + `meta`) | Forward-compat with the custody app, though that path is untested here |
 | 10 | LLM endpoint | Reuse the existing Claude `sonnet` endpoint + `ANTHROPIC_*` secrets | Not custody's codex/gpt-5.5 gateway |
 | 11 | Delivery | One spec; implementation plan sequenced into 3 milestones | Scope is large and coupled; isolate risk (M2) from authoring (M3) |
@@ -168,8 +168,8 @@ pass unchanged; this milestone makes **no** production behavior change.
         { "run": "schema-valid",           "on_fail": "iterate"  },
         { "run": "adherence-coverage",     "on_fail": "iterate"  },
         { "run": "traces-exist-in-diff",   "on_fail": "iterate"  },
-        { "run": "spec-present",           "on_fail": "advisory" },
-        { "run": "plan-present",           "on_fail": "advisory" },
+        { "run": "spec-present",           "on_fail": "block"    },
+        { "run": "plan-present",           "on_fail": "block"    },
         { "run": "docs-updated-with-code", "on_fail": "advisory" },
         { "run": "tests-updated-with-code","on_fail": "advisory" }
       ],
@@ -185,17 +185,26 @@ pass unchanged; this milestone makes **no** production behavior change.
 }
 ```
 
-> **Where preflight's "blocked" comes from.** All of preflight's zone-3
-> fact-checks are `advisory` — faithfully reproducing custody, where a missing
-> spec/plan is a non-blocking warn and the adherence checks are *skipped* (not
-> failed) when no artifact exists. The actual blocking verdict is the agent's
-> **adherence judgment** (spec/plan-adherence = does the code match the declared
-> artifact), which is *substance* living in evidence — so it is rolled up by
-> `conclude-preflight`, **not** by a zone-3 `block` check (the engine never judges
-> substance in zone 3). Consequently `decide()`'s `blocking` output is `False` for
-> preflight; the `clear`/`blocked` decision is conclude's. The `block` severity
-> still exists in the engine (M1) for protocols with a *deterministic* blocker
-> (e.g. a hard "no signed CLA" gate) — preflight simply doesn't use it.
+> **Where preflight's "blocked" comes from (two sources).** This is a deliberate
+> **divergence from custody**, where a missing spec/plan is only a non-blocking
+> warn. Here the gate *requires* both:
+>
+> 1. **Deterministic blockers (zone 3).** `spec-present` and `plan-present` are
+>    `block`: if the artifact is absent (or its presence can't be determined), the
+>    check fails and `decide()` returns `blocking = True`. `docs-updated`/
+>    `tests-updated` stay `advisory` (recorded, never block).
+> 2. **Adherence substance (conclude).** When a spec/plan *is* present, the agent
+>    judges adherence (does the code match the declared artifact). That verdict is
+>    *substance* in evidence, so `conclude-preflight` reads it — the engine never
+>    judges substance in zone 3.
+>
+> `conclude-preflight(evidence, blocking)` therefore rolls up
+> **`blocked = blocking OR any adherence verdict failed`**, else `clear`. The
+> agent's pre-step still *scopes out* adherence when no artifact exists (you can't
+> verify adherence against a missing spec) — but that no longer makes "no spec"
+> pass: `spec-present`/`plan-present` block on absence regardless. So a `blocked`
+> gate means either *"a required spec/plan is missing"* (deterministic) or
+> *"you declared one and the code doesn't adhere"* (adherence).
 
 **Planner (`next.py`)** starts at the first state and follows `next` regardless of
 kind. The `is_fanout() ⇒ start_fanout()` shortcut is removed; `start_fanout`
@@ -255,9 +264,13 @@ assertions) preserved per Decision B.
 ### Milestone 3 — Preflight port + the combined pipeline + live test
 
 **Checks** (`protocols/<...>/checks/`, Python ports honoring the check ABI):
-- `spec-present`, `plan-present` (`advisory` when absent), `docs-updated-with-code`,
-  `tests-updated-with-code` (`advisory`) — ports of custody's `checks.js` +
-  `locate.js` logic. These read `changed-files`/`diff` and ignore evidence.
+- `spec-present`, `plan-present` (`block` — **fail when absent or
+  indeterminate**, the deliberate divergence from custody's advisory warn),
+  `docs-updated-with-code`, `tests-updated-with-code` (`advisory`) — ports of
+  custody's `checks.js` + `locate.js` logic. These read `changed-files`/`diff` and
+  ignore evidence. The ABI being binary pass/fail, a missing artifact returns
+  `pass:false` (with `feedback` naming what was searched); `on_fail: block` makes
+  that a blocking verdict.
 - `schema-valid`, `adherence-coverage` (every requested `ai_check` judged exactly
   once — an analogue of `rubric-coverage`), and `traces-exist-in-diff` (reused
   verbatim) — form-checks over the agent's evidence, `on_fail: iterate`.
@@ -298,9 +311,11 @@ from `multi-grumpy`.
   aggregate `code-review-pipeline` check-run, the `_instance.yaml` cursor walking
   `preflight → review → join → done`, the per-phase sub-runs, the grumpy/security
   reviews posted, and a `clear` `verdict.json` artifact.
-- Blocked path: a PR engineered to fail a `block` check → preflight `blocked` →
-  pipeline halts, **no review runs**, aggregate check-run `failure`, `blocked`
-  `verdict.json`.
+- Blocked path: a PR with **no `## Requirements`/plan** (so `spec-present`/
+  `plan-present` fail their `block` checks) → preflight `blocked` → pipeline halts,
+  **no review runs**, aggregate check-run `failure`, `blocked` `verdict.json`. (A
+  second blocked variant — spec present but code doesn't adhere — exercises the
+  conclude/adherence source.)
 
 ## Components and interfaces (unchanged ABIs)
 
@@ -350,10 +365,14 @@ from `multi-grumpy`.
   the cross-branch eviction the current `concurrency` comment warns about.
 - **State-layout change risk.** Mitigated by Decision B (existing layouts
   preserved; phase-aware paths only for genuinely multi-phase protocols).
-- **Custody adherence-scoping semantics.** The "absent ⇒ advisory + adherence
-  skipped, not failed" rule must be ported faithfully (M3); it is the difference
-  between "no spec" (advisory) and "declared a spec, code doesn't adhere"
-  (blocking).
+- **Deliberate divergence from custody on spec/plan presence.** Custody treats a
+  missing spec/plan as a non-blocking warn; **we require both** (`spec-present`/
+  `plan-present` are `block`). Whoever ports the checks must NOT "faithfully"
+  reproduce custody's advisory behavior here. Adherence is still *scoped out* by
+  the agent when no artifact exists (you can't judge adherence against nothing),
+  but the gate blocks on the missing artifact regardless — so "no spec" → blocked,
+  and "declared a spec, code doesn't adhere" → blocked, via two different sources
+  (deterministic check vs. adherence substance in conclude).
 - **`workflow_call` secret plumbing.** Verify the custom Anthropic endpoint
   secrets reach the agent through the reusable-workflow boundary; the agent lock
   is unchanged but its dispatch now originates from the generic engine.
