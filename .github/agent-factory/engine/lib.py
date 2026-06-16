@@ -176,6 +176,37 @@ def match_run_by_cid(runs_json, cid):
     return ""
 
 
+def decide(results, iterations_remaining):
+    """Pure fold: (check verdicts + severities) → (process, blocking).
+
+    process  ∈ {"done","iterate","failed"} — the process axis that drives the
+             iterate loop and terminal state.
+    blocking : bool — did a `block`-severity check fail (the conclusion-axis
+             input; no consumer yet — the M2 phase-gate reads it).
+
+    Severity is each verdict's "on_fail" (default "iterate" when absent, so
+    pre-severity verdicts and the single-agent regression path are unchanged).
+    `iterate`-severity failures drive the loop; `block` failures never iterate
+    but set blocking; `advisory` failures are recorded only. Zero verdicts is a
+    checks-job failure → treated as a failed attempt.
+
+    Callers must stamp `on_fail` onto each verdict from the protocol's check
+    entry before calling (see run-checks.py); absent it, every failure defaults
+    to `iterate` (v1 behavior).
+    """
+    if not results:
+        return ("iterate" if iterations_remaining else "failed"), False
+    def sev(v):
+        return v.get("on_fail", "iterate")
+    iterate_fail = any(not v.get("pass") and sev(v) == "iterate" for v in results)
+    block_fail = any(not v.get("pass") and sev(v) == "block" for v in results)
+    if iterate_fail:
+        process = "iterate" if iterations_remaining else "failed"
+    else:
+        process = "done"
+    return process, block_fail
+
+
 def upsert_status_comment(sf, pr, body):
     """
     upsert_status_comment <state_file> <pr> <body>
