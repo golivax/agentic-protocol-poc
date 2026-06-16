@@ -312,3 +312,57 @@ def test_join_reads_phase_prefixed_branch_states_and_finalizes(tmp_path, engine_
     assert r.returncode == 0, r.stderr
     inst2 = lib.load_yaml(str(work2) + "/pipeline-mini/pr-1/_instance.yaml")
     assert inst2["joined"] is True
+
+
+def test_e2e_mini_pipeline_clear_path(tmp_path, engine_env):
+    """Full walk: start → advance gate (clear) → advance-phase work → advance alpha → join."""
+    inst = "pr-1"
+
+    # 1. start (fresh dir) → seeds _instance.yaml + gate.yaml on origin
+    s1 = tmp_path / "s1"
+    r1 = run_next(s1, inst, MINI, "start", engine_env, head="abc")
+    assert r1.returncode == 0, r1.stderr
+    assert lib.load_yaml(str(s1) + "/pipeline-mini/pr-1/_instance.yaml")["phase"] == "gate"
+
+    # 2. advance gate with clear evidence → cursor advances to "work", protocol-advance fired
+    s2 = tmp_path / "s2"
+    v1 = _verdicts_pass(tmp_path / "v1.json")
+    ev1 = tmp_path / "ev1.json"
+    ev1.write_text(json.dumps({"gate": "clear"}))
+    r2 = run_advance(s2, inst, MINI, v1, ev1, engine_env, phase="gate")
+    assert r2.returncode == 0, r2.stderr
+    inst2 = lib.load_yaml(str(s2) + "/pipeline-mini/pr-1/_instance.yaml")
+    assert inst2["phase"] == "work"
+    gate2 = lib.load_yaml(str(s2) + "/pipeline-mini/pr-1/gate.yaml")
+    assert gate2["state"] == "done"
+    assert "protocol-advance" in r2.stderr
+
+    # 3. advance-phase work (fresh dir) → seeds the work.alpha fan-out leg on origin
+    s3 = tmp_path / "s3"
+    r3 = run_next(s3, inst, MINI, "advance-phase", engine_env, phase="work")
+    assert r3.returncode == 0, r3.stderr
+    assert os.path.exists(str(s3) + "/pipeline-mini/pr-1/work.alpha.yaml")
+
+    # 4. advance alpha leg with passing verdicts → leg state == "done", protocol-join fired
+    s4 = tmp_path / "s4"
+    v2 = _verdicts_pass(tmp_path / "v2.json")
+    ev2 = tmp_path / "ev2.json"
+    ev2.write_text(json.dumps({}))
+    r4 = run_advance(s4, inst, MINI, v2, ev2, engine_env, phase="work", branch="alpha")
+    assert r4.returncode == 0, r4.stderr
+    alpha4 = lib.load_yaml(str(s4) + "/pipeline-mini/pr-1/work.alpha.yaml")
+    assert alpha4["state"] == "done"
+    assert "protocol-join" in r4.stderr
+
+    # 5. join (fresh dir) → instance marked joined == True
+    s5 = tmp_path / "s5"
+    e5 = dict(engine_env)
+    e5["PR"] = "1"
+    e5["PR_HEAD_SHA"] = "abc"
+    r5 = subprocess.run(
+        ["python3", str(ENGINE / "join.py"), str(s5), inst, str(MINI)],
+        text=True, capture_output=True, env=e5,
+    )
+    assert r5.returncode == 0, r5.stderr
+    inst5 = lib.load_yaml(str(s5) + "/pipeline-mini/pr-1/_instance.yaml")
+    assert inst5["joined"] is True
