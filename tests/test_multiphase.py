@@ -193,3 +193,44 @@ def test_seed_unknown_phase_exits_nonzero(tmp_path, engine_env):
     r = run_next(work, "pr-1", MINI, "advance-phase", engine_env, phase="nope")
     assert r.returncode != 0
     assert "unknown phase" in r.stderr
+
+
+def test_phase_continue_resumes_gate(tmp_path, engine_env):
+    work1 = tmp_path / "state1"
+    run_next(work1, "pr-1", MINI, "start", engine_env, head="abc")
+    # Mutate state on disk then push so the second invocation clones the updated state
+    sf = str(work1) + "/pipeline-mini/pr-1/gate.yaml"
+    data = lib.load_yaml(sf)
+    data["iteration"] = 2
+    data["history"] = [{"iteration": 1, "feedback": "fix the rubric"}]
+    lib.dump_yaml(sf, data)
+    subprocess.run(["git", "-C", str(work1), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(work1), "-c", "user.name=t", "-c", "user.email=t@t",
+             "commit", "-qm", "mutate for test"], check=True)
+    subprocess.run(["git", "-C", str(work1), "push", "-q", "origin", "agentic-state"], check=True)
+    work2 = tmp_path / "state2"
+    r = run_next(work2, "pr-1", MINI, "continue", engine_env, phase="gate")
+    assert r.returncode == 0, r.stderr
+    action = json.loads(r.stdout)
+    assert action["action"] == "run-agent"
+    assert action["iteration"] == 2
+    assert action["feedback"] == "fix the rubric"
+    assert action["phase"] == "gate"
+
+
+def test_phase_continue_terminal_halts(tmp_path, engine_env):
+    work1 = tmp_path / "state1"
+    run_next(work1, "pr-1", MINI, "start", engine_env, head="abc")
+    # Mutate state to terminal then push so the second invocation clones the updated state
+    sf = str(work1) + "/pipeline-mini/pr-1/gate.yaml"
+    data = lib.load_yaml(sf)
+    data["state"] = "done"
+    lib.dump_yaml(sf, data)
+    subprocess.run(["git", "-C", str(work1), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(work1), "-c", "user.name=t", "-c", "user.email=t@t",
+             "commit", "-qm", "mutate for test"], check=True)
+    subprocess.run(["git", "-C", str(work1), "push", "-q", "origin", "agentic-state"], check=True)
+    work2 = tmp_path / "state2"
+    r = run_next(work2, "pr-1", MINI, "continue", engine_env, phase="gate")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["action"] == "halt"

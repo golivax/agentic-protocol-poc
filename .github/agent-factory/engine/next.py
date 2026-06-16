@@ -172,7 +172,30 @@ if not BRANCH and is_fanout() and not PHASE:
 # The "agent unit" (its id + max_iterations) comes from a fan-out BRANCH when
 # BRANCH is set, else from the single-agent state. Single-agent path is the
 # regression-guarded baseline and must stay byte-for-byte identical.
-if BRANCH:
+# Multi-phase: when PHASE is set, the agent unit is looked up inside that phase.
+if PHASE:
+    phase_state = lib.state_by_id(proto_data, PHASE)
+    if not phase_state:
+        sys.stderr.write(f"[next] no phase '{PHASE}' in protocol\n")
+        sys.exit(1)
+    if phase_state.get("kind") == "fanout":
+        if not BRANCH:
+            sys.stderr.write(f"[next] PHASE='{PHASE}' is a fanout phase but BRANCH is empty\n")
+            sys.exit(1)
+        AGENT_STATE = None
+        MAX = None
+        for b in phase_state.get("branches", []):
+            if b["id"] == BRANCH:
+                AGENT_STATE = b["id"]
+                MAX = b.get("max_iterations")
+                break
+        if not AGENT_STATE:
+            sys.stderr.write(f"[next] no branch '{BRANCH}' in phase '{PHASE}'\n")
+            sys.exit(1)
+    else:
+        AGENT_STATE = PHASE
+        MAX = phase_state.get("max_iterations")
+elif BRANCH:
     AGENT_STATE = None
     MAX = None
     for s in proto_data.get("states", []):
@@ -207,7 +230,11 @@ if MAX is None:
 # fan-out state's id (a branch's per-branch file records the fan-out state, not the
 # branch id). For grumpy these are both "review", so the single-agent path is
 # byte-for-byte unchanged.
-if BRANCH:
+# Multi-phase: the live state value is the phase id itself — seed_and_dispatch_phase
+# stamps state=<phase_id> into the agent phase file AND each fanout branch file.
+if PHASE:
+    LIFE_STATE = PHASE
+elif BRANCH:
     LIFE_STATE = None
     for s in proto_data.get("states", []):
         if s.get("kind") == "fanout":
@@ -216,8 +243,10 @@ if BRANCH:
 else:
     LIFE_STATE = AGENT_STATE
 
-# BRANCH empty → single-agent path (branch=None)
-SF = lib.state_file(DIR, PID, INSTANCE, BRANCH if BRANCH else None)
+# BRANCH/PHASE empty → single-agent path (branch=None, phase=None)
+SF = lib.state_file(DIR, PID, INSTANCE,
+                    branch=(BRANCH if BRANCH else None),
+                    phase=(PHASE if PHASE else None))
 
 
 def write_fresh_state():
@@ -234,7 +263,10 @@ def write_fresh_state():
 
 
 def emit_run_agent(iteration, feedback, reason):
-    print(json.dumps({"action": "run-agent", "iteration": iteration, "feedback": feedback, "reason": reason}))
+    action = {"action": "run-agent", "iteration": iteration, "feedback": feedback, "reason": reason}
+    if PHASE:
+        action["phase"] = PHASE
+    print(json.dumps(action))
 
 
 def emit_halt(reason):
