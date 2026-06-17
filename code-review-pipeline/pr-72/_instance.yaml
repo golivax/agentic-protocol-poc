@@ -4,3 +4,7 @@ phase: preflight
 head_sha: 93c71eeae6a9ade8038bb560f3e3ee2b6797a605
 joined: false
 status_comment_id: 4734466478
+halted:
+  phase: preflight
+  reason: blocked
+  sha: 93c71eeae6a9ade8038bb560f3e3ee2b6797a605
