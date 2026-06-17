@@ -32,7 +32,7 @@ pre-agent-steps:
   - uses: actions/checkout@v5
     with: { persist-credentials: false }
   - name: Prefetch PR + scope adherence checks (changed-files only)
-    env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", PR: "${{ github.event.inputs.pr_number || fromJSON(github.event.inputs.aw_context || '{}').pr }}", REPO: "${{ github.event.inputs.repo || github.repository }}" }
+    env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", PR: "${{ fromJSON(github.event.inputs.aw_context || '{}').pr }}", REPO: "${{ github.repository }}" }
     run: |
       set -euo pipefail
       mkdir -p /tmp/gh-aw/agent
