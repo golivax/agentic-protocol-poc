@@ -189,9 +189,19 @@ def route(protocols_dir, event_name, action="", comment_body="",
         return {"protocol": "", "command": "", "skip": True}
     if len(matches) > 1:
         names = ", ".join(p for p, _ in matches)
+        # Describe WHAT collided in the trigger's own terms, not the raw GitHub
+        # event/action (e.g. "issue_comment/created" hides that the comment text
+        # "/grumpy" is the thing two protocols both matched).
+        if event_name == "issue_comment":
+            what = f'the comment "{comment_body}"'
+        elif event_name == "pull_request":
+            what = f'pull_request action "{action}"'
+        else:
+            what = f'event "{event_name}"'
         raise ValueError(
-            f"ambiguous route: {len(matches)} protocols match "
-            f"{event_name}/{action or comment_body}: {names}")
+            f"ambiguous route: {what} matches {len(matches)} protocols "
+            f"({names}); their triggers overlap - make them mutually exclusive "
+            f"(no comment_prefix may be a prefix of another protocol's)")
     path, cmd = matches[0]
     return {"protocol": path, "command": cmd, "skip": False}
 

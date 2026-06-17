@@ -83,7 +83,25 @@ def test_ambiguous_match_raises():
             lib.route(pdir, "pull_request", "opened", "")
             assert False, "expected ValueError on ambiguous match"
         except ValueError as e:
-            assert "alpha" in str(e) and "beta" in str(e)
+            msg = str(e)
+            assert "alpha" in msg and "beta" in msg
+            # The message names the PR action that collided, not a raw event/action pair.
+            assert 'pull_request action "opened"' in msg
+
+
+def test_ambiguous_comment_message_names_the_comment():
+    # The confusing old message said "issue_comment/created"; it must instead name
+    # the actual comment text that two protocols both matched.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        pdir = _mk_protocols(Path(td), {"alpha": GRUMPY_TRIGGERS, "beta": GRUMPY_TRIGGERS})
+        try:
+            lib.route(pdir, "issue_comment", "created", "/grumpy please", is_pr_comment=True)
+            assert False, "expected ValueError on ambiguous comment match"
+        except ValueError as e:
+            msg = str(e)
+            assert '/grumpy please' in msg, msg
+            assert 'created' not in msg, "should describe the comment text, not the GH action"
 
 
 def test_globbing_is_sorted_deterministic():
