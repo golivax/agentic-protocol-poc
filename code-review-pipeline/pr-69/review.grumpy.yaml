@@ -1,7 +1,14 @@
 protocol: code-review-pipeline
 instance: pr-69
-state: review
+state: done
 iteration: 1
 gates: {}
 head_sha: 893795b650c65f186ef9be039ab1dc55fd861756
-history: []
+history:
+- iteration: 1
+  agent_run_id: '27705370501'
+  checks:
+    schema-valid: pass
+    rubric-coverage: pass
+    traces-exist-in-diff: pass
+  feedback: ''
