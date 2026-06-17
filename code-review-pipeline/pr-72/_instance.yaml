@@ -1,10 +1,6 @@
+status_comment_id: 4734198544
 protocol: code-review-pipeline
 instance: pr-72
-phase: review
-head_sha: d27ee332d26c6808b621a1cb6c65b370bc23fd20
-joined: true
-status_comment_id: 4734198544
-overrides:
-- phase: preflight
-  actor: golivax
-  reason: advancing to review to set up the reset-on-new-commit test
+phase: preflight
+head_sha: 93c71eeae6a9ade8038bb560f3e3ee2b6797a605
+joined: false
