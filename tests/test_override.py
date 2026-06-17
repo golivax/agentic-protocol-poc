@@ -216,3 +216,33 @@ def test_override_reason_is_inert_data(state_origin, tmp_path):
     _clone(state_origin, tmp_path / "verify")
     inf = yaml.safe_load((tmp_path / "verify" / PID / inst / "_instance.yaml").read_text())
     assert inf["overrides"][0]["reason"] == nasty  # stored verbatim, never executed
+
+
+def test_override_trigger_maps_to_command():
+    out = subprocess.run(
+        ["python3", str(LIB_PY), "match-trigger", str(PIPELINE_PROTO),
+         "issue_comment", "", "/override please"],
+        text=True, capture_output=True,
+    ).stdout.strip()
+    assert out == "override"
+
+
+def test_override_routes_unambiguously():
+    protocols_dir = str(ROOT / ".github/agent-factory/protocols")
+    r = subprocess.run(
+        ["python3", str(LIB_PY), "route", protocols_dir, "issue_comment", "", "/override", "", "true"],
+        text=True, capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr  # no ambiguity raised
+    assert f"protocols/{PID}/protocol.json" in r.stdout
+    assert "skip=false" in r.stdout
+
+
+def test_review_still_routes_after_adding_override():
+    protocols_dir = str(ROOT / ".github/agent-factory/protocols")
+    r = subprocess.run(
+        ["python3", str(LIB_PY), "route", protocols_dir, "issue_comment", "", "/review", "", "true"],
+        text=True, capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert f"protocols/{PID}/protocol.json" in r.stdout

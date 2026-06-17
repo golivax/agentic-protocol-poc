@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "triggers": [
     { "on": "issue_comment", "comment_prefix": "/review", "command": "start" },
+    { "on": "issue_comment", "comment_prefix": "/override", "command": "override" },
     { "on": "pull_request",  "actions": ["opened", "reopened"], "command": "start" },
     { "on": "pull_request",  "actions": ["synchronize"], "command": "reset" }
   ],
