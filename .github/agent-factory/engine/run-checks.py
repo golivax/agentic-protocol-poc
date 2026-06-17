@@ -76,8 +76,13 @@ def main():
         ex = entry.get("exec", "") or ""
         on_fail = entry.get("on_fail", "iterate")
 
-        # Resolve the check executable
-        res = lib.resolve_executable(f"{pdir}/checks", name, pdir, ex)
+        # Resolve the check executable.
+        # When exec is an absolute path, use it directly (test / local use);
+        # otherwise delegate to lib.resolve_executable which prefixes pdir.
+        if ex and os.path.isabs(ex):
+            res = f"OK\t{ex}" if os.path.isfile(ex) else f"ERR\tdeclared exec not found: {ex}"
+        else:
+            res = lib.resolve_executable(f"{pdir}/checks", name, pdir, ex)
         kind, rest = res.split("\t", 1)
 
         if kind == "ERR":
@@ -94,7 +99,9 @@ def main():
             ))
             continue
 
-        # Run the check with CHECK_PARAMS in the environment
+        # child_env inherits the full job environment, so PR_BODY / PR_TITLE
+        # (exported by the checks job for checks that parse the PR description/
+        # title) reach every check alongside CHECK_PARAMS. Keep this passthrough.
         child_env = dict(os.environ)
         child_env["CHECK_PARAMS"] = params_json
 

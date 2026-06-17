@@ -287,6 +287,13 @@ jobs:
             echo '{}' > "$EV"
           fi
           NODE="${PHASE:-review}"
+          # Make the PR description + title available to checks (env, never
+          # interpolated into this run: block). Fetched from GitHub by this
+          # trusted job — not from agent output. Multiline body stays in a shell
+          # var; run-checks.py forwards the job env to each check.
+          PR_BODY="$(gh pr view "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" --json body --jq '.body' 2>/dev/null || true)"
+          PR_TITLE="$(gh pr view "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" --json title --jq '.title' 2>/dev/null || true)"
+          export PR_BODY PR_TITLE
           VERDICTS=$(.github/agent-factory/engine/run-checks.py \
             "$PROTO" "$NODE" "$EV" /tmp/diff.txt /tmp/files.txt)
           jq . <<<"$VERDICTS"
