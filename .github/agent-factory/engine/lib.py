@@ -514,21 +514,146 @@ def render_fanout_status_body(dir_, pid, instance, proto):
     return f"\U0001f50d **{pid} · {instance}**\n\n{sections}{headline}\n\n[Full state & audit trail]({link})\n"
 
 
+def has_fanout(protocol):
+    """True iff the protocol has at least one fan-out state."""
+    return any(s.get("kind") == "fanout" for s in protocol.get("states", []))
+
+
+def _render_leg_section(sf, max_iter):
+    """Project one leg's state file into (state, checklist-lines).
+    Mirrors the per-branch rendering in render_fanout_status_body so the
+    single-phase and multi-phase comments read identically per leg.
+      missing file        → ("pending", "_pending_")
+      file, empty history → (<state>, "_no iterations yet_")
+      file, with history  → (<state>, "- ✅/✗ iteration n/m …")
+    """
+    if not os.path.isfile(sf):
+        return "pending", "_pending_"
+    data = load_yaml(sf)
+    history = data.get("history", []) or []
+    st = data.get("state", "") or ""
+    if not history:
+        return st, "_no iterations yet_"
+    out = []
+    for entry in history:
+        it = entry.get("iteration", "?")
+        fb = entry.get("feedback", "") or ""
+        # `feedback` carries only iterate-severity failures, so a gate that fails
+        # a block/advisory check leaves it empty. Fall back to the recorded checks
+        # map so we never claim "all checks passed" when a non-iterate check failed.
+        failed = [k for k, v in (entry.get("checks", {}) or {}).items() if v != "pass"]
+        if fb:
+            out.append(f"- ✗ iteration {it}/{max_iter} — {fb}")
+        elif failed:
+            out.append(f"- ⚠️ iteration {it}/{max_iter} — checks failed: {', '.join(sorted(failed))}")
+        else:
+            out.append(f"- ✅ iteration {it}/{max_iter} — all checks passed")
+    return st, "\n".join(out)
+
+
+def render_pipeline_status_body(dir_, pid, instance, proto):
+    """
+    render_pipeline_status_body <state_dir> <pid> <instance> <protocol.json>
+    Protocol-LEVEL projection for a MULTI-PHASE protocol: render every phase
+    (agent + fan-out) in declared order into ONE PR-comment body. Unlike
+    render_fanout_status_body (single fan-out phase, <instance>/<branch>.yaml),
+    this resolves each leg with its phase id, so fan-out legs are found at
+    <instance>/<phase>.<branch>.yaml — the fix for PR #65's stuck "_pending_".
+    The audit link points at the instance directory (all phases live under it).
+    """
+    branch_val = os.environ.get("STATE_BRANCH", STATE_BRANCH)
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    link = f"https://github.com/{repo}/tree/{branch_val}/{pid}/{instance}"
+
+    protocol = load_yaml(proto)
+    inf = instance_file(dir_, pid, instance)
+    inst = load_yaml(inf) if os.path.isfile(inf) else {}
+    overridden = {o.get("phase") for o in (inst.get("overrides") or [])}
+    halted = inst.get("halted") or {}
+    halted_phase = halted.get("phase") if halted.get("reason") == "blocked" else None
+
+    sections = ""
+    any_active = any_failed = False
+    blocked_phase = None
+
+    for ph in phase_states(protocol):
+        ph_id = ph["id"]
+        if ph.get("kind") == "fanout":
+            for b in ph.get("branches", []):
+                bid = b["id"]
+                max_iter = b.get("max_iterations", "?")
+                sf = state_file(dir_, pid, instance, bid, phase=ph_id)
+                st, lines = _render_leg_section(sf, max_iter)
+                sections += f"**{ph_id} · {bid}**\n\n{lines}\n\n"
+                if st == "done":
+                    pass
+                elif st == "failed":
+                    any_failed = True
+                else:  # pending / in-flight
+                    any_active = True
+        else:  # agent phase
+            max_iter = ph.get("max_iterations", "?")
+            sf = state_file(dir_, pid, instance, phase=ph_id)
+            st, lines = _render_leg_section(sf, max_iter)
+            if ph_id == halted_phase:
+                note = "\n⛔ blocked — a required gate did not pass; a write-access user can `/override`."
+                blocked_phase = ph_id
+            elif ph_id in overridden:
+                note = "\n⚠️ blocked → overridden; proceeding."
+            elif st == "done":
+                note = "\n✅ clear."
+            elif st == "failed":
+                note = "\n❌ failed."
+                any_failed = True
+            else:  # pending / in-flight
+                note = ""
+                if st != "done":
+                    any_active = True
+            sections += f"**{ph_id}**\n\n{lines}\n{note}\n\n"
+
+    if blocked_phase:
+        headline = (f"⛔ Blocked at **{blocked_phase}** — a write-access user can comment "
+                    f"`/override <reason>` to proceed past this gate.")
+    elif any_failed:
+        headline = "❌ Pipeline failed — a gate could not complete; merge is gated."
+    elif any_active:
+        headline = "⏳ In progress…"
+    else:
+        headline = "✅ Pipeline complete — published."
+
+    return f"\U0001f50d **{pid} · {instance}**\n\n{sections}{headline}\n\n[Full state & audit trail]({link})\n"
+
+
+def render_instance_status_body(dir_, pid, instance, proto_path):
+    """Pick the right shared-comment renderer for an instance-keyed comment:
+    multi-phase → the protocol-level pipeline renderer; single-phase fan-out →
+    the legacy fan-out renderer (kept byte-identical)."""
+    protocol = load_yaml(proto_path)
+    if is_multiphase(protocol):
+        return render_pipeline_status_body(dir_, pid, instance, proto_path)
+    return render_fanout_status_body(dir_, pid, instance, proto_path)
+
+
 def ensure_status_comment(state_dir, pid, instance, proto_path, pr):
     """
     ensure_status_comment <state_dir> <pid> <instance> <protocol.json> <pr>
-    Create-once guard for the shared fan-out status comment.  Reads the
+    Create-once guard for the shared instance-level status comment.  Reads the
     instance file's status_comment_id; if empty → render + upsert + cas_push;
-    if already set → no-op.  Reproduces the "Ensure shared status comment"
-    orchestrator block exactly, reusing the existing lib functions.
+    if already set → no-op.  Now also fires for a multi-phase protocol whose
+    FIRST phase is an agent (e.g. preflight), so the protocol-level comment +
+    audit link appear the moment the pipeline starts. A single-agent protocol
+    (no fan-out, not multi-phase) has no shared comment → no-op.
     """
+    protocol = load_yaml(proto_path)
+    if not is_multiphase(protocol) and not has_fanout(protocol):
+        return  # single-agent path: status lives in the per-state file, no shared comment
     inf = instance_file(state_dir, pid, instance)
     inst_data = load_yaml(inf) if os.path.isfile(inf) else {}
     cid = inst_data.get("status_comment_id", "") or ""
     if cid:
         # Already created on a previous run — idempotent no-op.
         return
-    body = render_fanout_status_body(state_dir, pid, instance, proto_path)
+    body = render_instance_status_body(state_dir, pid, instance, proto_path)
     upsert_status_comment(inf, pr, body)
     cas_push(state_dir, f"{instance}: ensure shared status comment")
 

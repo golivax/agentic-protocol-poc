@@ -166,7 +166,21 @@ def render_status_body(sf, headline, pid, instance, max_iter, github_repository)
 
 def update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
                           headline, max_iter, github_repository):
-    """Branch-aware status-comment writer."""
+    """Branch-aware status-comment writer.
+
+    Multi-phase protocols carry ONE protocol-level comment keyed in
+    _instance.yaml and rendered across every phase — so for them we ignore
+    `branch`/`headline` (the renderer derives the headline from state) and key on
+    `inf`. Single-phase fan-out keeps the per-fan-out comment; single-agent keeps
+    its per-state-file comment. Both single-phase paths stay byte-identical."""
+    with open(proto_path) as fh:
+        proto = json.load(fh)
+    if lib.is_multiphase(proto):
+        if not os.path.isfile(inf):
+            return
+        body = lib.render_pipeline_status_body(dir_, pid, instance, proto_path)
+        lib.upsert_status_comment(inf, pr, body)
+        return
     if branch:
         # fan-out branch: shared comment keyed in _instance.yaml
         if not os.path.isfile(inf):
@@ -335,6 +349,16 @@ def main():
             inst_data = lib.load_yaml(inf) if os.path.isfile(inf) else {}
             inst_data["halted"] = {"phase": phase, "reason": "blocked", "sha": sha}
             lib.dump_yaml(inf, inst_data)
+            # Tell the PR author on BOTH surfaces (bug iii): refresh the
+            # protocol-level status comment (now rendered blocked) AND post a
+            # one-off timeline notice naming the gate + the /override escape hatch.
+            update_status_comment(
+                sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                "⛔ blocked", max_iter, github_repository
+            )
+            notice = (f"⛔ **{phase}** gate blocked: {csum or 'a required gate did not pass'}. "
+                      f"A write-access user can comment `/override <reason>` to proceed past this gate.")
+            lib.post_pr_comment(pr, notice)
             lib.cas_push(dir_, f"{instance}: phase {phase} blocked → pipeline halted")
         elif is_agent_phase:
             # GATE CLEAR → advance the cursor and launch the next phase.
@@ -346,6 +370,12 @@ def main():
             if nxt:
                 inst["phase"] = nxt
                 lib.dump_yaml(inf, inst)
+                # Refresh the protocol-level comment: this gate now reads clear,
+                # the next phase's legs render pending until it seeds + runs.
+                update_status_comment(
+                    sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                    "⏳ advancing", max_iter, github_repository
+                )
                 lib.cas_push(dir_, f"{instance}: phase {phase} clear → advancing to {nxt}")
                 gh_api(
                     f"repos/{github_repository}/dispatches",
@@ -357,6 +387,10 @@ def main():
             else:
                 # No further phase → close the pipeline-level (aggregate) check-run.
                 lib.set_check_run(pid, sha, "completed", "success", "Complete", csum)
+                update_status_comment(
+                    sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                    "✅ complete", max_iter, github_repository
+                )
                 lib.cas_push(dir_, f"{instance}: phase {phase} clear → done (no further phase)")
         else:
             # Single-agent or fan-out leg → today's behavior unchanged.

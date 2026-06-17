@@ -183,7 +183,11 @@ jobs:
           PID=$(jq -r .name "${{ inputs.protocol }}")
           python3 .github/agent-factory/engine/lib.py set-check-run "$PID" "$SHA" in_progress "" "Pipeline in progress" "Running (iteration $ITER); merge is gated until the protocol completes."
       - name: Ensure shared status comment
-        if: steps.plan.outputs.action == 'run-fanout'
+        # Fire for a fan-out dispatch AND for an agent dispatch: a multi-phase
+        # protocol whose first phase is an agent (e.g. preflight) needs the
+        # protocol-level comment + audit link created the moment it starts.
+        # ensure-status-comment is a no-op for a single-agent protocol.
+        if: steps.plan.outputs.action == 'run-fanout' || steps.plan.outputs.action == 'run-agent'
         env:
           STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
           PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

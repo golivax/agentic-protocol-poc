@@ -97,7 +97,7 @@ def main():
     # Final shared-comment update: the closing headline now matches the aggregate.
     # Reads the comment id from _instance.yaml (inf) — the plan job created it — so
     # this only PATCHes. No-op echo under ENGINE_LOCAL.
-    body = lib.render_fanout_status_body(dir_, pid, instance, proto)
+    body = lib.render_instance_status_body(dir_, pid, instance, proto)
     lib.upsert_status_comment(inf, pr, body)
 
     # A fan-out phase is always terminal-before-join in the current model (its

@@ -96,6 +96,24 @@ def test_block_halt_stamps_halted_marker(state_origin, tmp_path):
     assert pf["state"] == "failed"
 
 
+def test_block_posts_oneoff_notice_and_updates_comment(state_origin, tmp_path):
+    """Bug (iii): a blocked preflight must tell the PR author — a one-off notice
+    (post_pr_comment) AND the protocol-level status comment (upsert). Both are
+    ENGINE_LOCAL stderr no-ops we can assert on."""
+    inst = "pr-3"
+    seed_preflight(state_origin, tmp_path / "seed", inst, state="preflight", iteration=1, head_sha="sha-blk")
+    v = write_json(tmp_path, "verdicts.json", VERDICTS_BLOCK)
+    ev = write_json(tmp_path, "evidence.json", EVIDENCE_MIN)
+    env = _env(state_origin, PHASE="preflight", PR="3", PR_HEAD_SHA="sha-blk")
+    _, err, _ = _run(ADVANCE_PY, [tmp_path / "adv", inst, PIPELINE_PROTO, v, ev], env)
+
+    # one-off timeline notice naming the gate + the override escape hatch
+    assert "[ENGINE_LOCAL] pr comment pr#3" in err
+    assert "/override" in err
+    # the protocol-level status comment was also refreshed
+    assert "[ENGINE_LOCAL] status comment pr#3" in err
+
+
 def test_exhaustion_writes_no_halted_marker(state_origin, tmp_path):
     inst = "pr-2"
     # iteration == max_iterations (2) → no iterations remaining → process=failed
