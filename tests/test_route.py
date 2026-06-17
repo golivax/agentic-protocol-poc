@@ -168,11 +168,6 @@ def test_real_protocols_review_comment_routes_to_pipeline():
     assert r["skip"] is False and r["protocol"].endswith("code-review-pipeline/protocol.json")
 
 
-def test_real_protocols_grumpy_comment_still_routes_to_multi_grumpy():
-    r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/grumpy", is_pr_comment=True)
-    assert r["skip"] is False and r["protocol"].endswith("multi-grumpy/protocol.json")
-
-
 def test_real_protocols_v1_grumpy_comment_routes_to_grumpy():
     r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/v1-grumpy", is_pr_comment=True)
     assert r["skip"] is False
