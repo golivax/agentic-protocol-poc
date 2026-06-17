@@ -10,7 +10,8 @@ import _paths  # noqa: E402
 
 
 def main():
-    files = _paths.read_changed_files(sys.argv[3])
+    files_arg = sys.argv[3] if len(sys.argv) > 3 else ""
+    files = _paths.read_changed_files(files_arg)
     code = [f for f in files if _paths.is_code(f)]
     docs = [f for f in files if _paths.is_doc(f)]
     if not code:

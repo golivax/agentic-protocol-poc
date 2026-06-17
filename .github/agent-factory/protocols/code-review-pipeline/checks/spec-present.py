@@ -13,7 +13,8 @@ SEARCHED = "docs/specs/, docs/superpowers/specs/, specs/, SPEC.md, REQUIREMENTS.
 
 
 def main():
-    files = _paths.read_changed_files(sys.argv[3])
+    files_arg = sys.argv[3] if len(sys.argv) > 3 else ""
+    files = _paths.read_changed_files(files_arg)
     hits = [f for f in files if _paths.is_spec_path(f)]
     if hits:
         print(json.dumps({"check": "spec-present", "pass": True,

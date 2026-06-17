@@ -52,7 +52,7 @@ def test_plan_present_passes_with_plan_file(tmp_path):
 
 def test_plan_present_fails_when_absent(tmp_path):
     v = _run("plan-present.py", ["src/app.py"], tmp_path)
-    assert v["pass"] is False
+    assert v["pass"] is False and "plan" in v["feedback"].lower()
 
 
 # docs/tests-updated (advisory) ------------------------------------------------
