@@ -186,13 +186,7 @@ generating one is "write the verifier + declare its failure policy".
 
 ---
 
-## Orchestrator B→A: collapse the trigger shim into a single self-routing workflow
-
-> **PROMOTED (2026-06-16): scheduled to run BEFORE M3 (preflight port).** Design brief
-> with resolved constraints + open questions: `docs/superpowers/specs/2026-06-16-orchestrator-b-to-a-design.md`.
-> Key resolved facts: reusable-call jobs allow only `name/uses/with/secrets/needs/if/permissions`
-> (no `concurrency`/`strategy`/`env`) → concurrency goes at the router WORKFLOW level
-> (github.event-based, like the shim); router handles one protocol per event. Decision: implement A.
+## Orchestrator B→A: collapse the trigger shim into a single self-routing workflow (DONE)
 
 **What:** Evolve the generic orchestrator from **approach B** (an engine-owned
 reusable `workflow_call` engine + a thin per-protocol *trigger shim* that
@@ -211,21 +205,11 @@ concurrency keyed by `protocol·instance·branch`. Deferred because the routing 
 concurrency edge cases are subtle and land in the jobs that hold the state PAT —
 not worth blocking the first generic orchestrator on.
 
-**Sketch:**
-- One `agentic-orchestrator.yml`; `on:` statically lists the framework event set
-  (`pull_request`, `issue_comment`, `workflow_dispatch`, `repository_dispatch`).
-- A `route` job reads each protocol's `triggers` (the same declarative block B
-  introduces), matches `github.event`, and emits a matrix of
-  `{protocol, instance, command, branch}` selections.
-- The existing generic engine jobs (plan/dispatch/checks/advance + conditional
-  join) run per selection; concurrency moves to job-level.
-- The per-protocol trigger shims from B are deleted once the router covers them.
-
-**Prerequisite:** approach B shipped (the reusable engine workflow + the
-`protocol.json` `triggers` schema both already exist after B).
-
-**Status:** not started. Recorded 2026-06-16 as the successor to the
-generic-orchestrator (B) work currently being specced.
+**Status:** DONE (2026-06-16). `agentic-orchestrator.yml` (router: read-only
+`route` job calling `lib.route` to scan all protocols' `triggers` blocks at
+runtime) + `agentic-engine.yml` (reusable `on: workflow_call` engine — the 4
+trust zones) are live. The per-protocol trigger shim (`multi-grumpy-trigger.yml`)
+is deleted. No per-protocol workflow YAML remains.
 
 ---
 

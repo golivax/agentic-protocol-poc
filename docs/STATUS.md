@@ -128,7 +128,7 @@ couplings are gone:
 - **State path from data.** `lib.py`'s `state_file` returns
   `<dir>/<protocol-id>/<instance-key>.yaml` (e.g. `grumpy-review/pr-<N>.yaml`).
 
-**Trigger policy lives in `orchestrator.yml`, not the engine.** `next.py`
+**Trigger policy lives in `agentic-orchestrator.yml` (router) and `agentic-engine.yml` (engine), not the engine scripts.** `next.py`
 accepts a command (`start` / `reset` / `continue`); the orchestrator maps
 GitHub events to commands:
 
@@ -176,7 +176,7 @@ zone 4 (engine-post) holding the publish token; it is not a sandboxed check.
 - Custom endpoint must be configured via `engine.env` (forwarded to the CLI
   subprocess) with the proxy off; top-level `env:` is not forwarded.
 - Workflows run from the **default branch** for `issue_comment` /
-  `repository_dispatch` — keep `orchestrator.yml` and the agent lock on `main`,
+  `repository_dispatch` — keep `agentic-orchestrator.yml`, `agentic-engine.yml`, and the agent locks on `main`,
   and never commit them onto a demo PR branch (pollutes the reviewed diff).
 
 ---
@@ -248,8 +248,12 @@ and built so the v1 single-agent path stays byte-identical (the regression guard
   reaches a terminal state. `advance.py` also now carries `client_payload[branch]`
   on its `protocol-continue` iterate dispatch.
 
-- **Orchestrator = branch matrix.** `.github/workflows/orchestrator.yml` was
-  rewritten. `plan` runs `next.py` **unbranched** for `pull_request`/`issue_comment`
+- **Orchestrator = router + reusable engine.** The `multi-grumpy` protocol is
+  selected at runtime by `agentic-orchestrator.yml`: a read-only `route` job calls
+  `lib.route` (scans all protocols' `triggers` blocks, matches `github.event`,
+  errors loudly if ≥2 match), then calls the reusable `agentic-engine.yml`
+  (`on: workflow_call`) with the selected protocol path. Inside the engine,
+  `plan` runs `next.py` **unbranched** for `pull_request`/`issue_comment`
   (→ action `run-fanout`, `branches=[grumpy,security]`) and **branched**
   (`BRANCH=<payload.branch> next.py … continue`) for `repository_dispatch:
   protocol-continue` (→ one branch). `dispatch`/`checks`/`advance` are a
@@ -260,6 +264,8 @@ and built so the v1 single-agent path stays byte-identical (the regression guard
   last leg clobbers the others. The four v1 trust zones are preserved per leg
   (plan = engine-pre; dispatch = agent-trigger; checks = read-only ground truth,
   **no write tokens**; advance = sole state writer + publisher).
+  The per-protocol trigger shim (`multi-grumpy-trigger.yml`) is deleted; no
+  per-protocol workflow YAML remains.
 
 - **The security agent** (`.github/workflows/security-agent.md` → compiled
   `security-agent.lock.yml`) is a thin gh-aw clone of grumpy-agent that emits

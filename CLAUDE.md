@@ -14,9 +14,9 @@ Two example protocols exercise the engine:
   Still fully supported by the engine and used as the regression-guard baseline.
 - **`multi-grumpy`** (`.github/agent-factory/protocols/multi-grumpy/`) — the v2 fan-out protocol that
   reviews via two parallel agents (`grumpy` + a `security` stub) joined under a
-  strict barrier. **This is the protocol `orchestrator.yml` currently deploys**
-  (it hardcodes `.github/agent-factory/protocols/multi-grumpy/protocol.json`), so a live `/grumpy` or
-  PR-open today runs the fan-out, not the single-agent path.
+  strict barrier. A live `/grumpy` or PR-open today runs the fan-out via the
+  router (`agentic-orchestrator.yml`), which selects this protocol through
+  `lib.route` scanning `protocol.json` `triggers` blocks at runtime.
 
 The deep design rationale lives in `docs/HOW-IT-WORKS.md`; what is/isn't
 implemented and why (deviations from the original spec) lives in `docs/STATUS.md`.
@@ -63,7 +63,11 @@ deliberate.
   publish/*            publish hook (trusted, zone 4)
 
 .github/workflows/
-  orchestrator.yml     the 4 trust zones; maps GitHub events -> engine commands
+  agentic-orchestrator.yml  the router: union static on:, read-only route job
+                       (lib.route scans all protocols' triggers), then calls the
+                       reusable engine. Replaces the per-protocol trigger shim.
+  agentic-engine.yml   reusable on:workflow_call engine — the 4 trust zones
+                       (plan→dispatch→checks→advance) for one protocol path.
   grumpy-agent.md      gh-aw agent (v1 reviewer) -> compiled grumpy-agent.lock.yml
   security-agent.md    gh-aw agent (v2 security stub) -> security-agent.lock.yml
   protocol-join.yml    serialized join evaluator (v2)
@@ -74,7 +78,7 @@ you do NOT touch `.github/agent-factory/engine/`.** The engine reads the protoco
 `protocol.json` `.name`, derives the state path `<protocol-id>/<instance-key>.yaml`,
 and resolves checks/publish hooks from the protocol directory.
 
-## The four trust zones (per iteration, in orchestrator.yml)
+## The four trust zones (per iteration, in agentic-engine.yml)
 
 The invariant: **the engine and the agent never share a job or a credential.**
 
@@ -89,7 +93,7 @@ The checks job re-fetches `gh pr diff` itself — it never trusts agent-produced
 data. The advance job reads only check *verdicts* to decide; it reads evidence
 only to *render* the already-decided review.
 
-**Security rule when editing the orchestrator:** agent-derived strings
+**Security rule when editing the router or engine:** agent-derived strings
 (`feedback`, `verdicts`, filenames) are passed to shell steps via `env:`, NEVER
 interpolated into `run:` blocks — otherwise a crafted finding could inject shell
 commands into the job holding the state PAT.
@@ -166,7 +170,7 @@ Key frontmatter facts (see `docs/STATUS.md` for the security rationale):
 
 - **State branch is sacred:** advance `agentic-state` only by fast-forward push
   (CAS). Never force-push it. Full audit trail: `git log agentic-state -- <protocol-id>/<instance-key>.yaml`.
-- **Keep `orchestrator.yml` and the agent locks on the default branch (`main`)** —
+- **Keep `agentic-orchestrator.yml`, `agentic-engine.yml`, and the agent locks on the default branch (`main`)** —
   that's where workflows run from for `issue_comment` / `repository_dispatch`.
   Never commit them onto a demo PR branch (it pollutes the reviewed diff).
 - `gh secret set NAME --body -` stores the literal `-`, not stdin. Use `--body "$VALUE"`.
