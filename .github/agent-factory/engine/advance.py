@@ -329,6 +329,12 @@ def main():
             lib.set_check_run(pid, sha, "completed", "failure", "Gate blocked",
                               csum or "A required gate did not pass; pipeline halted.")
             lib.set_check_run(cr_name, sha, "completed", "failure", "Gate blocked", csum)
+            # Stamp a durable marker distinguishing this BLOCK from an exhaustion
+            # (both write state:failed). The HITL /override command (next.py) reads
+            # this to know there is a blocked gate to force past, and which phase.
+            inst_data = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+            inst_data["halted"] = {"phase": phase, "reason": "blocked", "sha": sha}
+            lib.dump_yaml(inf, inst_data)
             lib.cas_push(dir_, f"{instance}: phase {phase} blocked → pipeline halted")
         elif is_agent_phase:
             # GATE CLEAR → advance the cursor and launch the next phase.
