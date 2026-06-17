@@ -167,15 +167,18 @@ def route(protocols_dir, event_name, action="", comment_body="",
     protocols/*/protocol.json `triggers` blocks. Protocol-agnostic router core.
 
     Returns {"protocol": <path>, "command": <cmd>, "skip": <bool>}:
-      - repository_dispatch (dispatch_protocol set): pass it through, no scan.
-        The engine re-derives the command from the dispatch type.
+      - repository_dispatch (dispatch_protocol set): the dispatch carries the
+        protocol NAME (advance.py sends pid; protocol-join.yml rebuilds the path
+        the same way), so reconstruct <protocols_dir>/<name>/protocol.json — the
+        engine needs a path to open. No scan; command re-derived from the type.
       - issue_comment on a non-PR issue: skip (the engine ignores these anyway).
       - entry event (pull_request / PR issue_comment): glob protocols in sorted
         order, run match_trigger on each; 0 matches -> skip, exactly 1 -> route,
         >=2 -> raise ValueError (ambiguous; the router job then fails loudly).
     """
     if dispatch_protocol:
-        return {"protocol": dispatch_protocol, "command": "", "skip": False}
+        return {"protocol": os.path.join(protocols_dir, dispatch_protocol, "protocol.json"),
+                "command": "", "skip": False}
     if event_name == "issue_comment" and not is_pr_comment:
         return {"protocol": "", "command": "", "skip": True}
     matches = []

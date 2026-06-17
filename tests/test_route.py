@@ -64,12 +64,13 @@ def test_non_pr_comment_skips_without_scanning():
         assert r["skip"] is True
 
 
-def test_dispatch_protocol_passthrough():
-    # repository_dispatch: protocol is carried on the payload; no scan, no skip.
-    r = lib.route("/nonexistent", "repository_dispatch", "",
-                  dispatch_protocol=".github/agent-factory/protocols/multi-grumpy/protocol.json")
+def test_dispatch_protocol_resolves_name_to_path():
+    # repository_dispatch carries the protocol NAME (advance.py sends pid); route
+    # reconstructs <protocols_dir>/<name>/protocol.json — the convention join uses.
+    import os
+    r = lib.route("protocols", "repository_dispatch", "", dispatch_protocol="multi-grumpy")
     assert r["skip"] is False
-    assert r["protocol"] == ".github/agent-factory/protocols/multi-grumpy/protocol.json"
+    assert r["protocol"] == os.path.join("protocols", "multi-grumpy", "protocol.json")
 
 
 def test_ambiguous_match_raises():
