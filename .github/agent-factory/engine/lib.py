@@ -442,6 +442,32 @@ def post_pr_comment(pr, body):
         sys.stderr.write(f"[engine] pr comment post failed (needs issues:write): {result.stderr.strip()}\n")
 
 
+def finalize_superseded_comment(pr, cid, body):
+    """One-time edit of an ABANDONED status comment on reset: PATCH the comment
+    `cid` to `body` (a superseded banner prepended above its frozen final state),
+    then never touch it again — the caller drops status_comment_id so the next
+    run creates a fresh comment. Best-effort: a failure (e.g. the comment was
+    deleted) is logged, not fatal, so it never aborts the reset. ENGINE_LOCAL
+    short-circuits (and logs, so tests can assert the call)."""
+    if not cid:
+        return
+    if os.environ.get("ENGINE_LOCAL", "0") == "1":
+        sys.stderr.write(f"[ENGINE_LOCAL] supersede comment {cid} pr#{pr}: {body}\n")
+        return
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    publish_token = os.environ.get("PUBLISH_TOKEN", "")
+    env = dict(os.environ)
+    if publish_token:
+        env["GH_TOKEN"] = publish_token
+    result = subprocess.run(
+        ["gh", "api", "-X", "PATCH", f"repos/{repo}/issues/comments/{cid}",
+         "-f", f"body={body}"],
+        text=True, capture_output=True, env=env,
+    )
+    if result.returncode != 0:
+        sys.stderr.write(f"[engine] supersede comment {cid} failed (non-fatal): {result.stderr.strip()}\n")
+
+
 def render_fanout_status_body(dir_, pid, instance, proto):
     """
     render_fanout_status_body <state_dir> <pid> <instance> <protocol.json>

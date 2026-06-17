@@ -382,9 +382,10 @@ def test_multiphase_restart_clears_stale_prior_run_state(tmp_path, engine_env):
     """A second `start` (a `/review` re-trigger) must reset the WHOLE instance,
     not just re-seed the first phase. Stale later-phase state files and instance
     markers (joined / overrides / halted) from the prior run must be cleared and
-    head_sha refreshed, while status_comment_id is preserved (one upserted
-    comment). This is the PR #69 bug: the status comment kept showing stale
-    `review · grumpy/security` sections after `/review`."""
+    head_sha refreshed. The prior run's status comment is ABANDONED, not reused:
+    its id is dropped (so a fresh comment is created) and it gets one final
+    `superseded` edit. This is the PR #69 bug: the status comment kept showing
+    stale `review · grumpy/security` sections after `/review`."""
     # 1) First run: seed gate + instance at an old head, push.
     work1 = tmp_path / "state1"
     run_next(work1, "pr-1", MINI, "start", engine_env, head="oldsha")
@@ -413,8 +414,11 @@ def test_multiphase_restart_clears_stale_prior_run_state(tmp_path, engine_env):
     assert not inst2.get("overrides")
     assert not inst2.get("halted")
     assert inst2["head_sha"] == "newsha"
-    # Same PR comment is re-used across the restart.
-    assert inst2["status_comment_id"] == 12345
+    # Old comment ABANDONED: its id is dropped so a fresh comment is created,
+    # and the old one (12345) got a final "superseded" edit (ENGINE_LOCAL logs it).
+    assert "status_comment_id" not in inst2
+    assert "[ENGINE_LOCAL] supersede comment 12345" in r.stderr
+    assert "Superseded" in r.stderr
     # First phase re-seeded fresh.
     gate = lib.load_yaml(b2 + "/gate.yaml")
     assert gate["state"] == "gate" and gate["iteration"] == 1

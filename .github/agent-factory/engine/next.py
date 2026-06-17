@@ -101,8 +101,11 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
     markers (joined / overrides / halted) would otherwise survive and keep
     rendering in the status comment, and head_sha would stay pinned to the old
     commit. We delete every state file under the instance dir and rebuild
-    _instance.yaml from scratch, preserving ONLY status_comment_id so the same
-    upserted PR comment is reused across restarts. On a phase advance / override
+    _instance.yaml from scratch. The prior run's status comment is ABANDONED, not
+    reused: it gets one final "superseded" edit (banner above its frozen state)
+    and then status_comment_id is dropped, so this run creates a NEW comment —
+    one edited-in-place comment per run reads far more clearly than a single
+    comment rewritten across restarts. On a phase advance / override
     (reset_instance=False) earlier phases must be preserved, so we mutate in
     place exactly as before."""
     phase_state = lib.state_by_id(proto_data, phase_id)
@@ -116,16 +119,24 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
 
     prev = lib.load_yaml(inf) if os.path.isfile(inf) else {}
     if reset_instance:
+        # Abandon the prior run's status comment so this run gets a FRESH one.
+        # Render its final state FIRST (the files still exist), edit the old
+        # comment once with a "superseded" banner above that frozen snapshot,
+        # then drop the id — ensure_status_comment creates the new comment.
+        old_cid = prev.get("status_comment_id")
+        if old_cid:
+            pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+            frozen = lib.render_instance_status_body(DIR, PID, INSTANCE, PROTO)
+            banner = (f"↻ _Superseded — a newer run started (new commit or "
+                      f"`/review`); see the newest **{PID} · {INSTANCE}** comment below._")
+            lib.finalize_superseded_comment(pr, old_cid, f"{banner}\n\n{frozen}")
         # Wipe every prior-run state file (phase yamls + fan-out legs + the old
-        # _instance.yaml); cas_push stages the deletions. Keep only the comment id.
-        preserved_cid = prev.get("status_comment_id")
+        # _instance.yaml); cas_push stages the deletions. Start the instance clean.
         for name in os.listdir(inst_dir):
             p = os.path.join(inst_dir, name)
             if os.path.isfile(p):
                 os.remove(p)
         inst = {}
-        if preserved_cid:
-            inst["status_comment_id"] = preserved_cid
     else:
         inst = prev
 
