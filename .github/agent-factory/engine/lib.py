@@ -161,6 +161,41 @@ def agent_workflow(protocol, phase="", branch=""):
     return ""
 
 
+def route(protocols_dir, event_name, action="", comment_body="",
+          dispatch_protocol="", is_pr_comment=True):
+    """Pick the protocol to run for an incoming event by scanning all
+    protocols/*/protocol.json `triggers` blocks. Protocol-agnostic router core.
+
+    Returns {"protocol": <path>, "command": <cmd>, "skip": <bool>}:
+      - repository_dispatch (dispatch_protocol set): pass it through, no scan.
+        The engine re-derives the command from the dispatch type.
+      - issue_comment on a non-PR issue: skip (the engine ignores these anyway).
+      - entry event (pull_request / PR issue_comment): glob protocols in sorted
+        order, run match_trigger on each; 0 matches -> skip, exactly 1 -> route,
+        >=2 -> raise ValueError (ambiguous; the router job then fails loudly).
+    """
+    if dispatch_protocol:
+        return {"protocol": dispatch_protocol, "command": "", "skip": False}
+    if event_name == "issue_comment" and not is_pr_comment:
+        return {"protocol": "", "command": "", "skip": True}
+    matches = []
+    for path in sorted(glob.glob(os.path.join(protocols_dir, "*", "protocol.json"))):
+        with open(path) as f:
+            proto = json.load(f)
+        cmd = match_trigger(proto, event_name, action, comment_body)
+        if cmd:
+            matches.append((path, cmd))
+    if not matches:
+        return {"protocol": "", "command": "", "skip": True}
+    if len(matches) > 1:
+        names = ", ".join(p for p, _ in matches)
+        raise ValueError(
+            f"ambiguous route: {len(matches)} protocols match "
+            f"{event_name}/{action or comment_body}: {names}")
+    path, cmd = matches[0]
+    return {"protocol": path, "command": cmd, "skip": False}
+
+
 def next_phase_id(protocol, phase_id):
     """The next PHASE (agent|fanout state) reached by following `.next` from
     phase_id. Returns None if `.next` is absent or is not itself a phase
@@ -516,6 +551,21 @@ def _cli(argv):
         ph = args[1] if len(args) > 1 else ""
         br = args[2] if len(args) > 2 else ""
         print(agent_workflow(proto, ph, br))
+    elif cmd == "route":
+        # route <protocols_dir> <event_name> <action> <comment_body> <dispatch_protocol> <is_pr_comment>
+        pdir = args[0]
+        ev = args[1] if len(args) > 1 else ""
+        act = args[2] if len(args) > 2 else ""
+        body = args[3] if len(args) > 3 else ""
+        disp = args[4] if len(args) > 4 else ""
+        ispr = (args[5].lower() == "true") if len(args) > 5 else True
+        try:
+            r = route(pdir, ev, act, body, disp, ispr)
+        except ValueError as e:
+            sys.stderr.write(f"lib.py route: {e}\n")
+            sys.exit(1)
+        print(f"protocol={r['protocol']}")
+        print(f"skip={'true' if r['skip'] else 'false'}")
     else:
         sys.stderr.write(f"lib.py: unknown subcommand {cmd}\n")
         sys.exit(2)
