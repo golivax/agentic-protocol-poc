@@ -2,9 +2,11 @@
   "name": "grumpy-review",
   "version": "0.1.0",
   "triggers": [
-    { "on": "issue_comment", "comment_prefix": "/grumpy", "command": "start" },
-    { "on": "pull_request",  "actions": ["opened", "reopened"], "command": "start" },
-    { "on": "pull_request",  "actions": ["synchronize"], "command": "reset" }
+    {
+      "on": "issue_comment",
+      "comment_prefix": "/v1-grumpy",
+      "command": "start"
+    }
   ],
   "states": [
     {

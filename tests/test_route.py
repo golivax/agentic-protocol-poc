@@ -127,3 +127,26 @@ def test_cli_route_ambiguous_exits_nonzero(tmp_path):
     r = _cli(pdir, "pull_request", "opened", "", "", "false")
     assert r.returncode != 0
     assert "ambiguous" in r.stderr.lower()
+
+
+# Regression: the REAL repo protocols must not route ambiguously (live-run guard).
+REAL_PROTOCOLS = str(ROOT / ".github/agent-factory/protocols")
+
+
+def test_real_protocols_grumpy_comment_routes_to_multi_grumpy():
+    r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/grumpy", is_pr_comment=True)
+    assert r["skip"] is False
+    assert r["protocol"].endswith("multi-grumpy/protocol.json")
+
+
+def test_real_protocols_pr_opened_routes_to_multi_grumpy():
+    r = lib.route(REAL_PROTOCOLS, "pull_request", "opened", "")
+    assert r["skip"] is False
+    assert r["protocol"].endswith("multi-grumpy/protocol.json")
+
+
+def test_real_protocols_v1_grumpy_comment_routes_to_grumpy():
+    r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/v1-grumpy", is_pr_comment=True)
+    assert r["skip"] is False
+    assert r["protocol"].endswith("grumpy/protocol.json")
+    assert "multi-grumpy" not in r["protocol"]
