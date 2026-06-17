@@ -8,32 +8,28 @@ ROOT = Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
 
 
-def _probe_check(tmp_path):
-    """A check that echoes PR_BODY/PR_TITLE from its env into feedback."""
-    c = tmp_path / "echo-pr.py"
-    c.write_text(
+def _make_protocol(tmp_path):
+    """A temp protocol dir with a probe check at checks/echo-pr.py resolved by name."""
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    probe = checks / "echo-pr.py"
+    probe.write_text(
         "#!/usr/bin/env python3\n"
         "import json, os\n"
         "print(json.dumps({'check':'echo-pr','pass':True,"
         "'feedback':'body=' + os.environ.get('PR_BODY','') + '|title=' + os.environ.get('PR_TITLE','')}))\n"
     )
-    c.chmod(0o755)
-    return c
-
-
-def _protocol(tmp_path, check_path):
-    p = tmp_path / "protocol.json"
-    p.write_text(json.dumps({
+    probe.chmod(0o755)
+    proto = tmp_path / "protocol.json"
+    proto.write_text(json.dumps({
         "name": "probe",
-        "states": [{"id": "s", "kind": "agent",
-                    "checks": [{"run": "echo-pr", "exec": str(check_path)}]}],
+        "states": [{"id": "s", "kind": "agent", "checks": [{"run": "echo-pr"}]}],
     }))
-    return p
+    return proto
 
 
 def test_checks_receive_pr_body_and_title(tmp_path):
-    check = _probe_check(tmp_path)
-    proto = _protocol(tmp_path, check)
+    proto = _make_protocol(tmp_path)
     ev = tmp_path / "evidence.json"; ev.write_text("{}")
     diff = tmp_path / "diff.txt"; diff.write_text("")
     files = tmp_path / "files.txt"; files.write_text("")
