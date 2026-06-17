@@ -11,7 +11,7 @@ import sys
 
 
 def main():
-    ev_path = sys.argv[1]
+    ev_path = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
         with open(ev_path) as fh:
             evidence = json.load(fh)

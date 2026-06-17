@@ -15,7 +15,7 @@
       "max_iterations": 2,
       "params": { "ai_checks": ["spec-adherence", "plan-adherence"] },
       "checks": [
-        { "run": "schema-valid",            "on_fail": "iterate"  },
+        { "run": "preflight-schema-valid",   "on_fail": "iterate"  },
         { "run": "adherence-coverage",      "on_fail": "iterate"  },
         { "run": "traces-exist-in-diff",    "on_fail": "iterate"  },
         { "run": "spec-present",            "on_fail": "block"    },

@@ -59,16 +59,16 @@ def test_coverage_neither_artifact_empty_evidence_passes(tmp_path):
 # schema-valid: preflight evidence shape ---------------------------------------
 
 def test_schema_valid_ok(tmp_path):
-    v = _run("schema-valid.py", _evidence(["spec-adherence"]), ["docs/specs/s.md"], tmp_path, AI_PARAMS)
+    v = _run("preflight-schema-valid.py", _evidence(["spec-adherence"]), ["docs/specs/s.md"], tmp_path, AI_PARAMS)
     assert v["check"] == "schema-valid" and v["pass"] is True
 
 
 def test_schema_valid_rejects_bad_status(tmp_path):
     bad = {"checks": [{"id": "spec-adherence", "status": "MAYBE"}], "examined": ["x"]}
-    v = _run("schema-valid.py", bad, ["docs/specs/s.md"], tmp_path, AI_PARAMS)
+    v = _run("preflight-schema-valid.py", bad, ["docs/specs/s.md"], tmp_path, AI_PARAMS)
     assert v["pass"] is False
 
 
 def test_schema_valid_rejects_missing_checks_key(tmp_path):
-    v = _run("schema-valid.py", {"examined": ["x"]}, ["docs/specs/s.md"], tmp_path, AI_PARAMS)
+    v = _run("preflight-schema-valid.py", {"examined": ["x"]}, ["docs/specs/s.md"], tmp_path, AI_PARAMS)
     assert v["pass"] is False

@@ -3,7 +3,7 @@
 with the engine's blocking signal into clear/blocked, and writes a custody-shaped
 verdict.json payload for publish-verdict.
 
-ABI: conclude-preflight.py <evidence.json> <instance-key>;  env BLOCKING ("1"/"").
+ABI: conclude-preflight.py <evidence.json> <instance-key>;  env BLOCKING ("1"/"0").
 Prints {"conclusion","summary","blocked"}. blocked = BLOCKING OR any adherence fail."""
 import json
 import os
