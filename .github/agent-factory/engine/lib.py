@@ -419,6 +419,29 @@ def upsert_status_comment(sf, pr, body):
         )
 
 
+def post_pr_comment(pr, body):
+    """
+    post_pr_comment <pr> <body>
+    Post a NEW (untracked) PR/issue comment — used for one-off engine notices
+    (e.g. HITL override announcements and refusals). Unlike upsert_status_comment
+    it does not track or edit an id. Best-effort; ENGINE_LOCAL short-circuits.
+    """
+    if os.environ.get("ENGINE_LOCAL", "0") == "1":
+        sys.stderr.write(f"[ENGINE_LOCAL] pr comment pr#{pr}: {body}\n")
+        return
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    publish_token = os.environ.get("PUBLISH_TOKEN", "")
+    env = dict(os.environ)
+    if publish_token:
+        env["GH_TOKEN"] = publish_token
+    result = subprocess.run(
+        ["gh", "api", f"repos/{repo}/issues/{pr}/comments", "-f", f"body={body}"],
+        text=True, capture_output=True, env=env,
+    )
+    if result.returncode != 0:
+        sys.stderr.write("[engine] pr comment post failed (needs issues:write)\n")
+
+
 def render_fanout_status_body(dir_, pid, instance, proto):
     """
     render_fanout_status_body <state_dir> <pid> <instance> <protocol.json>
@@ -537,6 +560,9 @@ def _cli(argv):
     elif cmd == "upsert-status-comment":
         # upsert-status-comment <state_file> <pr> <body>
         upsert_status_comment(*args)
+    elif cmd == "post-pr-comment":
+        # post-pr-comment <pr> <body>
+        post_pr_comment(args[0], args[1])
     elif cmd == "cas-push":
         # cas-push <dir> <message>
         cas_push(*args)

@@ -110,3 +110,13 @@ def test_exhaustion_writes_no_halted_marker(state_origin, tmp_path):
     assert "halted" not in inf
     pf = yaml.safe_load((tmp_path / "verify" / PID / inst / "preflight.yaml").read_text())
     assert pf["state"] == "failed"
+
+
+def test_post_pr_comment_local_noop(state_origin, capfd):
+    """In ENGINE_LOCAL the helper must not call gh; it logs to stderr and returns None."""
+    out, err, rc = _run(
+        LIB_PY, ["post-pr-comment", "7", "hello world"],
+        _env(state_origin),
+    )
+    assert rc == 0
+    assert "pr#7" in err and "hello world" in err
