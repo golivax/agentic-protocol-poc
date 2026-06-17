@@ -1,20 +1,7 @@
 protocol: code-review-pipeline
 instance: pr-62
 state: preflight
-iteration: 2
+iteration: 1
 gates: {}
-head_sha: 6133896617a915df48896342d943e71e1fee6638
-history:
-- iteration: 1
-  agent_run_id: '27663550161'
-  checks:
-    schema-valid: fail
-    adherence-coverage: fail
-    traces-exist-in-diff: pass
-    spec-present: pass
-    plan-present: pass
-    docs-updated-with-code: pass
-    tests-updated-with-code: pass
-  feedback: 'schema invalid: missing or non-list `checks`; missing or non-list `examined`;
-    adherence coverage off: missing verdict(s): [''plan-adherence'', ''spec-adherence'']'
-status_comment_id: 4725584147
+head_sha: 657e290beb6266ccd55b8bd95e247491e3468392
+history: []
