@@ -188,6 +188,12 @@ generating one is "write the verifier + declare its failure policy".
 
 ## Orchestrator B→A: collapse the trigger shim into a single self-routing workflow
 
+> **PROMOTED (2026-06-16): scheduled to run BEFORE M3 (preflight port).** Design brief
+> with resolved constraints + open questions: `docs/superpowers/specs/2026-06-16-orchestrator-b-to-a-design.md`.
+> Key resolved facts: reusable-call jobs allow only `name/uses/with/secrets/needs/if/permissions`
+> (no `concurrency`/`strategy`/`env`) → concurrency goes at the router WORKFLOW level
+> (github.event-based, like the shim); router handles one protocol per event. Decision: implement A.
+
 **What:** Evolve the generic orchestrator from **approach B** (an engine-owned
 reusable `workflow_call` engine + a thin per-protocol *trigger shim* that
 declares `on:` and calls it) to **approach A** (a single self-routing
