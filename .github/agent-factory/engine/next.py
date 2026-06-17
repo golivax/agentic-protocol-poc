@@ -139,10 +139,76 @@ def seed_and_dispatch_phase(phase_id, command):
                           "reason": f"phase:{phase_id}", "phase": phase_id}))
 
 
+def do_override():
+    """HITL escape-hatch: a write-access human forces a *blocked* gate to advance
+    one phase. Authorization happened in the workflow (ctx step); next.py only ever
+    sees an authorized override. Reads the `halted` marker on _instance.yaml. On a
+    valid blocked marker, records the override beside the failure, clears the
+    marker, and seeds+dispatches the next phase. Otherwise posts an explanatory
+    comment and halts — no state change. emit_halt is defined below this point in
+    the script, so the halt JSON is printed inline here."""
+    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    inf = lib.instance_file(DIR, PID, INSTANCE)
+
+    def refuse(message, reason):
+        lib.post_pr_comment(pr, message)
+        print(json.dumps({"action": "halt", "iteration": 0, "feedback": "", "reason": reason}))
+
+    if not os.path.isfile(inf):
+        refuse(f"Nothing to override — no {PID} run exists for this PR.",
+               "override: no instance")
+        return
+
+    inst = lib.load_yaml(inf)
+    halted = inst.get("halted") or {}
+
+    if halted.get("reason") == "blocked":
+        blocked_phase = halted.get("phase")
+        nxt = lib.next_phase_id(proto_data, blocked_phase)
+        if not nxt:
+            refuse("The blocked gate is the final phase; there is nothing to advance to.",
+                   "override: no next phase")
+            return
+        actor = os.environ.get("OVERRIDE_ACTOR", "")
+        reason = os.environ.get("OVERRIDE_REASON", "")
+        inst.setdefault("overrides", []).append(
+            {"phase": blocked_phase, "actor": actor, "reason": reason})
+        inst.pop("halted", None)
+        lib.dump_yaml(inf, inst)  # persist before seed_and_dispatch_phase reloads inf
+        note = f"⚠️ {blocked_phase} gate was blocked — overridden by @{actor}; proceeding to {nxt}."
+        if reason:
+            note += f"\n\n> {reason}"
+        lib.post_pr_comment(pr, note)
+        # Advance exactly one phase. seed_and_dispatch_phase reloads _instance.yaml
+        # (keeping the overrides[] record + cleared halted just written), sets the
+        # cursor to nxt, CAS-pushes, and emits that phase's run action.
+        seed_and_dispatch_phase(nxt, "override")
+        return
+
+    # Not a blocked halt → give a precise message: exhausted vs simply not-halted.
+    cursor = inst.get("phase") or ""
+    cursor_sf = lib.state_file(DIR, PID, INSTANCE, phase=cursor) if cursor else ""
+    cursor_state = (lib.load_yaml(cursor_sf).get("state")
+                    if cursor_sf and os.path.isfile(cursor_sf) else "")
+    if cursor_state == "failed":
+        refuse(f"The {cursor} gate is exhausted (it could not produce a valid result), "
+               f"not blocked. Override only applies to a gate that ran and returned a "
+               f"blocking verdict; re-run the pipeline instead.",
+               "override: exhausted")
+    else:
+        refuse("Nothing to override — the pipeline is not currently halted at a "
+               f"blocked gate (current phase: {cursor}).",
+               "override: not halted")
+
+
 # Unbranched start/reset on a fan-out protocol routes to the planner BEFORE the
 # single-agent agent-unit discovery (which has no kind:"agent" state to read and
 # would error). The branched fan-out path (continue with BRANCH set) and the
 # single-agent path both fall through this guard unchanged.
+if COMMAND == "override":
+    do_override()
+    sys.exit(0)
+
 if lib.is_multiphase(proto_data) and not PHASE and not BRANCH:
     # Multi-phase protocol, unbranched/unphased entry → seed the FIRST phase.
     if COMMAND in ("start", "reset"):
