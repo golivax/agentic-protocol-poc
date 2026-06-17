@@ -1,10 +1,10 @@
 protocol: code-review-pipeline
 instance: pr-72
-phase: preflight
+phase: review
 head_sha: d27ee332d26c6808b621a1cb6c65b370bc23fd20
 joined: false
 status_comment_id: 4734198544
-halted:
-  phase: preflight
-  reason: blocked
-  sha: d27ee332d26c6808b621a1cb6c65b370bc23fd20
+overrides:
+- phase: preflight
+  actor: golivax
+  reason: advancing to review to set up the reset-on-new-commit test
