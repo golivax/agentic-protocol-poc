@@ -44,7 +44,7 @@ jobs:
       protocol: ${{ steps.r.outputs.protocol }}
       skip: ${{ steps.r.outputs.skip }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: r
         env:
           EVENT_NAME: ${{ github.event_name }}

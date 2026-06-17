@@ -46,7 +46,7 @@ jobs:
       branches: ${{ steps.plan.outputs.branches }}
       branch: ${{ steps.ctx.outputs.branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: ctx
         env:
           PROTO: ${{ inputs.protocol }}
@@ -180,7 +180,7 @@ jobs:
       matrix:
         branch: ${{ fromJSON(needs.plan.outputs.branches) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: wait
         env:
           GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
@@ -225,7 +225,7 @@ jobs:
           else
             printf '%s' "false" > /tmp/meta/agent_ok
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: runmeta-${{ matrix.branch || 'agent' }}
@@ -247,9 +247,9 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Download run meta
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: runmeta-${{ matrix.branch || 'agent' }}
           path: /tmp/meta
@@ -292,7 +292,7 @@ jobs:
           jq . <<<"$VERDICTS"
           mkdir -p /tmp/verdicts
           printf '%s' "$VERDICTS" > /tmp/verdicts/verdicts.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: verdicts-${{ matrix.branch || 'agent' }}
@@ -314,14 +314,14 @@ jobs:
       actions: read
       checks: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Download run meta
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: runmeta-${{ matrix.branch || 'agent' }}
           path: /tmp/meta
       - name: Download verdicts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: verdicts-${{ matrix.branch || 'agent' }}
           path: /tmp/verdicts
