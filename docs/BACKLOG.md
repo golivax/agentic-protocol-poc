@@ -68,6 +68,27 @@ existence; runs are heartbeats" model — a protocol can sit gated for weeks.
 
 ---
 
+## HITL override escape-hatch — remaining follow-ups
+
+The `/override` escape-hatch shipped and is live-verified (`docs/superpowers/specs/2026-06-17-hitl-override-gate-design.md`), but two items were deferred:
+
+- **Live-test the DENIED path with a non-write identity.** The authorized and
+  exhausted-refusal paths were exercised live; the *denied* path (a commenter
+  lacking `write`/`admin` → permission check fails → denial comment, no advance)
+  could not be driven because the only available identity is the repo owner
+  (admin). It is covered by the unit tests + the auth-gate code; confirm live once
+  a read-only collaborator / second account is available.
+- **Clean up the accumulated live-test artifacts.** Disposable PRs and branches
+  remain on `golivax/agentic-protocol-poc`: PRs #62 / #65 / #66 (+ branches
+  `m3-live-clear` / `m3-live-blocked-absence` / `m3-live-blocked-adherence`) and
+  the older #55 / `m2b-live2`. Close/delete when convenient. (Note: #65 was
+  re-triggered and overridden during the HITL live test, so it now carries a
+  completed review fan-out.)
+
+**Status:** not started.
+
+---
+
 ## Configurable feedback scope (last vs. cumulative)
 
 **What:** Make the feedback injected into a retry's prompt configurable — either
