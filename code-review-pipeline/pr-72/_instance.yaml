@@ -4,3 +4,7 @@ instance: pr-72
 phase: preflight
 head_sha: 93c71eeae6a9ade8038bb560f3e3ee2b6797a605
 joined: false
+halted:
+  phase: preflight
+  reason: blocked
+  sha: 93c71eeae6a9ade8038bb560f3e3ee2b6797a605
