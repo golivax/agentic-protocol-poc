@@ -9,3 +9,7 @@ def greet(name):
     # naming + no input validation — grist for the grumpy reviewer
     msg = "hello " + name
     return msg
+
+
+def farewell(name):
+    return "bye " + name
