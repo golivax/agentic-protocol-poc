@@ -96,7 +96,8 @@ jobs:
                   REASON="${COMMENT_BODY#/override}"   # strip the command prefix
                   REASON="${REASON# }"                 # strip one leading space
                   echo "override_actor=$COMMENTER_LOGIN" >> "$GITHUB_OUTPUT"
-                  { echo "override_reason<<GH_EOF"; printf '%s\n' "$REASON"; echo "GH_EOF"; } >> "$GITHUB_OUTPUT"
+                  DELIM="ovr_$(openssl rand -hex 16)"
+                  { echo "override_reason<<$DELIM"; printf '%s\n' "$REASON"; echo "$DELIM"; } >> "$GITHUB_OUTPUT"
                 else
                   gh api "repos/${{ github.repository }}/issues/$PR/comments" \
                     -f "body=@$COMMENTER_LOGIN /override requires write access to this repository." >/dev/null 2>&1 || true
