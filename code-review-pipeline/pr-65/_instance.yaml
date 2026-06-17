@@ -1,9 +1,9 @@
 protocol: code-review-pipeline
 instance: pr-65
-phase: preflight
+phase: review
 head_sha: e24d06fe6e404bd216f73689a152aacca86ccd32
 joined: false
-halted:
-  phase: preflight
-  reason: blocked
-  sha: e24d06fe6e404bd216f73689a152aacca86ccd32
+overrides:
+- phase: preflight
+  actor: golivax
+  reason: accepting the missing-spec risk for this hotfix
