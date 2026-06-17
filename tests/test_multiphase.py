@@ -366,3 +366,55 @@ def test_e2e_mini_pipeline_clear_path(tmp_path, engine_env):
     assert r5.returncode == 0, r5.stderr
     inst5 = lib.load_yaml(str(s5) + "/pipeline-mini/pr-1/_instance.yaml")
     assert inst5["joined"] is True
+
+
+# --- restart resets the WHOLE instance (the /review re-trigger & synchronize bug) ---
+
+def _git_push_all(work_dir, msg):
+    subprocess.run(["git", "-C", str(work_dir), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(work_dir), "-c", "user.name=t", "-c",
+                    "user.email=t@t", "commit", "-qm", msg], check=True)
+    subprocess.run(["git", "-C", str(work_dir), "push", "-q", "origin",
+                    "agentic-state"], check=True)
+
+
+def test_multiphase_restart_clears_stale_prior_run_state(tmp_path, engine_env):
+    """A second `start` (a `/review` re-trigger) must reset the WHOLE instance,
+    not just re-seed the first phase. Stale later-phase state files and instance
+    markers (joined / overrides / halted) from the prior run must be cleared and
+    head_sha refreshed, while status_comment_id is preserved (one upserted
+    comment). This is the PR #69 bug: the status comment kept showing stale
+    `review · grumpy/security` sections after `/review`."""
+    # 1) First run: seed gate + instance at an old head, push.
+    work1 = tmp_path / "state1"
+    run_next(work1, "pr-1", MINI, "start", engine_env, head="oldsha")
+    base = str(work1) + "/pipeline-mini/pr-1"
+    # 2) Simulate the prior run having advanced to the fan-out phase, been
+    #    overridden + halted, and acquired a status comment; push it.
+    inst = lib.load_yaml(base + "/_instance.yaml")
+    inst["joined"] = True
+    inst["overrides"] = [{"phase": "gate", "actor": "x", "reason": "y"}]
+    inst["halted"] = {"phase": "gate", "reason": "blocked"}
+    inst["status_comment_id"] = 12345
+    lib.dump_yaml(base + "/_instance.yaml", inst)
+    lib.dump_yaml(base + "/work.alpha.yaml", {
+        "protocol": "pipeline-mini", "instance": "pr-1", "state": "work",
+        "iteration": 1, "gates": {}, "history": []})
+    _git_push_all(work1, "simulate prior run")
+    # 3) Second `start` (the /review re-trigger) at a NEW head, fresh clone.
+    work2 = tmp_path / "state2"
+    r = run_next(work2, "pr-1", MINI, "start", engine_env, head="newsha")
+    assert r.returncode == 0, r.stderr
+    b2 = str(work2) + "/pipeline-mini/pr-1"
+    # Stale later-phase leg gone.
+    assert not os.path.exists(b2 + "/work.alpha.yaml")
+    inst2 = lib.load_yaml(b2 + "/_instance.yaml")
+    assert inst2["joined"] is False
+    assert not inst2.get("overrides")
+    assert not inst2.get("halted")
+    assert inst2["head_sha"] == "newsha"
+    # Same PR comment is re-used across the restart.
+    assert inst2["status_comment_id"] == 12345
+    # First phase re-seeded fresh.
+    gate = lib.load_yaml(b2 + "/gate.yaml")
+    assert gate["state"] == "gate" and gate["iteration"] == 1

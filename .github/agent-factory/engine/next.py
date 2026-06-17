@@ -90,24 +90,55 @@ def start_fanout():
     emit_run_fanout(branches)
 
 
-def seed_and_dispatch_phase(phase_id, command):
+def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
     """Multi-phase: seed the named phase's state + the instance cursor, push,
     and emit the phase's run action. Used for the first phase (start/reset) and
-    for each subsequent phase (advance-phase)."""
+    for each subsequent phase (advance-phase).
+
+    reset_instance=True is the RESTART path (a fresh start/reset re-entering the
+    first phase). A restart must wipe the WHOLE prior run, not just re-seed phase
+    one: stale later-phase leg files (e.g. review.grumpy.yaml) and instance
+    markers (joined / overrides / halted) would otherwise survive and keep
+    rendering in the status comment, and head_sha would stay pinned to the old
+    commit. We delete every state file under the instance dir and rebuild
+    _instance.yaml from scratch, preserving ONLY status_comment_id so the same
+    upserted PR comment is reused across restarts. On a phase advance / override
+    (reset_instance=False) earlier phases must be preserved, so we mutate in
+    place exactly as before."""
     phase_state = lib.state_by_id(proto_data, phase_id)
     if phase_state is None:
         sys.stderr.write(f"[next] unknown phase '{phase_id}' in protocol\n")
         sys.exit(1)
     kind = phase_state.get("kind")
     inf = lib.instance_file(DIR, PID, INSTANCE)
-    os.makedirs(os.path.dirname(inf), exist_ok=True)
+    inst_dir = os.path.dirname(inf)
+    os.makedirs(inst_dir, exist_ok=True)
 
-    inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+    prev = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+    if reset_instance:
+        # Wipe every prior-run state file (phase yamls + fan-out legs + the old
+        # _instance.yaml); cas_push stages the deletions. Keep only the comment id.
+        preserved_cid = prev.get("status_comment_id")
+        for name in os.listdir(inst_dir):
+            p = os.path.join(inst_dir, name)
+            if os.path.isfile(p):
+                os.remove(p)
+        inst = {}
+        if preserved_cid:
+            inst["status_comment_id"] = preserved_cid
+    else:
+        inst = prev
+
     inst.setdefault("protocol", PID)
     inst.setdefault("instance", INSTANCE)
     inst["phase"] = phase_id
     if HEAD_SHA:
-        inst.setdefault("head_sha", HEAD_SHA)
+        # Restart refreshes the head to the new commit; an in-pipeline advance
+        # keeps the instance-seed head (per-phase files carry their own head_sha).
+        if reset_instance:
+            inst["head_sha"] = HEAD_SHA
+        else:
+            inst.setdefault("head_sha", HEAD_SHA)
     inst.setdefault("joined", False)
     lib.dump_yaml(inf, inst)
 
@@ -217,7 +248,8 @@ if lib.is_multiphase(proto_data) and not PHASE and not BRANCH:
     # Multi-phase protocol, unbranched/unphased entry → seed the FIRST phase.
     if COMMAND in ("start", "reset"):
         first = lib.phase_states(proto_data)[0]["id"]
-        seed_and_dispatch_phase(first, COMMAND)
+        # Fresh entry → restart: wipe any prior run's state for this instance.
+        seed_and_dispatch_phase(first, COMMAND, reset_instance=True)
         sys.exit(0)
     else:
         sys.stderr.write(f"[next] multi-phase '{COMMAND}' needs a PHASE\n")
