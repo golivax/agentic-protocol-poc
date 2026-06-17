@@ -45,7 +45,10 @@ pre-agent-steps:
       repo = sys.argv[1]
       pr = json.load(open('/tmp/gh-aw/agent/pr.json'))
       head = pr.get('headRefOid') or ''
-      files = [f['filename'] for f in pr.get('files', []) if f.get('status') != 'removed']
+      # `gh pr view --json files` returns objects keyed `path` (+ `changeType`),
+      # not the REST API's `filename`/`status`. Use `path`; include all changed
+      # files so the agent's scope matches the checks' `gh pr diff --name-only`.
+      files = [f['path'] for f in pr.get('files', [])]
       SPEC = re.compile(r'(^|/)docs/(superpowers/)?specs/|(^|/)(SPEC|REQUIREMENTS)\.md$|^specs/', re.I)
       PLAN = re.compile(r'(^|/)docs/(superpowers/)?plans?/|(^|/)PLAN\.md$|^plans?/', re.I)
       def read(path):
