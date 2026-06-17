@@ -45,6 +45,8 @@ jobs:
       phase: ${{ steps.plan.outputs.phase }}
       branches: ${{ steps.plan.outputs.branches }}
       branch: ${{ steps.ctx.outputs.branch }}
+      override_actor: ${{ steps.ctx.outputs.override_actor }}
+      override_reason: ${{ steps.ctx.outputs.override_reason }}
     steps:
       - uses: actions/checkout@v5
       - id: ctx
@@ -56,6 +58,8 @@ jobs:
           DISPATCH_TYPE: ${{ github.event.action }}
           PR_EVENT_ACTION: ${{ github.event.action }}
           COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENTER_LOGIN: ${{ github.event.comment.user.login }}
+          GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
         run: |
           # Derive (instance, command, branch, phase). Agent-derived strings
           # (payload fields, comment body) are read via env, never interpolated.
@@ -81,7 +85,25 @@ jobs:
             issue_comment)
               PR="${{ github.event.issue.number }}"
               INSTANCE="pr-$PR"
-              CMD=$(python3 .github/agent-factory/engine/lib.py match-trigger "$PROTO" issue_comment "" "$COMMENT_BODY") ;;
+              CMD=$(python3 .github/agent-factory/engine/lib.py match-trigger "$PROTO" issue_comment "" "$COMMENT_BODY")
+              if [ "$CMD" = "override" ]; then
+                # Authorize from TRUSTED fields only (login from the event, repo
+                # permission from the API) — never from the comment body. The body
+                # is used only to match the prefix and carry an optional reason.
+                PERM=$(gh api "repos/${{ github.repository }}/collaborators/$COMMENTER_LOGIN/permission" \
+                  --jq '.permission' 2>/dev/null || echo none)
+                if [ "$PERM" = "write" ] || [ "$PERM" = "admin" ]; then
+                  REASON="${COMMENT_BODY#/override}"   # strip the command prefix
+                  REASON="${REASON# }"                 # strip one leading space
+                  echo "override_actor=$COMMENTER_LOGIN" >> "$GITHUB_OUTPUT"
+                  { echo "override_reason<<GH_EOF"; printf '%s\n' "$REASON"; echo "GH_EOF"; } >> "$GITHUB_OUTPUT"
+                else
+                  gh api "repos/${{ github.repository }}/issues/$PR/comments" \
+                    -f "body=@$COMMENTER_LOGIN /override requires write access to this repository." >/dev/null 2>&1 || true
+                  CMD=""   # not authorized → the engine no-ops (plan/dispatch skip on empty command)
+                fi
+              fi
+              ;;
           esac
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
           echo "instance=$INSTANCE" >> "$GITHUB_OUTPUT"
@@ -106,6 +128,8 @@ jobs:
           PROTO: ${{ inputs.protocol }}
           BRANCH: ${{ steps.ctx.outputs.branch }}
           PHASE: ${{ steps.ctx.outputs.phase }}
+          OVERRIDE_ACTOR: ${{ steps.ctx.outputs.override_actor }}
+          OVERRIDE_REASON: ${{ steps.ctx.outputs.override_reason }}
         run: |
           # next.py reads BRANCH/PHASE from env. Empty BRANCH+PHASE → the v1/v2
           # legacy path; PHASE set → multi-phase; advance-phase seeds the cursor's phase.
