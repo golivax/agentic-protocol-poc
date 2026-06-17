@@ -1,10 +1,33 @@
 {
-  "name": "multi-grumpy",
+  "name": "code-review-pipeline",
   "version": "0.1.0",
   "triggers": [
-    { "on": "issue_comment", "comment_prefix": "/grumpy", "command": "start" }
+    { "on": "issue_comment", "comment_prefix": "/review", "command": "start" },
+    { "on": "pull_request",  "actions": ["opened", "reopened"], "command": "start" },
+    { "on": "pull_request",  "actions": ["synchronize"], "command": "reset" }
   ],
   "states": [
+    {
+      "id": "preflight",
+      "kind": "agent",
+      "workflow": "preflight-agent",
+      "evidence": "preflight.evidence.schema.json",
+      "max_iterations": 2,
+      "params": { "ai_checks": ["spec-adherence", "plan-adherence"] },
+      "checks": [
+        { "run": "schema-valid",            "on_fail": "iterate"  },
+        { "run": "adherence-coverage",      "on_fail": "iterate"  },
+        { "run": "traces-exist-in-diff",    "on_fail": "iterate"  },
+        { "run": "spec-present",            "on_fail": "block"    },
+        { "run": "plan-present",            "on_fail": "block"    },
+        { "run": "docs-updated-with-code",  "on_fail": "advisory" },
+        { "run": "tests-updated-with-code", "on_fail": "advisory" }
+      ],
+      "conclude": "conclude-preflight",
+      "publish": "publish-verdict",
+      "on_blocked": "halt",
+      "next": "review"
+    },
     {
       "id": "review",
       "kind": "fanout",

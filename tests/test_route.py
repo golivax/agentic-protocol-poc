@@ -157,10 +157,20 @@ def test_real_protocols_grumpy_comment_routes_to_multi_grumpy():
     assert r["protocol"].endswith("multi-grumpy/protocol.json")
 
 
-def test_real_protocols_pr_opened_routes_to_multi_grumpy():
+def test_real_protocols_pr_opened_routes_to_pipeline():
+    # After M3, the pipeline (not multi-grumpy) owns PR auto-triggers.
     r = lib.route(REAL_PROTOCOLS, "pull_request", "opened", "")
-    assert r["skip"] is False
-    assert r["protocol"].endswith("multi-grumpy/protocol.json")
+    assert r["skip"] is False and r["protocol"].endswith("code-review-pipeline/protocol.json")
+
+
+def test_real_protocols_review_comment_routes_to_pipeline():
+    r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/review", is_pr_comment=True)
+    assert r["skip"] is False and r["protocol"].endswith("code-review-pipeline/protocol.json")
+
+
+def test_real_protocols_grumpy_comment_still_routes_to_multi_grumpy():
+    r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/grumpy", is_pr_comment=True)
+    assert r["skip"] is False and r["protocol"].endswith("multi-grumpy/protocol.json")
 
 
 def test_real_protocols_v1_grumpy_comment_routes_to_grumpy():
