@@ -1,18 +1,7 @@
 protocol: code-review-pipeline
 instance: pr-65
-state: failed
+state: preflight
 iteration: 1
 gates: {}
 head_sha: e24d06fe6e404bd216f73689a152aacca86ccd32
-history:
-- iteration: 1
-  agent_run_id: '27664208853'
-  checks:
-    schema-valid: pass
-    adherence-coverage: pass
-    traces-exist-in-diff: pass
-    spec-present: fail
-    plan-present: fail
-    docs-updated-with-code: fail
-    tests-updated-with-code: fail
-  feedback: ''
+history: []
