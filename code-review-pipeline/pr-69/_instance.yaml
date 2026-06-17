@@ -1,6 +1,6 @@
 protocol: code-review-pipeline
 instance: pr-69
-phase: review
+phase: preflight
 head_sha: 893795b650c65f186ef9be039ab1dc55fd861756
 joined: true
 status_comment_id: 4733002143
