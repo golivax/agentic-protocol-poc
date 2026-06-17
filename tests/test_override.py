@@ -246,3 +246,4 @@ def test_review_still_routes_after_adding_override():
     )
     assert r.returncode == 0, r.stderr
     assert f"protocols/{PID}/protocol.json" in r.stdout
+    assert "skip=false" in r.stdout

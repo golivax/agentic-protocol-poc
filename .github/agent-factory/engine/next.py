@@ -174,6 +174,10 @@ def do_override():
         inst.setdefault("overrides", []).append(
             {"phase": blocked_phase, "actor": actor, "reason": reason})
         inst.pop("halted", None)
+        # Note: _instance.yaml's head_sha stays the instance-seed head (as on every
+        # phase advance — seed_and_dispatch_phase uses setdefault). The authoritative
+        # head the forced phase runs against is recorded per-phase in its own state
+        # file; we intentionally do not rewrite the cursor head on override.
         lib.dump_yaml(inf, inst)  # persist before seed_and_dispatch_phase reloads inf
         note = f"⚠️ {blocked_phase} gate was blocked — overridden by @{actor}; proceeding to {nxt}."
         if reason:

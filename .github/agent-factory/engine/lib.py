@@ -439,7 +439,7 @@ def post_pr_comment(pr, body):
         text=True, capture_output=True, env=env,
     )
     if result.returncode != 0:
-        sys.stderr.write("[engine] pr comment post failed (needs issues:write)\n")
+        sys.stderr.write(f"[engine] pr comment post failed (needs issues:write): {result.stderr.strip()}\n")
 
 
 def render_fanout_status_body(dir_, pid, instance, proto):
