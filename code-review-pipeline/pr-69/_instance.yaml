@@ -1,10 +1,10 @@
 protocol: code-review-pipeline
 instance: pr-69
-phase: preflight
+phase: review
 head_sha: 893795b650c65f186ef9be039ab1dc55fd861756
 joined: false
 status_comment_id: 4733002143
-halted:
-  phase: preflight
-  reason: blocked
-  sha: 893795b650c65f186ef9be039ab1dc55fd861756
+overrides:
+- phase: preflight
+  actor: golivax
+  reason: proceeding with the live status-comment test
