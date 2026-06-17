@@ -8,3 +8,7 @@ overrides:
 - phase: preflight
   actor: golivax
   reason: proceeding with the live status-comment test
+halted:
+  phase: preflight
+  reason: blocked
+  sha: 893795b650c65f186ef9be039ab1dc55fd861756
