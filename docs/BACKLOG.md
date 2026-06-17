@@ -39,6 +39,12 @@ green). See `STATUS.md` §"Live verification".
 
 ## v4 — Human-in-the-loop (approval gate)
 
+**Update (2026-06-17):** the *override escape-hatch* — a write-access human forcing
+a **blocked** halt-gate past one phase via `/override` — shipped separately (see
+`docs/superpowers/specs/2026-06-17-hitl-override-gate-design.md`). What remains in
+THIS item is the broader **pause-and-require** `kind:"gate"` approval state (a human
+sign-off as a *required* transition), which is still not started.
+
 **What:** A protocol state kind that **pauses** for a human decision (approve /
 request-changes / reject) before the engine advances past it — the first use of
 the `gates: {}` field already reserved in the state model.

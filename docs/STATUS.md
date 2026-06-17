@@ -156,6 +156,39 @@ Two intentional v1 behavior divergences (documented, not defects):
 `resolve_executable` (the same mechanism as checks). The hook runs trusted in
 zone 4 (engine-post) holding the publish token; it is not a sandboxed check.
 
+## v4 — /override escape-hatch (implemented)
+
+The `/override` comment trigger is implemented and live-verifiable (see spec:
+`docs/superpowers/specs/2026-06-17-hitl-override-gate-design.md`).
+
+**What it does:** a write-access human comments `/override` on a PR whose pipeline
+is **blocked** at a halt-gate; the engine advances the cursor exactly **one phase**
+and dispatches it. An optional free-text reason may follow: `/override <reason>`.
+
+**Blocked-only scope.** A gate that *exhausted* (could not produce schema-valid
+evidence within `max_iterations`) is **not** overridable; `/override` on it returns
+a distinct refusal message explaining the difference and makes no state change.
+
+**Authorization.** The commenter's login is read from the trusted event context
+(`github.event.comment.user.login` — never from the comment body). Permission is
+verified via the GitHub collaborators API (`GET /repos/{owner}/{repo}/collaborators/{login}/permission`);
+the override proceeds only if permission ∈ `{write, admin}`. Unauthorized attempts
+receive an explanatory denial comment; no state changes.
+
+**Audit trail — verdict never rewritten.** The blocked gate's `state: failed` and
+its `failure` check-run are **never touched** — they remain truthful. The override
+is recorded *beside* the failure:
+- `_instance.yaml` gains an `overrides[]` entry (`{phase, actor, reason}`) and
+  loses the `halted` marker.
+- The CAS commit message names actor + phase, so
+  `git log agentic-state -- <protocol>/<instance>/_instance.yaml` is a complete
+  override audit.
+- A dedicated status comment posts `⚠️ … gate was blocked — overridden by @<login>`.
+
+**Not shipped in this milestone:** the broader `kind:"gate"` pause-and-require
+approval state (a human sign-off as a *required* transition) — that remains the
+`BACKLOG.md` v4 item, not started.
+
 ## Not exercised by this PoC (honest gaps)
 
 - **Checks that execute agent-authored code** (e.g. running the project's
