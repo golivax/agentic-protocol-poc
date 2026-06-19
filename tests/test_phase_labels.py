@@ -291,3 +291,169 @@ def test_advance_preflight_blocked_sets_blocked_label(tmp_path):
     assert inf.get("phase_label") == "⛔ blocked", (
         f"expected '⛔ blocked', got {inf.get('phase_label')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: join.py phase-label wiring
+# ---------------------------------------------------------------------------
+# These tests drive the REAL join.py and assert that _instance.yaml carries
+# the correct phase_label at each of join's three terminals:
+#   1. join → opens following gate  (code-review-pipeline: review→approval)
+#   2. join finalizes done          (multi-grumpy: all branches done)
+#   3. join finalizes failed        (multi-grumpy: one branch failed)
+#
+# Seeding pattern mirrors test_join.py seed() and test_gate.py
+# _seed_review_all_done(): state-checkout → write YAML files → cas-push,
+# then run join.py in a fresh workdir, then clone origin to verify.
+# ---------------------------------------------------------------------------
+
+JOIN_PY = ENGINE / "join.py"
+MG_PROTO = ROOT / ".github/agent-factory/protocols/multi-grumpy/protocol.json"
+MG_PID = "multi-grumpy"
+
+CRP_REVIEW_BRANCHES = [
+    b["id"]
+    for s in json.load(open(CRP_PROTO))["states"]
+    if s["id"] == "review"
+    for b in s["branches"]
+]
+
+
+def _join_env(state_origin, **extra):
+    e = dict(os.environ)
+    e["ENGINE_LOCAL"] = "1"
+    e["STATE_REMOTE"] = str(state_origin)
+    e["GITHUB_REPOSITORY"] = "golivax/agentic-protocol-poc"
+    e.update(extra)
+    return e
+
+
+def _seed_mg(state_origin, work, instance, grumpy_state, security_state):
+    """Seed multi-grumpy per-branch state + _instance.yaml and push."""
+    env = _join_env(state_origin)
+    _run(LIB_PY, ["state-checkout", str(work)], env)
+    base = work / MG_PID / instance
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "grumpy.yaml").write_text(json.dumps({
+        "protocol": MG_PID, "instance": instance, "state": grumpy_state,
+        "iteration": 1, "gates": {}, "history": [],
+    }))
+    (base / "security.yaml").write_text(json.dumps({
+        "protocol": MG_PID, "instance": instance, "state": security_state,
+        "iteration": 1, "gates": {}, "history": [],
+    }))
+    (base / "_instance.yaml").write_text(json.dumps({
+        "protocol": MG_PID, "instance": instance, "head_sha": "jsha",
+        "joined": False,
+    }))
+    _run(LIB_PY, ["cas-push", str(work), f"seed {instance} g={grumpy_state} s={security_state}"], env)
+
+
+def _seed_crp_review_done(state_origin, work, instance):
+    """Seed code-review-pipeline with all review branches done + _instance cursor."""
+    env = _join_env(state_origin)
+    _run(LIB_PY, ["state-checkout", str(work)], env)
+    base = work / PID / instance
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "_instance.yaml").write_text(_yaml_module.safe_dump({
+        "protocol": PID, "instance": instance, "phase": "review",
+        "head_sha": "jsha", "joined": False, "status_comment_id": 9,
+    }))
+    for b in CRP_REVIEW_BRANCHES:
+        (base / f"review.{b}.yaml").write_text(_yaml_module.safe_dump({
+            "protocol": PID, "instance": instance, "state": "done",
+            "iteration": 1, "gates": {}, "head_sha": "jsha", "history": [],
+        }))
+    _run(LIB_PY, ["cas-push", str(work), f"seed {instance}"], env)
+
+
+def test_join_opens_gate_sets_gate_phase_label(tmp_path):
+    """join (code-review-pipeline) clears all review branches done → opens 'approval' gate.
+    _instance.yaml phase_label must equal phase_label_text(proto, 'approval').
+
+    This drives the `if gns and gns.get("kind") == "gate":` branch in join.py
+    which now calls lib.ensure_phase_label(..., gate_next) before cas_push."""
+    state_origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "agentic-state", str(state_origin)],
+                   check=True)
+    instance = "pr-901"
+    _seed_crp_review_done(state_origin, tmp_path / "seed", instance)
+
+    env = _join_env(state_origin, PR="901", PR_HEAD_SHA="jsha")
+    r = subprocess.run(
+        ["python3", str(JOIN_PY), str(tmp_path / "w"), instance, str(CRP_PROTO)],
+        text=True, capture_output=True, env=env,
+    )
+    assert r.returncode == 0, r.stderr
+
+    _clone(state_origin, tmp_path / "verify")
+    inf = _yaml_module.safe_load(
+        (tmp_path / "verify" / PID / instance / "_instance.yaml").read_text()
+    )
+    # cursor must have advanced to the gate
+    assert inf.get("phase") == "approval", f"phase={inf.get('phase')!r}"
+    assert inf.get("joined") is True
+
+    proto_dict = json.load(open(CRP_PROTO))
+    expected = lib.phase_label_text(proto_dict, "approval")
+    assert inf.get("phase_label") == expected, (
+        f"expected phase_label={expected!r}, got {inf.get('phase_label')!r}"
+    )
+
+
+def test_join_finalizes_done_sets_done_label(tmp_path):
+    """join (multi-grumpy) all branches done → aggregate success.
+    _instance.yaml phase_label must be '✅ done'.
+
+    This drives the finalize tail in join.py where concl=='success', which now
+    calls lib.ensure_phase_label(..., 'done') before cas_push."""
+    state_origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "agentic-state", str(state_origin)],
+                   check=True)
+    instance = "pr-902"
+    _seed_mg(state_origin, tmp_path / "seed", instance, "done", "done")
+
+    env = _join_env(state_origin, PR="902", PR_HEAD_SHA="jsha")
+    r = subprocess.run(
+        ["python3", str(JOIN_PY), str(tmp_path / "w"), instance, str(MG_PROTO)],
+        text=True, capture_output=True, env=env,
+    )
+    assert r.returncode == 0, r.stderr
+
+    _clone(state_origin, tmp_path / "verify")
+    inf = _yaml_module.safe_load(
+        (tmp_path / "verify" / MG_PID / instance / "_instance.yaml").read_text()
+    )
+    assert inf.get("joined") is True
+    assert inf.get("phase_label") == "✅ done", (
+        f"expected '✅ done', got {inf.get('phase_label')!r}"
+    )
+
+
+def test_join_finalizes_failed_sets_failed_label(tmp_path):
+    """join (multi-grumpy) one branch failed → aggregate failure.
+    _instance.yaml phase_label must be '❌ failed'.
+
+    This drives the finalize tail in join.py where concl=='failure', which now
+    calls lib.ensure_phase_label(..., 'failed') before cas_push."""
+    state_origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "agentic-state", str(state_origin)],
+                   check=True)
+    instance = "pr-903"
+    _seed_mg(state_origin, tmp_path / "seed", instance, "done", "failed")
+
+    env = _join_env(state_origin, PR="903", PR_HEAD_SHA="jsha")
+    r = subprocess.run(
+        ["python3", str(JOIN_PY), str(tmp_path / "w"), instance, str(MG_PROTO)],
+        text=True, capture_output=True, env=env,
+    )
+    assert r.returncode == 0, r.stderr
+
+    _clone(state_origin, tmp_path / "verify")
+    inf = _yaml_module.safe_load(
+        (tmp_path / "verify" / MG_PID / instance / "_instance.yaml").read_text()
+    )
+    assert inf.get("joined") is True
+    assert inf.get("phase_label") == "❌ failed", (
+        f"expected '❌ failed', got {inf.get('phase_label')!r}"
+    )
