@@ -80,6 +80,9 @@ def start_fanout():
         "joined": False,
     })
 
+    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, fstate)
+
     lib.cas_push(DIR, f"{PID}/{INSTANCE}: fan-out review ({COMMAND})")
 
     # Build branch dispatch list (id, workflow, iteration, feedback)
@@ -118,6 +121,7 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
     os.makedirs(inst_dir, exist_ok=True)
 
     prev = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
     if reset_instance:
         # Abandon the prior run's status comment so this run gets a FRESH one.
         # Render its final state FIRST (the files still exist), edit the old
@@ -125,11 +129,13 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
         # then drop the id — ensure_status_comment creates the new comment.
         old_cid = prev.get("status_comment_id")
         if old_cid:
-            pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
             frozen = lib.render_instance_status_body(DIR, PID, INSTANCE, PROTO)
             banner = (f"↻ _Superseded — a newer run started (new commit or "
                       f"`/review`); see the newest **{PID} · {INSTANCE}** comment below._")
             lib.finalize_superseded_comment(pr, old_cid, f"{banner}\n\n{frozen}")
+        # Remove the prior run's phase label so a restart from e.g. "approval
+        # gate" does not orphan it (the wipe below drops our tracking of it).
+        lib.remove_pr_label(pr, prev.get("phase_label", ""))
         # Wipe every prior-run state file (phase yamls + fan-out legs + the old
         # _instance.yaml); cas_push stages the deletions. Start the instance clean.
         for name in os.listdir(inst_dir):
@@ -153,6 +159,9 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
     inst.setdefault("joined", False)
     lib.dump_yaml(inf, inst)
 
+    # Sync the PR's phase label to this phase (removes setup / prior label).
+    lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, phase_id)
+
     if kind == "fanout":
         branches_config = phase_state.get("branches", [])
         # Per-branch phase files carry head_sha (consistent with write_fresh_state;
@@ -170,7 +179,6 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
         print(json.dumps({"action": "run-fanout", "iteration": 1, "feedback": "",
                           "reason": f"phase:{phase_id}", "phase": phase_id, "branches": branches}))
     elif kind == "gate":
-        pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
         # cursor already written above; open_gate seeds the gate file + check-run
         # + status comment. No agent dispatch — the run ends and waits for a human.
         lib.open_gate(DIR, PID, INSTANCE, PROTO, phase_id, HEAD_SHA, pr)
@@ -327,6 +335,7 @@ def do_resolve_gate():
             lib.post_pr_comment(pr, note)
             body = lib.render_pipeline_status_body(DIR, PID, INSTANCE, PROTO)
             lib.upsert_status_comment(inf, pr, body)
+            lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, "done")
             lib.cas_push(DIR, f"{INSTANCE}: gate {cursor} approved by {actor} → done")
             print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
                               "reason": f"gate:approved:{cursor}"}))
@@ -363,6 +372,7 @@ def do_resolve_gate():
         if reason:
             note += f"\n\n> {reason}"
         lib.post_pr_comment(pr, note)
+        lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, "failed")
         lib.cas_push(DIR, f"{INSTANCE}: gate {cursor} rejected by {actor} → failed")
         print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
                           "reason": f"gate:rejected:{cursor}"}))
@@ -387,6 +397,8 @@ if lib.is_multiphase(proto_data) and not PHASE and not BRANCH:
     # Multi-phase protocol, unbranched/unphased entry → seed the FIRST phase.
     if COMMAND in ("start", "reset"):
         first = lib.phase_states(proto_data)[0]["id"]
+        pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+        lib.apply_setup_label(proto_data, pr)
         # Fresh entry → restart: wipe any prior run's state for this instance.
         seed_and_dispatch_phase(first, COMMAND, reset_instance=True)
         sys.exit(0)
@@ -401,6 +413,8 @@ if lib.is_multiphase(proto_data) and PHASE and COMMAND == "advance-phase":
 
 if not BRANCH and is_fanout() and not PHASE:
     if COMMAND in ("start", "reset"):
+        pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+        lib.apply_setup_label(proto_data, pr)
         start_fanout()
         sys.exit(0)
     elif COMMAND == "continue":

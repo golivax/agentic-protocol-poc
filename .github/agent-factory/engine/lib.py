@@ -360,6 +360,119 @@ def set_check_run(name, sha, status, conclusion, title, summary):
         )
 
 
+# --- Phase labels -----------------------------------------------------------
+# Engine-level head keys that are NOT protocol states. Protocols may override
+# any of these via a top-level "phase_labels" map in protocol.json.
+PHASE_LABEL_DEFAULTS = {
+    "setup": "⚙ setup",
+    "done": "✅ done",
+    "failed": "❌ failed",
+    "blocked": "⛔ blocked",
+}
+PHASE_LABEL_COLOR = "5319e7"  # one color for every engine-managed phase label
+
+
+def _humanize_state_id(state_id):
+    return state_id.replace("-", " ").replace("_", " ").strip().capitalize()
+
+
+def phase_label_text(protocol, key):
+    """Resolve a state id OR a terminal/special key to a PR label string.
+
+    Live phase (key matches a states[] id): the state's `label` if present, else
+    a humanized id. Terminal/special key (setup/done/failed/blocked): the
+    protocol's optional top-level `phase_labels[key]` override if present, else
+    the engine default. `protocol` is the parsed protocol JSON dict.
+    """
+    st = state_by_id(protocol, key)
+    if st is not None:
+        return st.get("label") or _humanize_state_id(key)
+    overrides = protocol.get("phase_labels", {}) or {}
+    if key in overrides:
+        return overrides[key]
+    return PHASE_LABEL_DEFAULTS.get(key, _humanize_state_id(key))
+
+
+def _gh_label_cmd(args):
+    """Run a best-effort `gh` command for labels/PR-edit. Returns (ok, stderr).
+    Never raises. Uses PUBLISH_TOKEN (as GH_TOKEN) + GITHUB_REPOSITORY."""
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    env = dict(os.environ)
+    token = os.environ.get("PUBLISH_TOKEN", "")
+    if token:
+        env["GH_TOKEN"] = token
+    try:
+        result = subprocess.run(
+            ["gh"] + args + (["--repo", repo] if repo else []),
+            text=True, capture_output=True, env=env,
+        )
+        return result.returncode == 0, result.stderr
+    except Exception as e:  # gh missing, etc. — never break a transition
+        return False, str(e)
+
+
+def _ensure_and_add_label(text, pr):
+    """Ensure the label exists (idempotent --force create) then add it to the PR.
+    Best-effort. ENGINE_LOCAL → log only."""
+    if os.environ.get("ENGINE_LOCAL", "0") == "1":
+        sys.stderr.write(f"[ENGINE_LOCAL] add-label pr={pr}: {text}\n")
+        return
+    # gh pr edit --add-label errors on a nonexistent label, so create-first.
+    _gh_label_cmd(["label", "create", text, "--color", PHASE_LABEL_COLOR, "--force"])
+    ok, err = _gh_label_cmd(["pr", "edit", str(pr), "--add-label", text])
+    if not ok:
+        sys.stderr.write(f"[engine] add-label failed for '{text}': {err}\n")
+
+
+def remove_pr_label(pr, label):
+    """Best-effort remove one label from the PR. ENGINE_LOCAL → log only."""
+    if not label:
+        return
+    if os.environ.get("ENGINE_LOCAL", "0") == "1":
+        sys.stderr.write(f"[ENGINE_LOCAL] remove-label pr={pr}: {label}\n")
+        return
+    _gh_label_cmd(["pr", "edit", str(pr), "--remove-label", label])
+
+
+def apply_setup_label(protocol, pr):
+    """Add the engine 'setup' label to the PR. Best-effort, no state tracking —
+    called before _instance.yaml exists. ensure_phase_label removes it later."""
+    _ensure_and_add_label(phase_label_text(protocol, "setup"), pr)
+
+
+def ensure_phase_label(dir_, pid, instance, protocol, pr, head_key):
+    """Reconcile the PR's phase label to `head_key`.
+
+    Reads the applied label from _instance.yaml; if it differs from the resolved
+    new text, removes {prev} ∪ {setup-label} and adds the new one; records the
+    new text back on _instance.yaml. No-op when there is no _instance.yaml (this
+    excludes the single-agent v1 path). Best-effort. ENGINE_LOCAL → log + still
+    record state. The CALLER cas_pushes the instance file."""
+    inf = instance_file(dir_, pid, instance)
+    if not os.path.isfile(inf):
+        return
+    try:
+        inst = load_yaml(inf) or {}
+        new = phase_label_text(protocol, head_key)
+        prev = inst.get("phase_label", "") or ""
+        if prev == new:
+            return
+        setup_text = phase_label_text(protocol, "setup")
+        if os.environ.get("ENGINE_LOCAL", "0") == "1":
+            sys.stderr.write(f"[ENGINE_LOCAL] phase-label {instance}: {prev or '∅'} → {new}\n")
+            inst["phase_label"] = new
+            dump_yaml(inf, inst)
+            return
+        for old in {prev, setup_text}:
+            if old and old != new:
+                remove_pr_label(pr, old)
+        _ensure_and_add_label(new, pr)
+        inst["phase_label"] = new
+        dump_yaml(inf, inst)
+    except Exception as e:
+        sys.stderr.write(f"[engine] ensure_phase_label failed (non-fatal): {e}\n")
+
+
 def match_run_by_cid(runs_json, cid):
     """
     match_run_by_cid <runs-json> <cid>

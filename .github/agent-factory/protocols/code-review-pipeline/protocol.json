@@ -14,6 +14,7 @@
     {
       "id": "preflight",
       "kind": "agent",
+      "label": "pre-flight gate",
       "workflow": "preflight-agent",
       "evidence": "preflight.evidence.schema.json",
       "max_iterations": 2,
@@ -35,6 +36,7 @@
     {
       "id": "review",
       "kind": "fanout",
+      "label": "review",
       "branches": [
         {
           "id": "grumpy",
@@ -73,6 +75,7 @@
     {
       "id": "approval",
       "kind": "gate",
+      "label": "approval gate",
       "approve_excludes_author": true,
       "next": "done"
     }

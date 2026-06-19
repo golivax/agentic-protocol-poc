@@ -103,6 +103,7 @@ def main():
             instance_data["phase"] = gate_next
             lib.dump_yaml(inf, instance_data)
             lib.open_gate(dir_, pid, instance, proto, gate_next, sha, pr)
+            lib.ensure_phase_label(dir_, pid, instance, protocol, pr, gate_next)
             lib.cas_push(dir_, f"{instance}: join clear → gate {gate_next} open")
             return
 
@@ -128,6 +129,8 @@ def main():
     # JOIN state's `.next`; that is intentionally not supported yet.
     instance_data["joined"] = True
     lib.dump_yaml(inf, instance_data)
+    lib.ensure_phase_label(dir_, pid, instance, protocol, pr,
+                           "done" if concl == "success" else "failed")
     lib.cas_push(dir_, f"{instance}: join → {concl} (all branches terminal)")
 
 
