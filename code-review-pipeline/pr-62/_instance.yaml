@@ -1,7 +1,7 @@
 protocol: code-review-pipeline
 instance: pr-62
-phase: preflight
+phase: review
 head_sha: 657e290beb6266ccd55b8bd95e247491e3468392
 joined: false
-phase_label: pre-flight gate
+phase_label: review
 status_comment_id: 4755467779
