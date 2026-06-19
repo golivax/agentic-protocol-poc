@@ -62,3 +62,38 @@ def test_open_gate_seeds_file_and_check_run(tmp_path, capfd, monkeypatch):
     err = capfd.readouterr().err
     assert "check-run code-review-pipeline/approval" in err
     assert "status=in_progress" in err
+
+
+def _match(body):
+    return subprocess.run(
+        ["python3", str(LIB_PY), "match-trigger", str(PIPELINE_PROTO),
+         "issue_comment", "", body],
+        text=True, capture_output=True).stdout.strip()
+
+
+@pytest.mark.parametrize("body", ["/approve", "/approve ship it",
+                                  "/request-changes do X", "/reject nope"])
+def test_resolve_triggers_map_to_command(body):
+    assert _match(body) == "resolve-gate"
+
+
+def test_review_still_routes_with_gate_triggers():
+    assert _match("/review") == "start"
+
+
+def test_protocol_has_gate_state():
+    proto = json.load(open(PIPELINE_PROTO))
+    g = next(s for s in proto["states"] if s["id"] == "approval")
+    assert g["kind"] == "gate" and g["next"] == "done"
+    assert g["approve_excludes_author"] is True
+    j = next(s for s in proto["states"] if s["kind"] == "join")
+    assert j["next"] == "approval"
+
+
+def test_route_unambiguous_for_approve():
+    pdir = str(ROOT / ".github/agent-factory/protocols")
+    r = subprocess.run(["python3", str(LIB_PY), "route", pdir,
+                        "issue_comment", "", "/approve", "", "true"],
+                       text=True, capture_output=True)
+    assert r.returncode == 0, r.stderr
+    assert f"protocols/{PID}/protocol.json" in r.stdout and "skip=false" in r.stdout

@@ -4,6 +4,9 @@
   "triggers": [
     { "on": "issue_comment", "comment_prefix": "/review", "command": "start" },
     { "on": "issue_comment", "comment_prefix": "/override", "command": "override" },
+    { "on": "issue_comment", "comment_prefix": "/approve", "command": "resolve-gate" },
+    { "on": "issue_comment", "comment_prefix": "/request-changes", "command": "resolve-gate" },
+    { "on": "issue_comment", "comment_prefix": "/reject", "command": "resolve-gate" },
     { "on": "pull_request",  "actions": ["opened", "reopened"], "command": "start" },
     { "on": "pull_request",  "actions": ["synchronize"], "command": "reset" }
   ],
@@ -65,6 +68,12 @@
       "id": "join",
       "kind": "join",
       "of": "review",
+      "next": "approval"
+    },
+    {
+      "id": "approval",
+      "kind": "gate",
+      "approve_excludes_author": true,
       "next": "done"
     }
   ]
