@@ -19,11 +19,12 @@ end records the multi-agent milestone (both are live-verified).
   fast-forward (CAS) push.
 - Two acceptance demos: PR #4/#9 (sabotage → iterate → pass), PR #7 (clean
   negative control); native line-anchored inline review live-verified on PR #21.
-  154 tests across eight pytest modules: `test_checks.py` 39,
+  315 tests across eleven pytest modules: `test_checks.py` 39,
   `test_engine.py` 52, `test_runchecks.py` 19, `test_publish.py` 13,
-  `test_correlation.py` 6, `test_status_comment.py` 11, plus the two v2 modules
-  `test_join.py` 10 and `test_fanout_e2e.py` 4. Run all: `pytest tests/ -q`
-  (shared fixtures live in `tests/conftest.py`).
+  `test_correlation.py` 6, `test_status_comment.py` 11, `test_join.py` 10,
+  `test_fanout_e2e.py` 4, plus the v3/v4 additions `test_multiphase.py`,
+  `test_override.py`, `test_pipeline_status.py`, and `test_gate.py`. Run all:
+  `pytest tests/ -q` (shared fixtures live in `tests/conftest.py`).
 
 ## Simplifications declared up front (in the plan)
 
@@ -189,6 +190,64 @@ is recorded *beside* the failure:
 approval state (a human sign-off as a *required* transition) — that remains the
 `BACKLOG.md` v4 item, not started.
 
+## v4 — kind:"gate" approval state (implemented)
+
+The pause-and-require gate is implemented and wired into `code-review-pipeline`
+(see spec: `docs/superpowers/specs/2026-06-17-v4-approval-gate-design.md`).
+
+**What it is.** A `kind:"gate"` phase in `protocol.json` dispatches **no agent
+and runs no checks** — zero LLM cost. When the cursor lands on a gate, the engine
+seeds the per-phase state file, emits an `in_progress` check-run ("⏳ Awaiting
+human approval — comment `/approve`, `/request-changes`, or `/reject`"), and the
+run **ends**. State is durable; the gate can sit open for days at no compute cost,
+and the pending check-run keeps the merge blocked the entire time.
+
+**Per-phase gate file.** Each `kind:"gate"` phase gets its own state file
+(`<instance>/<gate-id>.yaml`) carrying the reserved `gates:` field — its first
+real use. `gates.state ∈ {open, changes_requested, approved, rejected}`;
+`gates.history` is an append-only list of every decision (`{decision, actor,
+reason}`), never overwritten. `_instance.yaml` keeps only the cursor and the
+existing cross-phase keys.
+
+**Opening the gate.** Two paths: `seed_and_dispatch_phase` in `next.py` opens a
+gate when the cursor advances into a `kind:"gate"` phase; `join.py` opens a
+following gate (its `.next` points to one) instead of finalizing, so the join
+barrier and the gate compose cleanly. Both paths write `gates.state: open` and
+emit the `in_progress` check-run.
+
+**Resolving the gate: the `resolve-gate` command.** `/approve`, `/request-changes`,
+and `/reject` PR comments route through the existing `issue_comment → match_trigger`
+seam to the `resolve-gate` command. Authorization mirrors the `/override` gate:
+the commenter must have `write` or `admin` repo permission (verified via the GitHub
+collaborators API; identity from the trusted event context, never the comment body).
+Self-approval is forbidden when `approve_excludes_author: true` is set on the phase.
+
+| decision | effect |
+|---|---|
+| `approve` | `gates.state: approved`; check-run → `success`; cursor advances (or `done` if last) |
+| `request-changes` | `gates.state: changes_requested`; check-run → `failure`; **no cursor move, no `halted` marker** |
+| `reject` | `gates.state: rejected`; phase `state: failed`; check-run → `failure`; **terminal, no `halted` marker** |
+
+A `changes_requested` gate is resolvable: a later `/approve` flips it to
+`approved` and advances the cursor. `reject` is terminal: a later `/approve` is
+refused. Both non-terminal and terminal "no"s are revived by a new commit
+(existing `synchronize → reset` reruns the whole pipeline).
+
+**`/override` deliberately does NOT apply to gate decisions.** Neither
+`request-changes` nor `reject` writes the `halted:{reason:blocked}` marker that
+`/override` understands. A human "no" is overturned only by another human or a
+new commit — not by an operator override. `/override` is for agent/check blocks
+only; gate decisions are a separate authority channel.
+
+**Demo layout.** `code-review-pipeline` is now
+`preflight → review fan-out → join → approval (gate) → done`. The `join.py`
+AND-barrier opens the approval gate once all branches reach `done`; a human must
+explicitly approve before the aggregate pipeline check-run goes green.
+
+**Tests.** `tests/test_gate.py` (new module): open / approve / request-changes /
+reject / guards (unauthorized, self-approve, no live gate, rejected terminal) /
+idempotency. Full suite: 315 tests, all green.
+
 ## Not exercised by this PoC (honest gaps)
 
 - **Checks that execute agent-authored code** (e.g. running the project's
@@ -196,8 +255,10 @@ approval state (a human sign-off as a *required* transition) — that remains th
   evidence file and the independently-fetched diff, so the design's
   "zone-3 runs agent code with zero credentials" hardening was never tested.
 - gh-aw's egress firewall on the agent (disabled, see #6).
-- Fan-out/join **shipped in v2** (see the v2 section below); human gates and
-  sequential multi-phase protocols are still pending (human gates = v4 backlog).
+- Fan-out/join **shipped in v2** (see the v2 section below); the `kind:"gate"`
+  human approval state **shipped in v4** (see §above). Sequential multi-phase
+  protocols (beyond the current `preflight → review → join → gate → done` shape)
+  are not independently tested beyond the existing pipeline.
 - The external web-app projection of the state branch.
 - `gh aw compile` changes to understand a `protocol:` block (the engine is
   vendored as repo scripts, not compiled into the lock file).

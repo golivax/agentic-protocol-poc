@@ -64,7 +64,13 @@ existence; runs are heartbeats" model — a protocol can sit gated for weeks.
 - Reuse the existing trust-zone split: the human's input is an *event* (a
   wake-up), and `advance.py` remains the sole state writer.
 
-**Status:** not started — the designated v4 milestone.
+**Status:** DONE (2026-06-17). The `kind:"gate"` pause-and-require approval state
+ships in the generic engine and is wired into `code-review-pipeline` as a final
+sign-off gate after the join. `/approve` · `/request-changes` · `/reject` comments,
+write/admin auth, no self-approval, distinct from `/override`. See
+`docs/superpowers/specs/2026-06-17-v4-approval-gate-design.md` and the plan
+`docs/superpowers/plans/2026-06-17-v4-approval-gate.md`. Out of scope (follow-up):
+native PR-review (`pull_request_review`) as an alternative resolve trigger.
 
 ---
 
@@ -86,6 +92,36 @@ The `/override` escape-hatch shipped and is live-verified (`docs/superpowers/spe
   completed review fan-out.)
 
 **Status:** not started.
+
+---
+
+## Native PR-review as a gate resolve trigger
+
+**What:** Accept a `pull_request_review` event (GitHub's "Approve" / "Request
+changes" buttons) as an alternative way to resolve a `kind:"gate"` state, in
+addition to the already-shipped slash-command comments (`/approve` /
+`/request-changes` / `/reject`).
+
+**Why:** The slash-command trigger is intentional and works well, but reviewers
+naturally reach for GitHub's native review UI. Wiring `pull_request_review.submitted`
+with `state ∈ {approved, changes_requested}` to `resolve-gate` would make the gate
+transparent — a normal GitHub review simultaneously satisfies both the gate and the
+standard PR approval flow. `dismissed` could map to a `changes_requested` re-open.
+
+**Sketch:**
+- Add `pull_request_review` to `agentic-orchestrator.yml`'s `on:` block (it is
+  already a supported event for `workflow_call` engines).
+- Extend `lib.route` to match a new trigger kind `on:"pull_request_review"` in
+  `protocol.json`; route to `resolve-gate` with `GATE_DECISION` derived from the
+  review `state` field.
+- Auth: the submitter's permission is already available in the event; re-use the
+  existing collaborators-API check.
+- Self-approval guard still applies.
+- The slash-command path is unaffected; both paths converge at the same
+  `resolve-gate` command.
+
+**Status:** not started. Captured as follow-up from the v4 approval-gate spec
+(`docs/superpowers/specs/2026-06-17-v4-approval-gate-design.md`).
 
 ---
 
