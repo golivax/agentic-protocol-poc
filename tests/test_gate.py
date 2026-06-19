@@ -127,3 +127,50 @@ def test_render_gate_approved_row(tmp_path, monkeypatch):
     d = _seed_instance_with_gate(tmp_path, "approved", actor="carol")
     body = lib.render_pipeline_status_body(str(d), PID, "pr-7", str(PIPELINE_PROTO))
     assert "approved by @carol" in body
+
+
+def _env(state_origin, **extra):
+    e = dict(os.environ)
+    e["ENGINE_LOCAL"] = "1"
+    e["STATE_REMOTE"] = str(state_origin)
+    e["GITHUB_REPOSITORY"] = "golivax/agentic-protocol-poc"
+    e.update(extra)
+    return e
+
+
+def _run(script, args, env):
+    r = subprocess.run(["python3", str(script), *map(str, args)],
+                       text=True, capture_output=True, env=env)
+    return r.stdout, r.stderr, r.returncode
+
+
+def _clone(state_origin, target):
+    subprocess.run(["git", "clone", "-q", "--branch", "agentic-state",
+                    str(state_origin), str(target)], check=True)
+
+
+def _seed_cursor(state_origin, work, instance, phase, *, head_sha="s"):
+    """Seed an _instance.yaml cursor on `phase` and push (no per-phase files)."""
+    _run(LIB_PY, ["state-checkout", str(work)], _env(state_origin))
+    base = work / PID / instance
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "_instance.yaml").write_text(yaml.safe_dump(
+        {"protocol": PID, "instance": instance, "phase": phase,
+         "head_sha": head_sha, "joined": True}))
+    _run(LIB_PY, ["cas-push", str(work), f"seed {instance}"], _env(state_origin))
+
+
+def test_advance_phase_into_gate_opens_it(state_origin, tmp_path):
+    inst = "pr-20"
+    _seed_cursor(state_origin, tmp_path / "seed", inst, "review")
+    env = _env(state_origin, PHASE="approval")
+    out, err, rc = _run(NEXT_PY, [tmp_path / "w", inst, PIPELINE_PROTO,
+                                  "advance-phase", "s"], env)
+    assert rc == 0, err
+    assert json.loads(out)["action"] == "noop"
+    assert json.loads(out)["reason"] == "gate-open:approval"
+    _clone(state_origin, tmp_path / "verify")
+    base = tmp_path / "verify" / PID / inst
+    gate = yaml.safe_load((base / "approval.yaml").read_text())
+    assert gate["gates"]["state"] == "open"
+    assert yaml.safe_load((base / "_instance.yaml").read_text())["phase"] == "approval"

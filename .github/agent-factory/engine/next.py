@@ -169,6 +169,14 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
                     for b in branches_config]
         print(json.dumps({"action": "run-fanout", "iteration": 1, "feedback": "",
                           "reason": f"phase:{phase_id}", "phase": phase_id, "branches": branches}))
+    elif kind == "gate":
+        pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+        # cursor already written above; open_gate seeds the gate file + check-run
+        # + status comment. No agent dispatch — the run ends and waits for a human.
+        lib.open_gate(DIR, PID, INSTANCE, PROTO, phase_id, HEAD_SHA, pr)
+        lib.cas_push(DIR, f"{PID}/{INSTANCE}: open gate {phase_id} ({command})")
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": f"gate-open:{phase_id}"}))
     else:
         sf = lib.state_file(DIR, PID, INSTANCE, phase=phase_id)
         os.makedirs(os.path.dirname(sf), exist_ok=True)
