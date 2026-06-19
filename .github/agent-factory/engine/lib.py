@@ -360,6 +360,39 @@ def set_check_run(name, sha, status, conclusion, title, summary):
         )
 
 
+# --- Phase labels -----------------------------------------------------------
+# Engine-level head keys that are NOT protocol states. Protocols may override
+# any of these via a top-level "phase_labels" map in protocol.json.
+PHASE_LABEL_DEFAULTS = {
+    "setup": "⚙ setup",
+    "done": "✅ done",
+    "failed": "❌ failed",
+    "blocked": "⛔ blocked",
+}
+PHASE_LABEL_COLOR = "5319e7"  # one color for every engine-managed phase label
+
+
+def _humanize_state_id(state_id):
+    return state_id.replace("-", " ").replace("_", " ").strip().capitalize()
+
+
+def phase_label_text(protocol, key):
+    """Resolve a state id OR a terminal/special key to a PR label string.
+
+    Live phase (key matches a states[] id): the state's `label` if present, else
+    a humanized id. Terminal/special key (setup/done/failed/blocked): the
+    protocol's optional top-level `phase_labels[key]` override if present, else
+    the engine default. `protocol` is the parsed protocol JSON dict.
+    """
+    st = state_by_id(protocol, key)
+    if st is not None:
+        return st.get("label") or _humanize_state_id(key)
+    overrides = protocol.get("phase_labels", {}) or {}
+    if key in overrides:
+        return overrides[key]
+    return PHASE_LABEL_DEFAULTS.get(key, _humanize_state_id(key))
+
+
 def match_run_by_cid(runs_json, cid):
     """
     match_run_by_cid <runs-json> <cid>
