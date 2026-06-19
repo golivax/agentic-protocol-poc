@@ -130,6 +130,22 @@ def test_render_gate_approved_row(tmp_path, monkeypatch):
     assert "approved by @carol" in body
 
 
+def test_render_gate_rejected_row(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "golivax/agentic-protocol-poc")
+    d = _seed_instance_with_gate(tmp_path, "rejected", actor="carol")
+    body = lib.render_pipeline_status_body(str(d), PID, "pr-7", str(PIPELINE_PROTO))
+    assert "rejected by @carol" in body
+    assert "Awaiting human approval" not in body  # rejected sets any_failed
+
+
+def test_render_gate_changes_requested_row(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "golivax/agentic-protocol-poc")
+    d = _seed_instance_with_gate(tmp_path, "changes_requested", actor="alice")
+    body = lib.render_pipeline_status_body(str(d), PID, "pr-7", str(PIPELINE_PROTO))
+    assert "changes requested by @alice" in body
+    assert "Awaiting human approval" in body  # changes_requested sets gate_open
+
+
 def _env(state_origin, **extra):
     e = dict(os.environ)
     e["ENGINE_LOCAL"] = "1"
