@@ -160,6 +160,40 @@ def _seed_cursor(state_origin, work, instance, phase, *, head_sha="s"):
     _run(LIB_PY, ["cas-push", str(work), f"seed {instance}"], _env(state_origin))
 
 
+REVIEW_BRANCHES = [b["id"] for s in json.load(open(PIPELINE_PROTO))["states"]
+                   if s["id"] == "review" for b in s["branches"]]
+
+
+def _seed_review_all_done(state_origin, work, instance, *, head_sha="js"):
+    _run(LIB_PY, ["state-checkout", str(work)], _env(state_origin))
+    base = work / PID / instance
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "_instance.yaml").write_text(yaml.safe_dump(
+        {"protocol": PID, "instance": instance, "phase": "review",
+         "head_sha": head_sha, "joined": False, "status_comment_id": 9}))
+    for b in REVIEW_BRANCHES:
+        (base / f"review.{b}.yaml").write_text(yaml.safe_dump(
+            {"protocol": PID, "instance": instance, "state": "done",
+             "iteration": 1, "gates": {}, "head_sha": head_sha, "history": []}))
+    _run(LIB_PY, ["cas-push", str(work), f"seed {instance}"], _env(state_origin))
+
+
+def test_join_opens_following_gate(state_origin, tmp_path):
+    inst = "pr-21"
+    _seed_review_all_done(state_origin, tmp_path / "seed", inst)
+    env = _env(state_origin, PR="21", PR_HEAD_SHA="js")
+    out, err, rc = _run(JOIN_PY, [tmp_path / "w", inst, PIPELINE_PROTO], env)
+    assert rc == 0, err
+    _clone(state_origin, tmp_path / "verify")
+    base = tmp_path / "verify" / PID / inst
+    inf = yaml.safe_load((base / "_instance.yaml").read_text())
+    assert inf["phase"] == "approval" and inf["joined"] is True
+    gate = yaml.safe_load((base / "approval.yaml").read_text())
+    assert gate["gates"]["state"] == "open"
+    # the aggregate pid check-run is NOT completed at the gate (still in_progress)
+    assert "check-run code-review-pipeline sha=js status=completed" not in err
+
+
 def test_advance_phase_into_gate_opens_it(state_origin, tmp_path):
     inst = "pr-20"
     _seed_cursor(state_origin, tmp_path / "seed", inst, "review")

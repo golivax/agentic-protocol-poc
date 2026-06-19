@@ -84,6 +84,28 @@ def main():
         sys.exit(0)
 
     if all_done:
+        # If a human gate follows the join, OPEN it instead of finalizing.
+        join_state = None
+        fo_id = fanout_state.get("id") if fanout_state else None
+        for st in protocol.get("states", []):
+            if st.get("kind") == "join" and st.get("of") == fo_id:
+                join_state = st
+                break
+        if join_state is None:
+            for st in protocol.get("states", []):
+                if st.get("kind") == "join":
+                    join_state = st
+                    break
+        gate_next = (join_state or {}).get("next")
+        gns = lib.state_by_id(protocol, gate_next) if gate_next else None
+        if gns and gns.get("kind") == "gate":
+            instance_data["joined"] = True
+            instance_data["phase"] = gate_next
+            lib.dump_yaml(inf, instance_data)
+            lib.open_gate(dir_, pid, instance, proto, gate_next, sha, pr)
+            lib.cas_push(dir_, f"{instance}: join clear → gate {gate_next} open")
+            return
+
         concl = "success"
         title = "Review complete"
         summary = "All review branches completed."
