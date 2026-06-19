@@ -105,6 +105,13 @@ def phase_states(protocol):
     return [s for s in protocol.get("states", []) if s.get("kind") in ("agent", "fanout")]
 
 
+def pipeline_states(protocol):
+    """Ordered agent|fanout|GATE states — the full human-visible pipeline.
+    Used ONLY by the status renderer. phase_states() stays agent|fanout so the
+    agent-unit / seed / join logic is unaffected by gates."""
+    return [s for s in protocol.get("states", []) if s.get("kind") in ("agent", "fanout", "gate")]
+
+
 def is_multiphase(protocol):
     """A protocol is multi-phase iff it has more than one agent|fanout phase.
     Single-phase protocols (grumpy=1 agent, multi-grumpy=1 fanout) keep the
@@ -226,6 +233,25 @@ def next_phase_id(protocol, phase_id):
 def instance_file(d, pid, instance):
     """instance_file <dir> <protocol-id> <instance-key> — shared per-instance bookkeeping."""
     return f"{d}/{pid}/{instance}/_instance.yaml"
+
+
+def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr):
+    """Seed a gate phase's state file (gates.state=open), emit the awaiting
+    check-run, and refresh the shared status comment. Does NOT set the cursor
+    (caller owns _instance.yaml) and does NOT cas_push (caller pushes)."""
+    sf = state_file(dir_, pid, instance, phase=gate_id)
+    os.makedirs(os.path.dirname(sf), exist_ok=True)
+    dump_yaml(sf, {
+        "protocol": pid, "instance": instance, "state": gate_id,
+        "head_sha": sha, "gates": {"state": "open", "history": []},
+    })
+    set_check_run(f"{pid}/{gate_id}", sha, "in_progress", "",
+                  "Awaiting human approval",
+                  "Comment `/approve`, `/request-changes`, or `/reject` on this PR.")
+    inf = instance_file(dir_, pid, instance)
+    if os.path.isfile(inf):
+        body = render_pipeline_status_body(dir_, pid, instance, proto_path)
+        upsert_status_comment(inf, pr, body)
 
 
 def state_checkout(dir_):
