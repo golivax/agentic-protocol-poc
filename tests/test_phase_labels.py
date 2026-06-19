@@ -103,3 +103,191 @@ def test_start_seeds_first_phase_label(engine_env, tmp_path):
     # humanized id. Assert against the resolved value to stay decoupled:
     assert data["phase"] == "preflight"
     assert data["phase_label"]  # non-empty: a label was recorded
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: advance.py agent-phase label wiring
+# ---------------------------------------------------------------------------
+# These tests drive the REAL advance.py through the code-review-pipeline
+# protocol's `preflight` agent phase and assert that _instance.yaml carries
+# the correct phase_label at each terminal.
+#
+# Setup pattern (mirrors test_override.py / test_multiphase.py):
+#   1. run next.py "start" to seed _instance.yaml + preflight.yaml on origin
+#   2. run advance.py with controlled verdicts in a fresh clone dir
+#   3. clone origin into a verify dir and assert _instance.yaml["phase_label"]
+# ---------------------------------------------------------------------------
+
+import json
+import subprocess
+import yaml as _yaml_module
+
+ENGINE = ROOT / ".github/agent-factory/engine"
+LIB_PY = ENGINE / "lib.py"
+ADVANCE_PY = ENGINE / "advance.py"
+NEXT_PY = ENGINE / "next.py"
+PID = "code-review-pipeline"
+
+
+def _crp_env(state_origin, **extra):
+    e = dict(os.environ)
+    e["ENGINE_LOCAL"] = "1"
+    e["STATE_REMOTE"] = str(state_origin)
+    e["GITHUB_REPOSITORY"] = "golivax/agentic-protocol-poc"
+    e.update(extra)
+    return e
+
+
+def _run(script, args, env):
+    r = subprocess.run(["python3", str(script), *map(str, args)],
+                       text=True, capture_output=True, env=env)
+    return r.stdout, r.stderr, r.returncode
+
+
+def _clone(state_origin, target):
+    subprocess.run(["git", "clone", "-q", "--branch", "agentic-state",
+                    str(state_origin), str(target)], check=True)
+
+
+def _seed_preflight(state_origin, work, instance, *, state, iteration, head_sha):
+    """Seed a preflight phase state + _instance cursor and push to origin."""
+    env = _crp_env(state_origin)
+    _run(LIB_PY, ["state-checkout", str(work)], env)
+    base = work / PID / instance
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "preflight.yaml").write_text(_yaml_module.safe_dump({
+        "protocol": PID, "instance": instance, "state": state,
+        "iteration": iteration, "gates": {}, "head_sha": head_sha, "history": [],
+    }))
+    (base / "_instance.yaml").write_text(_yaml_module.safe_dump({
+        "protocol": PID, "instance": instance, "phase": "preflight",
+        "head_sha": head_sha, "joined": False,
+    }))
+    _run(LIB_PY, ["cas-push", str(work), f"seed {instance}"], env)
+
+
+def _write_json(path, obj):
+    path.write_text(json.dumps(obj))
+    return path
+
+
+# Passing verdicts (no failures) → process=done
+VERDICTS_PASS = {"results": [
+    {"check": "preflight-schema-valid", "pass": True, "on_fail": "iterate", "feedback": ""},
+]}
+
+# Block-severity fail (no iterate fails) → process=done, blocking=True
+VERDICTS_BLOCK = {"results": [
+    {"check": "spec-present", "pass": False, "on_fail": "block", "feedback": "missing spec"},
+    {"check": "preflight-schema-valid", "pass": True, "on_fail": "iterate", "feedback": ""},
+]}
+
+# Iterate-severity fail at max_iter → process=failed
+VERDICTS_ITER_FAIL_EXHAUSTED = {"results": [
+    {"check": "preflight-schema-valid", "pass": False, "on_fail": "iterate", "feedback": "bad evidence"},
+]}
+
+EVIDENCE_MIN = {"checks": [], "examined": []}
+
+
+def test_advance_preflight_advance_to_next_sets_review_label(tmp_path):
+    """preflight passes → cursor advances to 'review' → phase_label == phase_label_text(proto, 'review').
+
+    This drives advance.py's agent-phase done + nxt branch, which must call
+    lib.ensure_phase_label(dir_, pid, instance, proto, pr, nxt) before cas_push."""
+    state_origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "agentic-state", str(state_origin)],
+                   check=True)
+    instance = "pr-801"
+
+    # 1. Seed preflight at iteration 1 → push to origin
+    _seed_preflight(state_origin, tmp_path / "seed", instance,
+                    state="preflight", iteration=1, head_sha="sha-adv")
+
+    # 2. Run advance.py with passing verdicts (conclude hook will return neutral/no-block)
+    v = _write_json(tmp_path / "verdicts.json", VERDICTS_PASS)
+    ev = _write_json(tmp_path / "evidence.json", EVIDENCE_MIN)
+    env = _crp_env(state_origin, PHASE="preflight", PR="801", PR_HEAD_SHA="sha-adv")
+    _, err, rc = _run(ADVANCE_PY, [tmp_path / "adv", instance, CRP_PROTO, v, ev], env)
+    assert rc == 0, f"advance.py failed: {err}"
+
+    # 3. Verify _instance.yaml on origin has the "review" phase label
+    _clone(state_origin, tmp_path / "verify")
+    inf = _yaml_module.safe_load(
+        (tmp_path / "verify" / PID / instance / "_instance.yaml").read_text()
+    )
+    proto_dict = json.load(open(CRP_PROTO))
+    expected = lib.phase_label_text(proto_dict, "review")
+    assert inf.get("phase_label") == expected, (
+        f"expected phase_label={expected!r}, got {inf.get('phase_label')!r}"
+    )
+    # cursor must have advanced
+    assert inf["phase"] == "review"
+
+
+def test_advance_preflight_exhausted_sets_failed_label(tmp_path):
+    """preflight exhausts iterations (iterate-fail at max_iter=2, iter=2) →
+    phase_label == '❌ failed'.
+
+    This drives advance.py's agent-phase failed branch guarded by kind=='agent'."""
+    state_origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "agentic-state", str(state_origin)],
+                   check=True)
+    instance = "pr-802"
+
+    # iteration == max_iterations (2) → no iterations remaining → process=failed
+    _seed_preflight(state_origin, tmp_path / "seed", instance,
+                    state="preflight", iteration=2, head_sha="sha-fail")
+
+    v = _write_json(tmp_path / "verdicts.json", VERDICTS_ITER_FAIL_EXHAUSTED)
+    ev = _write_json(tmp_path / "evidence.json", EVIDENCE_MIN)
+    env = _crp_env(state_origin, PHASE="preflight", PR="802", PR_HEAD_SHA="sha-fail")
+    _, err, rc = _run(ADVANCE_PY, [tmp_path / "adv", instance, CRP_PROTO, v, ev], env)
+    assert rc == 0, f"advance.py failed: {err}"
+
+    _clone(state_origin, tmp_path / "verify")
+    inf = _yaml_module.safe_load(
+        (tmp_path / "verify" / PID / instance / "_instance.yaml").read_text()
+    )
+    # phase_label must be the terminal failed label
+    assert inf.get("phase_label") == "❌ failed", (
+        f"expected '❌ failed', got {inf.get('phase_label')!r}"
+    )
+    # phase state file must also be failed
+    pf = _yaml_module.safe_load(
+        (tmp_path / "verify" / PID / instance / "preflight.yaml").read_text()
+    )
+    assert pf["state"] == "failed"
+
+
+def test_advance_preflight_blocked_sets_blocked_label(tmp_path):
+    """preflight concludes blocked (block-severity fail, on_blocked=halt) →
+    phase_label == '⛔ blocked'.
+
+    This drives advance.py's is_agent_phase + conclude.blocked + on_blocked=halt branch.
+    The conclude hook for code-review-pipeline/preflight is conclude-preflight;
+    with EVIDENCE_MIN (no 'spec' key) the hook should return blocked=False, but we
+    use VERDICTS_BLOCK which sets blocking=True → conclude-preflight with BLOCKING=1
+    returns blocked=True. The preflight state's on_blocked == 'halt' triggers the
+    halted branch."""
+    state_origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "agentic-state", str(state_origin)],
+                   check=True)
+    instance = "pr-803"
+
+    _seed_preflight(state_origin, tmp_path / "seed", instance,
+                    state="preflight", iteration=1, head_sha="sha-blk")
+
+    v = _write_json(tmp_path / "verdicts.json", VERDICTS_BLOCK)
+    ev = _write_json(tmp_path / "evidence.json", EVIDENCE_MIN)
+    env = _crp_env(state_origin, PHASE="preflight", PR="803", PR_HEAD_SHA="sha-blk")
+    _, err, rc = _run(ADVANCE_PY, [tmp_path / "adv", instance, CRP_PROTO, v, ev], env)
+    assert rc == 0, f"advance.py failed: {err}"
+
+    _clone(state_origin, tmp_path / "verify")
+    inf = _yaml_module.safe_load(
+        (tmp_path / "verify" / PID / instance / "_instance.yaml").read_text()
+    )
+    assert inf.get("phase_label") == "⛔ blocked", (
+        f"expected '⛔ blocked', got {inf.get('phase_label')!r}"
+    )

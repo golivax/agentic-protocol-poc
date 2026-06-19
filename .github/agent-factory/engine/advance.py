@@ -359,6 +359,7 @@ def main():
             notice = (f"⛔ **{phase}** gate blocked: {csum or 'a required gate did not pass'}. "
                       f"A write-access user can comment `/override <reason>` to proceed past this gate.")
             lib.post_pr_comment(pr, notice)
+            lib.ensure_phase_label(dir_, pid, instance, proto, pr, "blocked")
             lib.cas_push(dir_, f"{instance}: phase {phase} blocked → pipeline halted")
         elif is_agent_phase:
             # GATE CLEAR → advance the cursor and launch the next phase.
@@ -376,6 +377,7 @@ def main():
                     sf, inf, branch, pr, pid, instance, proto_path, dir_,
                     "⏳ advancing", max_iter, github_repository
                 )
+                lib.ensure_phase_label(dir_, pid, instance, proto, pr, nxt)
                 lib.cas_push(dir_, f"{instance}: phase {phase} clear → advancing to {nxt}")
                 gh_api(
                     f"repos/{github_repository}/dispatches",
@@ -391,6 +393,7 @@ def main():
                     sf, inf, branch, pr, pid, instance, proto_path, dir_,
                     "✅ complete", max_iter, github_repository
                 )
+                lib.ensure_phase_label(dir_, pid, instance, proto, pr, "done")
                 lib.cas_push(dir_, f"{instance}: phase {phase} clear → done (no further phase)")
         else:
             # Single-agent or fan-out leg → today's behavior unchanged.
@@ -440,6 +443,13 @@ def main():
         state_data = lib.load_yaml(sf)
         state_data["state"] = "failed"
         lib.dump_yaml(sf, state_data)
+
+        # An agent PHASE that exhausts its iterations is a terminal phase failure
+        # (label it). A fan-out leg / single-agent v1 reaching here is NOT a phase
+        # terminal — join.py (fan-out) owns that, and v1 has no instance label.
+        _failed_state = lib.state_by_id(proto, agent_state)
+        if phase and _failed_state and _failed_state.get("kind") == "agent":
+            lib.ensure_phase_label(dir_, pid, instance, proto, pr, "failed")
 
         lib.set_check_run(
             cr_name, sha, "completed", "failure",
