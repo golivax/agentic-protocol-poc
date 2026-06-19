@@ -1,5 +1,6 @@
 """v4 pause-and-require approval gate — engine-side behavior. All GitHub I/O is
 ENGINE_LOCAL stderr no-ops we assert on. Mirrors tests/test_override.py style."""
+import itertools
 import json
 import os
 import subprocess
@@ -224,10 +225,13 @@ def _seed_open_gate(state_origin, work, instance, *, gstate="open", head_sha="gs
     _run(LIB_PY, ["cas-push", str(work), f"seed {instance}"], _env(state_origin))
 
 
+_resolve_counter = itertools.count()
+
+
 def _resolve(state_origin, tmp_path, inst, decision, actor, reason="", pr_author="someone"):
     env = _env(state_origin, GATE_DECISION=decision, GATE_ACTOR=actor,
                GATE_REASON=reason, GATE_PR_AUTHOR=pr_author)
-    return _run(NEXT_PY, [tmp_path / f"w-{decision}", inst, PIPELINE_PROTO,
+    return _run(NEXT_PY, [tmp_path / f"w-{decision}-{next(_resolve_counter)}", inst, PIPELINE_PROTO,
                           "resolve-gate", "gs"], env)
 
 
