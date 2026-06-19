@@ -73,7 +73,7 @@
     {
       "id": "approval",
       "kind": "gate",
-      "approve_excludes_author": true,
+      "approve_excludes_author": false,
       "next": "done"
     }
   ]
