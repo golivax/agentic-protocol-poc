@@ -255,7 +255,15 @@ def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr):
 
 
 def state_checkout(dir_):
-    """state_checkout <dir> — clone the state branch; create it on origin if missing."""
+    """state_checkout <dir> — clone the state branch; create it on origin if missing.
+    If dir_ already exists as a git working tree (re-entrant call in tests or retries),
+    fetch and hard-reset to origin/STATE_BRANCH instead of cloning."""
+    import pathlib
+    if pathlib.Path(dir_).joinpath(".git").exists():
+        # Already a git repo — bring it up to date from the remote.
+        git(dir_, "fetch", "-q", "origin", STATE_BRANCH)
+        git(dir_, "reset", "-q", "--hard", f"origin/{STATE_BRANCH}")
+        return
     result = subprocess.run(
         ["git", "ls-remote", "--exit-code", "--heads", STATE_REMOTE, STATE_BRANCH],
         capture_output=True, text=True

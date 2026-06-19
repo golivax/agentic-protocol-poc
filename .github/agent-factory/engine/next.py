@@ -255,12 +255,132 @@ def do_override():
                "override: not halted")
 
 
+def do_resolve_gate():
+    """Human approval gate resolution. write/admin auth happened in the workflow;
+    next.py sees only an authorized actor. Reads GATE_DECISION/ACTOR/REASON/PR_AUTHOR
+    from env, mutates the cursor gate's `gates` record, and advances (approve) or
+    halts (request-changes / reject). Guards refuse with one PR comment + a halt
+    action — no state change. A gate is 'live' when gates.state in {open,
+    changes_requested}."""
+    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    inf = lib.instance_file(DIR, PID, INSTANCE)
+    decision = os.environ.get("GATE_DECISION", "")
+    actor = os.environ.get("GATE_ACTOR", "")
+    reason = os.environ.get("GATE_REASON", "")
+    pr_author = os.environ.get("GATE_PR_AUTHOR", "")
+
+    def refuse(message, code):
+        lib.post_pr_comment(pr, message)
+        print(json.dumps({"action": "halt", "iteration": 0, "feedback": "", "reason": code}))
+
+    if not os.path.isfile(inf):
+        refuse(f"Nothing to resolve — no {PID} run exists for this PR.", "gate: no instance")
+        return
+    inst = lib.load_yaml(inf)
+    cursor = inst.get("phase") or ""
+    cur_state = lib.state_by_id(proto_data, cursor)
+    if not cursor or not cur_state or cur_state.get("kind") != "gate":
+        refuse(f"Nothing to resolve — no approval gate is currently open for this PR "
+               f"(current phase: {cursor or 'none'}).", "gate: not a gate")
+        return
+
+    sf = lib.state_file(DIR, PID, INSTANCE, phase=cursor)
+    gdata = lib.load_yaml(sf) if os.path.isfile(sf) else {}
+    g = gdata.get("gates") or {}
+    gstate = g.get("state", "")
+    sha = gdata.get("head_sha", "") or HEAD_SHA
+    cr_name = f"{PID}/{cursor}"
+
+    if gstate == "rejected":
+        refuse("This gate was rejected; push a new commit or comment `/review` to "
+               "restart the pipeline.", "gate: rejected")
+        return
+    if gstate not in ("open", "changes_requested"):
+        refuse(f"Nothing to resolve — the {cursor} gate is not awaiting a decision "
+               f"(state: {gstate or 'unknown'}).", "gate: not live")
+        return
+    if (decision == "approve" and cur_state.get("approve_excludes_author")
+            and actor and actor == pr_author):
+        refuse(f"@{actor} the PR author cannot approve their own gate; another "
+               f"write-access reviewer must `/approve`.", "gate: self-approve")
+        return
+
+    g.setdefault("history", []).append({"decision": decision, "actor": actor, "reason": reason})
+
+    if decision == "approve":
+        g["state"] = "approved"
+        gdata["gates"] = g
+        lib.dump_yaml(sf, gdata)
+        lib.set_check_run(cr_name, sha, "completed", "success", "Approved", f"Approved by @{actor}.")
+        nxt = lib.next_phase_id(proto_data, cursor)
+        if nxt:
+            note = f"✅ {cursor} gate approved by @{actor}; proceeding to {nxt}."
+            if reason:
+                note += f"\n\n> {reason}"
+            lib.post_pr_comment(pr, note)
+            seed_and_dispatch_phase(nxt, "approve")   # sets cursor, pushes, emits run action
+        else:
+            lib.set_check_run(PID, sha, "completed", "success", "Complete", f"Approved by @{actor}.")
+            note = f"✅ {cursor} gate approved by @{actor}; pipeline complete."
+            if reason:
+                note += f"\n\n> {reason}"
+            lib.post_pr_comment(pr, note)
+            body = lib.render_pipeline_status_body(DIR, PID, INSTANCE, PROTO)
+            lib.upsert_status_comment(inf, pr, body)
+            lib.cas_push(DIR, f"{INSTANCE}: gate {cursor} approved by {actor} → done")
+            print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                              "reason": f"gate:approved:{cursor}"}))
+        return
+
+    if decision == "request-changes":
+        g["state"] = "changes_requested"
+        gdata["gates"] = g
+        lib.dump_yaml(sf, gdata)
+        lib.set_check_run(cr_name, sha, "completed", "failure", "Changes requested",
+                          f"Changes requested by @{actor}.")
+        body = lib.render_pipeline_status_body(DIR, PID, INSTANCE, PROTO)
+        lib.upsert_status_comment(inf, pr, body)
+        note = (f"🔁 {cursor} gate — changes requested by @{actor}. Push a new commit to "
+                f"re-run the pipeline, or a reviewer can `/approve`.")
+        if reason:
+            note += f"\n\n> {reason}"
+        lib.post_pr_comment(pr, note)
+        lib.cas_push(DIR, f"{INSTANCE}: gate {cursor} changes requested by {actor}")
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": f"gate:changes:{cursor}"}))
+        return
+
+    if decision == "reject":
+        g["state"] = "rejected"
+        gdata["gates"] = g
+        gdata["state"] = "failed"
+        lib.dump_yaml(sf, gdata)
+        lib.set_check_run(cr_name, sha, "completed", "failure", "Rejected", f"Rejected by @{actor}.")
+        lib.set_check_run(PID, sha, "completed", "failure", "Pipeline rejected", f"Rejected by @{actor}.")
+        body = lib.render_pipeline_status_body(DIR, PID, INSTANCE, PROTO)
+        lib.upsert_status_comment(inf, pr, body)
+        note = f"⛔ {cursor} gate rejected by @{actor}. Push a new commit or `/review` to restart."
+        if reason:
+            note += f"\n\n> {reason}"
+        lib.post_pr_comment(pr, note)
+        lib.cas_push(DIR, f"{INSTANCE}: gate {cursor} rejected by {actor} → failed")
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": f"gate:rejected:{cursor}"}))
+        return
+
+    refuse(f"Unknown gate decision '{decision}'.", "gate: unknown decision")
+
+
 # Unbranched start/reset on a fan-out protocol routes to the planner BEFORE the
 # single-agent agent-unit discovery (which has no kind:"agent" state to read and
 # would error). The branched fan-out path (continue with BRANCH set) and the
 # single-agent path both fall through this guard unchanged.
 if COMMAND == "override":
     do_override()
+    sys.exit(0)
+
+if COMMAND == "resolve-gate":
+    do_resolve_gate()
     sys.exit(0)
 
 if lib.is_multiphase(proto_data) and not PHASE and not BRANCH:

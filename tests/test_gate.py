@@ -208,3 +208,130 @@ def test_advance_phase_into_gate_opens_it(state_origin, tmp_path):
     gate = yaml.safe_load((base / "approval.yaml").read_text())
     assert gate["gates"]["state"] == "open"
     assert yaml.safe_load((base / "_instance.yaml").read_text())["phase"] == "approval"
+
+
+def _seed_open_gate(state_origin, work, instance, *, gstate="open", head_sha="gs"):
+    _run(LIB_PY, ["state-checkout", str(work)], _env(state_origin))
+    base = work / PID / instance
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "_instance.yaml").write_text(yaml.safe_dump(
+        {"protocol": PID, "instance": instance, "phase": "approval",
+         "head_sha": head_sha, "joined": True, "status_comment_id": 9}))
+    hist = [] if gstate == "open" else [{"decision": "request-changes", "actor": "x", "reason": ""}]
+    (base / "approval.yaml").write_text(yaml.safe_dump(
+        {"protocol": PID, "instance": instance, "state": "approval",
+         "head_sha": head_sha, "gates": {"state": gstate, "history": hist}}))
+    _run(LIB_PY, ["cas-push", str(work), f"seed {instance}"], _env(state_origin))
+
+
+def _resolve(state_origin, tmp_path, inst, decision, actor, reason="", pr_author="someone"):
+    env = _env(state_origin, GATE_DECISION=decision, GATE_ACTOR=actor,
+               GATE_REASON=reason, GATE_PR_AUTHOR=pr_author)
+    return _run(NEXT_PY, [tmp_path / f"w-{decision}", inst, PIPELINE_PROTO,
+                          "resolve-gate", "gs"], env)
+
+
+def test_resolve_approve_finalizes_last_gate(state_origin, tmp_path):
+    inst = "pr-30"
+    _seed_open_gate(state_origin, tmp_path / "seed", inst)
+    out, err, rc = _resolve(state_origin, tmp_path, inst, "approve", "bob", "lgtm")
+    assert rc == 0, err
+    assert json.loads(out)["action"] == "noop"
+    _clone(state_origin, tmp_path / "verify")
+    g = yaml.safe_load((tmp_path / "verify" / PID / inst / "approval.yaml").read_text())
+    assert g["gates"]["state"] == "approved"
+    assert g["gates"]["history"][-1] == {"decision": "approve", "actor": "bob", "reason": "lgtm"}
+    # final gate → aggregate pid check-run completed success
+    assert "check-run code-review-pipeline sha=gs status=completed conclusion=success" in err
+
+
+def test_resolve_request_changes_halts_no_cursor_move(state_origin, tmp_path):
+    inst = "pr-31"
+    _seed_open_gate(state_origin, tmp_path / "seed", inst)
+    out, err, rc = _resolve(state_origin, tmp_path, inst, "request-changes", "alice", "fix it")
+    assert rc == 0, err
+    assert json.loads(out)["action"] == "noop"
+    _clone(state_origin, tmp_path / "verify")
+    base = tmp_path / "verify" / PID / inst
+    assert yaml.safe_load((base / "_instance.yaml").read_text())["phase"] == "approval"
+    g = yaml.safe_load((base / "approval.yaml").read_text())
+    assert g["gates"]["state"] == "changes_requested"
+    assert g["state"] == "approval"  # NOT failed (non-terminal)
+
+
+def test_resolve_changes_then_approve(state_origin, tmp_path):
+    inst = "pr-32"
+    _seed_open_gate(state_origin, tmp_path / "seed", inst, gstate="changes_requested")
+    out, err, rc = _resolve(state_origin, tmp_path, inst, "approve", "bob")
+    assert rc == 0, err
+    assert json.loads(out)["action"] == "noop"
+    _clone(state_origin, tmp_path / "verify")
+    g = yaml.safe_load((tmp_path / "verify" / PID / inst / "approval.yaml").read_text())
+    assert g["gates"]["state"] == "approved"
+
+
+def test_resolve_reject_is_terminal(state_origin, tmp_path):
+    inst = "pr-33"
+    _seed_open_gate(state_origin, tmp_path / "seed", inst)
+    out, err, rc = _resolve(state_origin, tmp_path, inst, "reject", "carol", "no")
+    assert rc == 0, err
+    _clone(state_origin, tmp_path / "verify")
+    g = yaml.safe_load((tmp_path / "verify" / PID / inst / "approval.yaml").read_text())
+    assert g["gates"]["state"] == "rejected" and g["state"] == "failed"
+    assert "check-run code-review-pipeline sha=gs status=completed conclusion=failure" in err
+
+
+def test_resolve_reject_then_approve_refused(state_origin, tmp_path):
+    inst = "pr-34"
+    _seed_open_gate(state_origin, tmp_path / "seed", inst, gstate="rejected")
+    out, err, rc = _resolve(state_origin, tmp_path, inst, "approve", "bob")
+    assert rc == 0
+    assert json.loads(out)["action"] == "halt"
+    assert "rejected" in err.lower()
+
+
+def test_resolve_self_approval_refused(state_origin, tmp_path):
+    inst = "pr-35"
+    _seed_open_gate(state_origin, tmp_path / "seed", inst)
+    out, err, rc = _resolve(state_origin, tmp_path, inst, "approve", "dave", pr_author="dave")
+    assert rc == 0
+    assert json.loads(out)["action"] == "halt"
+    assert "cannot approve their own" in err.lower()
+    _clone(state_origin, tmp_path / "verify")
+    g = yaml.safe_load((tmp_path / "verify" / PID / inst / "approval.yaml").read_text())
+    assert g["gates"]["state"] == "open"  # unchanged
+
+
+def test_resolve_not_a_gate_refused(state_origin, tmp_path):
+    inst = "pr-36"
+    _seed_cursor(state_origin, tmp_path / "seed", inst, "preflight")
+    out, err, rc = _resolve(state_origin, tmp_path, inst, "approve", "bob")
+    assert rc == 0
+    assert json.loads(out)["action"] == "halt"
+    assert "no approval gate" in err.lower()
+
+
+def test_resolve_no_instance_refused(state_origin, tmp_path):
+    out, err, rc = _resolve(state_origin, tmp_path, "pr-99", "approve", "bob")
+    assert rc == 0
+    assert json.loads(out)["action"] == "halt"
+    assert "no" in err.lower() and "run exists" in err
+
+
+def test_resolve_idempotent_double_approve(state_origin, tmp_path):
+    inst = "pr-37"
+    _seed_open_gate(state_origin, tmp_path / "seed", inst)
+    _resolve(state_origin, tmp_path, inst, "approve", "bob")
+    out, err, rc = _resolve(state_origin, tmp_path, inst, "approve", "bob")
+    # second approve: gate already approved (state != open/changes) → refused
+    assert json.loads(out)["action"] == "halt"
+
+
+def test_resolve_reason_is_inert(state_origin, tmp_path):
+    inst = "pr-38"
+    _seed_open_gate(state_origin, tmp_path / "seed", inst)
+    nasty = "$(rm -rf /); `id`; <b>x</b>"
+    _resolve(state_origin, tmp_path, inst, "reject", "carol", reason=nasty)
+    _clone(state_origin, tmp_path / "verify")
+    g = yaml.safe_load((tmp_path / "verify" / PID / inst / "approval.yaml").read_text())
+    assert g["gates"]["history"][-1]["reason"] == nasty
