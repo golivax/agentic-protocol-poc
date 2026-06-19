@@ -1,7 +1,10 @@
 protocol: code-review-pipeline
 instance: pr-62
-state: approval
+state: failed
 head_sha: 657e290beb6266ccd55b8bd95e247491e3468392
 gates:
-  state: open
-  history: []
+  state: rejected
+  history:
+  - decision: reject
+    actor: golivax
+    reason: 'live-test: exercising the failed terminal label'
