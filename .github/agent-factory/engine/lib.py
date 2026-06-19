@@ -218,7 +218,7 @@ def next_phase_id(protocol, phase_id):
         return None
     nxt = cur.get("next")
     nxt_state = state_by_id(protocol, nxt) if nxt else None
-    if nxt_state and nxt_state.get("kind") in ("agent", "fanout"):
+    if nxt_state and nxt_state.get("kind") in ("agent", "fanout", "gate"):
         return nxt
     return None
 
