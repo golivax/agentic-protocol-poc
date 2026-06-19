@@ -20,4 +20,9 @@ inclusive range. Used as the live-test fixture for the v4 approval gate.
 ## Non-goals
 
 - No type coercion — callers pass comparable numbers.
-- No NaN handling — out of scope for this fixture.
+
+## NaN handling
+
+NaN is out of scope: `NaN` compares false against every bound, so a `NaN`
+`value` falls through to the final branch and is returned unchanged. Callers
+that must reject `NaN` should validate before calling `clamp`.
