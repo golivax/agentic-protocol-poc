@@ -451,23 +451,26 @@ def ensure_phase_label(dir_, pid, instance, protocol, pr, head_key):
     inf = instance_file(dir_, pid, instance)
     if not os.path.isfile(inf):
         return
-    inst = load_yaml(inf) or {}
-    new = phase_label_text(protocol, head_key)
-    prev = inst.get("phase_label", "") or ""
-    if prev == new:
-        return
-    setup_text = phase_label_text(protocol, "setup")
-    if os.environ.get("ENGINE_LOCAL", "0") == "1":
-        sys.stderr.write(f"[ENGINE_LOCAL] phase-label {instance}: {prev or '∅'} → {new}\n")
+    try:
+        inst = load_yaml(inf) or {}
+        new = phase_label_text(protocol, head_key)
+        prev = inst.get("phase_label", "") or ""
+        if prev == new:
+            return
+        setup_text = phase_label_text(protocol, "setup")
+        if os.environ.get("ENGINE_LOCAL", "0") == "1":
+            sys.stderr.write(f"[ENGINE_LOCAL] phase-label {instance}: {prev or '∅'} → {new}\n")
+            inst["phase_label"] = new
+            dump_yaml(inf, inst)
+            return
+        for old in {prev, setup_text}:
+            if old and old != new:
+                remove_pr_label(pr, old)
+        _ensure_and_add_label(new, pr)
         inst["phase_label"] = new
         dump_yaml(inf, inst)
-        return
-    for old in {prev, setup_text}:
-        if old and old != new:
-            remove_pr_label(pr, old)
-    _ensure_and_add_label(new, pr)
-    inst["phase_label"] = new
-    dump_yaml(inf, inst)
+    except Exception as e:
+        sys.stderr.write(f"[engine] ensure_phase_label failed (non-fatal): {e}\n")
 
 
 def match_run_by_cid(runs_json, cid):

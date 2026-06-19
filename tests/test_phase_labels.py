@@ -2,7 +2,6 @@ import os
 import sys
 import pathlib
 
-import pytest
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -118,9 +117,7 @@ def test_start_seeds_first_phase_label(engine_env, tmp_path):
 
 import json
 import subprocess
-import yaml as _yaml_module
 
-ENGINE = ROOT / ".github/agent-factory/engine"
 LIB_PY = ENGINE / "lib.py"
 ADVANCE_PY = ENGINE / "advance.py"
 NEXT_PY = ENGINE / "next.py"
@@ -153,11 +150,11 @@ def _seed_preflight(state_origin, work, instance, *, state, iteration, head_sha)
     _run(LIB_PY, ["state-checkout", str(work)], env)
     base = work / PID / instance
     base.mkdir(parents=True, exist_ok=True)
-    (base / "preflight.yaml").write_text(_yaml_module.safe_dump({
+    (base / "preflight.yaml").write_text(yaml.safe_dump({
         "protocol": PID, "instance": instance, "state": state,
         "iteration": iteration, "gates": {}, "head_sha": head_sha, "history": [],
     }))
-    (base / "_instance.yaml").write_text(_yaml_module.safe_dump({
+    (base / "_instance.yaml").write_text(yaml.safe_dump({
         "protocol": PID, "instance": instance, "phase": "preflight",
         "head_sha": head_sha, "joined": False,
     }))
@@ -211,7 +208,7 @@ def test_advance_preflight_advance_to_next_sets_review_label(tmp_path):
 
     # 3. Verify _instance.yaml on origin has the "review" phase label
     _clone(state_origin, tmp_path / "verify")
-    inf = _yaml_module.safe_load(
+    inf = yaml.safe_load(
         (tmp_path / "verify" / PID / instance / "_instance.yaml").read_text()
     )
     proto_dict = json.load(open(CRP_PROTO))
@@ -244,7 +241,7 @@ def test_advance_preflight_exhausted_sets_failed_label(tmp_path):
     assert rc == 0, f"advance.py failed: {err}"
 
     _clone(state_origin, tmp_path / "verify")
-    inf = _yaml_module.safe_load(
+    inf = yaml.safe_load(
         (tmp_path / "verify" / PID / instance / "_instance.yaml").read_text()
     )
     # phase_label must be the terminal failed label
@@ -252,7 +249,7 @@ def test_advance_preflight_exhausted_sets_failed_label(tmp_path):
         f"expected '❌ failed', got {inf.get('phase_label')!r}"
     )
     # phase state file must also be failed
-    pf = _yaml_module.safe_load(
+    pf = yaml.safe_load(
         (tmp_path / "verify" / PID / instance / "preflight.yaml").read_text()
     )
     assert pf["state"] == "failed"
@@ -283,7 +280,7 @@ def test_advance_preflight_blocked_sets_blocked_label(tmp_path):
     assert rc == 0, f"advance.py failed: {err}"
 
     _clone(state_origin, tmp_path / "verify")
-    inf = _yaml_module.safe_load(
+    inf = yaml.safe_load(
         (tmp_path / "verify" / PID / instance / "_instance.yaml").read_text()
     )
     assert inf.get("phase_label") == "⛔ blocked", (
@@ -353,12 +350,12 @@ def _seed_crp_review_done(state_origin, work, instance):
     _run(LIB_PY, ["state-checkout", str(work)], env)
     base = work / PID / instance
     base.mkdir(parents=True, exist_ok=True)
-    (base / "_instance.yaml").write_text(_yaml_module.safe_dump({
+    (base / "_instance.yaml").write_text(yaml.safe_dump({
         "protocol": PID, "instance": instance, "phase": "review",
         "head_sha": "jsha", "joined": False, "status_comment_id": 9,
     }))
     for b in CRP_REVIEW_BRANCHES:
-        (base / f"review.{b}.yaml").write_text(_yaml_module.safe_dump({
+        (base / f"review.{b}.yaml").write_text(yaml.safe_dump({
             "protocol": PID, "instance": instance, "state": "done",
             "iteration": 1, "gates": {}, "head_sha": "jsha", "history": [],
         }))
@@ -385,7 +382,7 @@ def test_join_opens_gate_sets_gate_phase_label(tmp_path):
     assert r.returncode == 0, r.stderr
 
     _clone(state_origin, tmp_path / "verify")
-    inf = _yaml_module.safe_load(
+    inf = yaml.safe_load(
         (tmp_path / "verify" / PID / instance / "_instance.yaml").read_text()
     )
     # cursor must have advanced to the gate
@@ -419,7 +416,7 @@ def test_join_finalizes_done_sets_done_label(tmp_path):
     assert r.returncode == 0, r.stderr
 
     _clone(state_origin, tmp_path / "verify")
-    inf = _yaml_module.safe_load(
+    inf = yaml.safe_load(
         (tmp_path / "verify" / MG_PID / instance / "_instance.yaml").read_text()
     )
     assert inf.get("joined") is True
@@ -448,7 +445,7 @@ def test_join_finalizes_failed_sets_failed_label(tmp_path):
     assert r.returncode == 0, r.stderr
 
     _clone(state_origin, tmp_path / "verify")
-    inf = _yaml_module.safe_load(
+    inf = yaml.safe_load(
         (tmp_path / "verify" / MG_PID / instance / "_instance.yaml").read_text()
     )
     assert inf.get("joined") is True
@@ -499,3 +496,144 @@ def test_v1_grumpy_records_no_phase_label(engine_env, tmp_path):
     # v1 single-agent path: state file lives at <pid>/<instance>.yaml (no subdir)
     sf = state_dir / "grumpy-review" / "pr-702.yaml"
     assert "phase_label" not in read_state_yaml(sf)
+
+
+# ---------------------------------------------------------------------------
+# Live-path (no ENGINE_LOCAL) tests for ensure_phase_label + apply_setup_label
+# These tests monkeypatch lib.subprocess.run with a recorder and verify that
+# the exact `gh` calls — label create, pr edit --remove-label, pr edit
+# --add-label — are issued in the right order and with the right arguments.
+# No real `gh` is invoked because subprocess.run is patched.
+# ---------------------------------------------------------------------------
+
+import types
+
+
+class _FakeProc:
+    """Minimal subprocess.CompletedProcess stand-in returned by the recorder."""
+    returncode = 0
+    stderr = ""
+    stdout = ""
+
+
+def _make_recorder():
+    """Return (recorder_fn, recorded_calls_list).
+    recorder_fn is a drop-in for subprocess.run; it appends each argv list."""
+    calls = []
+
+    def recorder(argv, **kwargs):
+        calls.append(list(argv))
+        return _FakeProc()
+
+    return recorder, calls
+
+
+def test_ensure_phase_label_live_removal_set(tmp_path, monkeypatch):
+    """ensure_phase_label (live path, no ENGINE_LOCAL) with a prev label and a new
+    label: must issue --remove-label for BOTH prev AND setup_text (if they differ
+    from the new label) and then create + add the new label, then write phase_label
+    to _instance.yaml.
+
+    Asserts:
+    - removal set is exactly {prev_label, setup_text} (both differ from new)
+    - gh label create is called for new
+    - gh pr edit --add-label is called for new
+    - _instance.yaml["phase_label"] updated to new label text
+    """
+    monkeypatch.delenv("ENGINE_LOCAL", raising=False)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+
+    proto = {
+        "name": "p",
+        "states": [{"id": "review", "kind": "agent", "label": "Code Review"}],
+    }
+    setup_text = lib.phase_label_text(proto, "setup")   # "⚙ setup"
+    prev_label = "pre-flight gate"
+    new_label = lib.phase_label_text(proto, "review")   # "Code Review"
+
+    # Write _instance.yaml with an existing prev label
+    inf = tmp_path / "p" / "pr-10" / "_instance.yaml"
+    inf.parent.mkdir(parents=True, exist_ok=True)
+    yaml.safe_dump({"protocol": "p", "instance": "pr-10", "phase_label": prev_label}, inf.open("w"))
+
+    recorder, calls = _make_recorder()
+    monkeypatch.setattr(lib.subprocess, "run", recorder)
+
+    lib.ensure_phase_label(str(tmp_path), "p", "pr-10", proto, "10", "review")
+
+    # Collect gh pr edit --remove-label targets
+    removed = set()
+    for argv in calls:
+        if "pr" in argv and "edit" in argv and "--remove-label" in argv:
+            idx = argv.index("--remove-label")
+            removed.add(argv[idx + 1])
+
+    # Both prev and setup_text must have been removed (neither equals new_label)
+    assert prev_label in removed, f"expected {prev_label!r} in removed={removed}"
+    assert setup_text in removed, f"expected {setup_text!r} in removed={removed}"
+
+    # gh label create must have been called for new_label
+    create_calls = [a for a in calls if "label" in a and "create" in a]
+    assert any(new_label in a for a in create_calls), (
+        f"gh label create not found for {new_label!r}: {create_calls}"
+    )
+
+    # gh pr edit --add-label must have been called for new_label
+    add_calls = [a for a in calls if "pr" in a and "edit" in a and "--add-label" in a]
+    assert any(new_label in a for a in add_calls), (
+        f"gh pr edit --add-label not found for {new_label!r}: {add_calls}"
+    )
+
+    # _instance.yaml must record the new label
+    updated = yaml.safe_load(inf.read_text())
+    assert updated["phase_label"] == new_label, (
+        f"expected phase_label={new_label!r}, got {updated.get('phase_label')!r}"
+    )
+
+
+def test_ensure_phase_label_live_no_remove_when_prev_equals_new(tmp_path, monkeypatch):
+    """ensure_phase_label is a no-op when prev == new — no gh calls at all."""
+    monkeypatch.delenv("ENGINE_LOCAL", raising=False)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+
+    proto = {"name": "p", "states": [{"id": "review", "kind": "agent", "label": "Code Review"}]}
+    current_label = lib.phase_label_text(proto, "review")  # "Code Review"
+
+    inf = tmp_path / "p" / "pr-11" / "_instance.yaml"
+    inf.parent.mkdir(parents=True, exist_ok=True)
+    yaml.safe_dump({"protocol": "p", "instance": "pr-11", "phase_label": current_label},
+                   inf.open("w"))
+
+    recorder, calls = _make_recorder()
+    monkeypatch.setattr(lib.subprocess, "run", recorder)
+
+    lib.ensure_phase_label(str(tmp_path), "p", "pr-11", proto, "11", "review")
+
+    assert calls == [], f"expected no gh calls, got: {calls}"
+
+
+def test_apply_setup_label_live(tmp_path, monkeypatch):
+    """apply_setup_label (live path) must issue gh label create + gh pr edit --add-label
+    for the setup label text."""
+    monkeypatch.delenv("ENGINE_LOCAL", raising=False)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+
+    proto = {"name": "p", "states": []}
+    setup_text = lib.phase_label_text(proto, "setup")  # "⚙ setup"
+
+    recorder, calls = _make_recorder()
+    monkeypatch.setattr(lib.subprocess, "run", recorder)
+
+    lib.apply_setup_label(proto, "42")
+
+    # gh label create must be called
+    create_calls = [a for a in calls if "label" in a and "create" in a]
+    assert any(setup_text in a for a in create_calls), (
+        f"gh label create not called for {setup_text!r}: {create_calls}"
+    )
+
+    # gh pr edit --add-label must be called for setup_text
+    add_calls = [a for a in calls if "pr" in a and "edit" in a and "--add-label" in a]
+    assert any(setup_text in a for a in add_calls), (
+        f"gh pr edit --add-label not called for {setup_text!r}: {add_calls}"
+    )
