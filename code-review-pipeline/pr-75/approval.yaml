@@ -3,5 +3,8 @@ instance: pr-75
 state: approval
 head_sha: 41d71affcfb33571e94ed7ffccd112c512c6020a
 gates:
-  state: open
-  history: []
+  state: approved
+  history:
+  - decision: approve
+    actor: golivax
+    reason: ship it
