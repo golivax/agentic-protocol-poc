@@ -99,10 +99,8 @@ def test_start_seeds_first_phase_label(engine_env, tmp_path):
     assert rc == 0, err
     inf = state_dir / "code-review-pipeline" / "pr-700" / "_instance.yaml"
     data = read_state_yaml(inf)
-    # preflight gets the explicit label added in Task 6; until then it is the
-    # humanized id. Assert against the resolved value to stay decoupled:
     assert data["phase"] == "preflight"
-    assert data["phase_label"]  # non-empty: a label was recorded
+    assert data["phase_label"] == "pre-flight gate"
 
 
 # ---------------------------------------------------------------------------
