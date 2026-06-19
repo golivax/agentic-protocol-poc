@@ -1,6 +1,7 @@
 protocol: code-review-pipeline
 instance: pr-75
-phase: approval
+state: approval
 head_sha: 41d71affcfb33571e94ed7ffccd112c512c6020a
-joined: true
-status_comment_id: 4754832051
+gates:
+  state: open
+  history: []
