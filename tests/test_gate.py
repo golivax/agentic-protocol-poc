@@ -97,3 +97,33 @@ def test_route_unambiguous_for_approve():
                        text=True, capture_output=True)
     assert r.returncode == 0, r.stderr
     assert f"protocols/{PID}/protocol.json" in r.stdout and "skip=false" in r.stdout
+
+
+def _seed_instance_with_gate(tmp_path, gate_state, actor="bob"):
+    d = tmp_path / "state"
+    base = d / PID / "pr-7"
+    base.mkdir(parents=True)
+    (base / "_instance.yaml").write_text(yaml.safe_dump(
+        {"protocol": PID, "instance": "pr-7", "phase": "approval",
+         "head_sha": "s", "joined": True}))
+    hist = [] if gate_state == "open" else [{"decision": gate_state, "actor": actor, "reason": ""}]
+    (base / "approval.yaml").write_text(yaml.safe_dump(
+        {"protocol": PID, "instance": "pr-7", "state": "approval", "head_sha": "s",
+         "gates": {"state": gate_state, "history": hist}}))
+    return d
+
+
+def test_render_gate_open_row_and_headline(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "golivax/agentic-protocol-poc")
+    d = _seed_instance_with_gate(tmp_path, "open")
+    body = lib.render_pipeline_status_body(str(d), PID, "pr-7", str(PIPELINE_PROTO))
+    assert "**approval**" in body
+    assert "awaiting human sign-off" in body
+    assert "Awaiting human approval" in body  # headline
+
+
+def test_render_gate_approved_row(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "golivax/agentic-protocol-poc")
+    d = _seed_instance_with_gate(tmp_path, "approved", actor="carol")
+    body = lib.render_pipeline_status_body(str(d), PID, "pr-7", str(PIPELINE_PROTO))
+    assert "approved by @carol" in body

@@ -626,9 +626,10 @@ def render_pipeline_status_body(dir_, pid, instance, proto):
 
     sections = ""
     any_active = any_failed = False
+    gate_open = False
     blocked_phase = None
 
-    for ph in phase_states(protocol):
+    for ph in pipeline_states(protocol):
         ph_id = ph["id"]
         if ph.get("kind") == "fanout":
             for b in ph.get("branches", []):
@@ -643,6 +644,26 @@ def render_pipeline_status_body(dir_, pid, instance, proto):
                     any_failed = True
                 else:  # pending / in-flight
                     any_active = True
+        elif ph.get("kind") == "gate":
+            sf = state_file(dir_, pid, instance, phase=ph_id)
+            if not os.path.isfile(sf):
+                continue  # gate not reached yet → no row (pre-gate output unchanged)
+            g = (load_yaml(sf).get("gates") or {})
+            gstate = g.get("state", "")
+            hist = g.get("history") or []
+            who = (hist[-1].get("actor") if hist else "") or ""
+            if gstate == "approved":
+                note = f"✅ approved by @{who}"
+            elif gstate == "rejected":
+                note = f"⛔ rejected by @{who}"
+                any_failed = True
+            elif gstate == "changes_requested":
+                note = f"🔁 changes requested by @{who} — push a fix or `/approve`"
+                gate_open = True
+            else:  # open
+                note = "⏳ awaiting human sign-off (`/approve` · `/request-changes` · `/reject`)"
+                gate_open = True
+            sections += f"**{ph_id}**\n\n{note}\n\n"
         else:  # agent phase
             max_iter = ph.get("max_iterations", "?")
             sf = state_file(dir_, pid, instance, phase=ph_id)
@@ -666,6 +687,9 @@ def render_pipeline_status_body(dir_, pid, instance, proto):
     if blocked_phase:
         headline = (f"⛔ Blocked at **{blocked_phase}** — a write-access user can comment "
                     f"`/override <reason>` to proceed past this gate.")
+    elif gate_open:
+        headline = ("⏳ Awaiting human approval — comment `/approve`, "
+                    "`/request-changes`, or `/reject`.")
     elif any_failed:
         headline = "❌ Pipeline failed — a gate could not complete; merge is gated."
     elif any_active:
