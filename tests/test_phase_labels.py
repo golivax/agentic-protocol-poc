@@ -455,3 +455,47 @@ def test_join_finalizes_failed_sets_failed_label(tmp_path):
     assert inf.get("phase_label") == "❌ failed", (
         f"expected '❌ failed', got {inf.get('phase_label')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end phase-label progression + v1 regression guard (Task 7)
+# ---------------------------------------------------------------------------
+
+GRUMPY_PROTO = ROOT / ".github/agent-factory/protocols/grumpy/protocol.json"
+
+
+def test_phase_advance_relabels(engine_env, tmp_path):
+    """Driving the cursor to the next phase via advance-phase relabels the PR."""
+    # Each run_engine call clones fresh from origin into its own dir.
+    state_dir = tmp_path / "state1"
+    # start → preflight
+    _, err, rc = run_engine("next.py", state_dir, "pr-701", CRP_PROTO,
+                            "start", "cafe1234", env=engine_env)
+    assert rc == 0, err
+    inf = state_dir / "code-review-pipeline" / "pr-701" / "_instance.yaml"
+    assert read_state_yaml(inf)["phase_label"] == "pre-flight gate"
+
+    # advance-phase to the review fanout (orchestrator would set PHASE=review);
+    # use a fresh clone dir — state_checkout always git-clones, can't reuse.
+    env2 = dict(engine_env)
+    env2["PHASE"] = "review"
+    state_dir2 = tmp_path / "state2"
+    _, err, rc = run_engine("next.py", state_dir2, "pr-701", CRP_PROTO,
+                            "advance-phase", "cafe1234", env=env2)
+    assert rc == 0, err
+    inf2 = state_dir2 / "code-review-pipeline" / "pr-701" / "_instance.yaml"
+    assert read_state_yaml(inf2)["phase_label"] == "review"
+
+
+def test_v1_grumpy_records_no_phase_label(engine_env, tmp_path):
+    """The single-agent v1 path has no _instance.yaml → no phase label, and the
+    state file it writes carries no phase_label key (byte-identical baseline)."""
+    state_dir = tmp_path / "state"
+    _, err, rc = run_engine("next.py", state_dir, "pr-702", GRUMPY_PROTO,
+                            "start", "f00dface", env=engine_env)
+    assert rc == 0, err
+    # no instance file at all for v1
+    assert not (state_dir / "grumpy-review" / "pr-702" / "_instance.yaml").exists()
+    # v1 single-agent path: state file lives at <pid>/<instance>.yaml (no subdir)
+    sf = state_dir / "grumpy-review" / "pr-702.yaml"
+    assert "phase_label" not in read_state_yaml(sf)
