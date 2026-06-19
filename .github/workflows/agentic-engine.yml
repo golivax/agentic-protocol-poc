@@ -104,6 +104,31 @@ jobs:
                   CMD=""   # not authorized → the engine no-ops (plan/dispatch skip on empty command)
                 fi
               fi
+              if [ "$CMD" = "resolve-gate" ]; then
+                # Decision derived from the matched prefix (mutually exclusive; no
+                # prefix is a prefix of another). Identity from TRUSTED event fields.
+                case "$COMMENT_BODY" in
+                  /approve*)         GATE_DECISION=approve;         PREFIX=/approve ;;
+                  /request-changes*) GATE_DECISION=request-changes; PREFIX=/request-changes ;;
+                  /reject*)          GATE_DECISION=reject;          PREFIX=/reject ;;
+                  *)                 GATE_DECISION="";              PREFIX="" ;;
+                esac
+                PERM=$(gh api "repos/${{ github.repository }}/collaborators/$COMMENTER_LOGIN/permission" \
+                  --jq '.permission' 2>/dev/null || echo none)
+                if [ "$PERM" = "write" ] || [ "$PERM" = "admin" ]; then
+                  REASON="${COMMENT_BODY#$PREFIX}"   # strip the matched prefix
+                  REASON="${REASON# }"               # strip one leading space
+                  echo "gate_decision=$GATE_DECISION" >> "$GITHUB_OUTPUT"
+                  echo "gate_actor=$COMMENTER_LOGIN" >> "$GITHUB_OUTPUT"
+                  echo "gate_pr_author=${{ github.event.issue.user.login }}" >> "$GITHUB_OUTPUT"
+                  DELIM="gate_$(openssl rand -hex 16)"
+                  { echo "gate_reason<<$DELIM"; printf '%s\n' "$REASON"; echo "$DELIM"; } >> "$GITHUB_OUTPUT"
+                else
+                  gh api "repos/${{ github.repository }}/issues/$PR/comments" \
+                    -f "body=@$COMMENTER_LOGIN resolving this gate requires write access to this repository." >/dev/null 2>&1 || true
+                  CMD=""   # not authorized → engine no-ops
+                fi
+              fi
               ;;
           esac
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
@@ -131,6 +156,10 @@ jobs:
           PHASE: ${{ steps.ctx.outputs.phase }}
           OVERRIDE_ACTOR: ${{ steps.ctx.outputs.override_actor }}
           OVERRIDE_REASON: ${{ steps.ctx.outputs.override_reason }}
+          GATE_DECISION: ${{ steps.ctx.outputs.gate_decision }}
+          GATE_ACTOR: ${{ steps.ctx.outputs.gate_actor }}
+          GATE_REASON: ${{ steps.ctx.outputs.gate_reason }}
+          GATE_PR_AUTHOR: ${{ steps.ctx.outputs.gate_pr_author }}
         run: |
           # next.py reads BRANCH/PHASE from env. Empty BRANCH+PHASE → the v1/v2
           # legacy path; PHASE set → multi-phase; advance-phase seeds the cursor's phase.
