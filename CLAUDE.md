@@ -7,16 +7,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 PoC of an **agentic protocol engine**: a generic state machine that drives gh-aw
 (GitHub Agentic Workflows) agents through a porch-style protocol with
 evidence schemas, deterministic transition checks, and bounded
-iterate-with-feedback. A PR review runs on opening a PR or commenting `/grumpy`.
+iterate-with-feedback. A PR review runs on opening a PR or commenting `/review`.
 
-Two example protocols exercise the engine:
-- **`grumpy-review`** (`.github/agent-factory/protocols/grumpy/`) — the v1 single-agent PR reviewer.
-  Still fully supported by the engine and used as the regression-guard baseline.
-- **`multi-grumpy`** (`.github/agent-factory/protocols/multi-grumpy/`) — the v2 fan-out protocol that
-  reviews via two parallel agents (`grumpy` + a `security` stub) joined under a
-  strict barrier. A live `/grumpy` or PR-open today runs the fan-out via the
-  router (`agentic-orchestrator.yml`), which selects this protocol through
+One example protocol exercises the engine:
+- **`code-review`** (`.github/agent-factory/protocols/code-review/`) — a multi-phase pipeline:
+  `preflight` (agent, pre-flight gate) → `review` (fanout to `grumpy` + `security` legs) →
+  `join` (AND-barrier) → `approval` (human gate). A live `/review` or PR-open runs the
+  pipeline via the router (`agentic-orchestrator.yml`), which selects this protocol through
   `lib.route` scanning `protocol.json` `triggers` blocks at runtime.
+
+Single-phase engine shapes used in regression testing live in
+`tests/fixtures/single-agent/` (single-agent path) and `tests/fixtures/fanout-mini/`
+(single-phase fanout without the multi-phase wrapper).
 
 The deep design rationale lives in `docs/HOW-IT-WORKS.md`; what is/isn't
 implemented and why (deviations from the original spec) lives in `docs/STATUS.md`.
@@ -68,9 +70,10 @@ deliberate.
                        reusable engine. Replaces the per-protocol trigger shim.
   agentic-engine.yml   reusable on:workflow_call engine — the 4 trust zones
                        (plan→dispatch→checks→advance) for one protocol path.
-  grumpy-agent.md      gh-aw agent (v1 reviewer) -> compiled grumpy-agent.lock.yml
-  security-agent.md    gh-aw agent (v2 security stub) -> security-agent.lock.yml
-  protocol-join.yml    serialized join evaluator (v2)
+  preflight-agent.md   gh-aw agent (preflight phase) -> compiled preflight-agent.lock.yml
+  grumpy-agent.md      gh-aw agent (review/grumpy leg) -> compiled grumpy-agent.lock.yml
+  security-agent.md    gh-aw agent (review/security leg) -> compiled security-agent.lock.yml
+  protocol-join.yml    serialized join evaluator
 ```
 
 **To build a new protocol you write a new `.github/agent-factory/protocols/<name>/` + agent workflow;
@@ -139,8 +142,8 @@ pytest tests/ -q
 pytest tests/test_engine.py -v
 ```
 
-Modules: `test_engine.py` (planner + advance writer + lib CAS, the v1+v2 regression
-guard), `test_checks.py`, `test_runchecks.py` (check resolution/robustness),
+Modules: `test_engine.py` (planner + advance writer + lib CAS, single-agent + fanout
+regression guard using `tests/fixtures/`), `test_checks.py`, `test_runchecks.py` (check resolution/robustness),
 `test_publish.py`, `test_correlation.py` (cid resolver, pure), `test_join.py`,
 `test_fanout_e2e.py`, `test_status_comment.py`. Each is self-contained — pytest's
 `tmp_path` gives every test its own throwaway state dir.
@@ -182,19 +185,22 @@ Key frontmatter facts (see `docs/STATUS.md` for the security rationale):
   `POC_DISPATCH_TOKEN` (a PAT with repo + workflow scopes — the default
   `GITHUB_TOKEN` deliberately can't trigger workflows or read PR labels).
 
-## v2 — fan-out / join (the `BRANCH` seam)
+## Fan-out / join (the `BRANCH` seam)
 
-v2 (`.github/agent-factory/protocols/multi-grumpy/`) adds a `fanout` phase (N parallel agent branches,
-each with its own iterate loop + eager publish) and a strict `join` AND-barrier
-that gates merge. Design goal: **v1 stays byte-identical.** `next.py`,
-`run-checks.py`, and `advance.py` read one env var, `BRANCH`:
+The `code-review` protocol's `review` phase fans out to N parallel agent branches
+(here `grumpy` + `security`), each with its own iterate loop + eager publish, then
+joins them under a strict AND-barrier (`join` state) before advancing to the
+`approval` gate. The engine grows one environment variable to support this — not a
+second code path. `next.py`, `run-checks.py`, and `advance.py` read one env var, `BRANCH`:
 
-- **`BRANCH` empty/unset** → the exact v1 single-agent path (the regression guard).
+- **`BRANCH` empty/unset** → the single-agent path (used by `tests/fixtures/single-agent/`
+  as the engine regression fixture).
 - **`BRANCH=<id>` set** → the same scripts operate on one fan-out branch (its
   agent unit, check list, publish hook, and per-branch state file).
 
 A "branch" is a parallel agent *leg*, not a git branch. Per-branch state lives at
-`multi-grumpy/pr-N/<branch>.yaml` + a shared `_instance.yaml` (`joined` flag) —
+`code-review/pr-N/review.<branch>.yaml` (e.g. `code-review/pr-N/review.grumpy.yaml`,
+`code-review/pr-N/review.security.yaml`) + a shared `_instance.yaml` (`joined` flag) —
 each branch writes only its own file, so CAS has no write contention. Matrix legs
 pass per-branch data (run-id, verdicts) via branch-named **artifacts**, not job
 `outputs` (which clobber across legs). Two axes are kept orthogonal: **process**

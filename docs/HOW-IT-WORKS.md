@@ -97,11 +97,11 @@ PR, advanced one PR at a time; a PAT for cross-workflow triggering (the default
 ### 3.1 Components
 
 ```
-.github/agent-factory/protocols/grumpy/
+.github/agent-factory/protocols/code-review/
   protocol.json          # states, checks, transitions, max_iterations (DATA)
-  evidence.schema.json   # the rubric the agent must fill (the CONTRACT)
+  *.evidence.schema.json # the rubric each agent phase must fill (the CONTRACT)
   checks/*.py            # deterministic transition checks (FORM verification)
-  publish/publish-review-from-evidence.py  # protocol's publish hook (zone 4)
+  publish/               # per-branch publish hooks (zone 4)
 
 .github/agent-factory/engine/   # GENERIC — fully protocol-agnostic
   lib.py                 # state checkout, CAS push, status-comment upsert,
@@ -112,23 +112,32 @@ PR, advanced one PR at a time; a PAT for cross-workflow triggering (the default
   run-checks.py          # resolve + run a state's checks (any language) -> verdicts
 
 .github/workflows/
-  orchestrator.yml       # the 4 trust zones; maps events → commands; calls the engine
-  grumpy-agent.md        # gh-aw agent workflow for the example protocol
-  grumpy-agent.lock.yml  # compiled output of grumpy-agent.md (committed)
+  agentic-orchestrator.yml  # router: union on:, runtime route job, calls reusable engine
+  agentic-engine.yml        # reusable on:workflow_call engine — the 4 trust zones
+  preflight-agent.md        # gh-aw agent (preflight phase) -> preflight-agent.lock.yml
+  grumpy-agent.md           # gh-aw agent (review/grumpy leg) -> grumpy-agent.lock.yml
+  security-agent.md         # gh-aw agent (review/security leg) -> security-agent.lock.yml
 
 agentic-state branch
-  <protocol-id>/<instance-key>.yaml   # durable per-instance state (e.g. grumpy-review/pr-<N>.yaml)
+  <protocol-id>/pr-<N>/<phase>.yaml   # durable per-phase state
+                                      # e.g. code-review/pr-<N>/preflight.yaml,
+                                      #      code-review/pr-<N>/review.grumpy.yaml
+  <protocol-id>/pr-<N>/_instance.yaml # shared per-instance state (cursor, joined flag)
 ```
 
-> **`grumpy-review` is an example protocol, not the engine.** Everything under
+> **`code-review` is an example protocol, not the engine.** Everything under
 > `.github/agent-factory/engine/` is protocol-agnostic: it reads the protocol id from
 > `protocol.json` `.name`, resolves checks and publish hooks from the protocol
-> directory, and derives the state path as `<protocol-id>/<instance-key>.yaml`.
-> The grumpy reviewer — its `protocol.json`, evidence schema, checks, and
-> publish hook — lives entirely in `.github/agent-factory/protocols/grumpy/` + `grumpy-agent.md` and
-> exists to exercise the engine. To build a different protocol (an
+> directory, and derives the state path from the protocol id and instance key.
+> The `code-review` pipeline — its `protocol.json`, evidence schemas, checks, and
+> publish hooks — lives entirely in `.github/agent-factory/protocols/code-review/` + the agent
+> `.md` files and exists to exercise the engine. To build a different protocol (an
 > incident-response runbook, a release checklist, a compliance review) you write
 > a new `.github/agent-factory/protocols/<name>/` and agent workflow; you do **not** touch the engine.
+>
+> Pure single-phase engine shapes (single-agent iterate loop; single-phase fanout
+> without the multi-phase wrapper) are exercised as regression fixtures in
+> `tests/fixtures/single-agent/` and `tests/fixtures/fanout-mini/`.
 
 ### 3.2 The four trust zones (per iteration)
 
@@ -151,10 +160,10 @@ advance job reads only the check *verdicts* to decide, and only the evidence (to
 ### 3.3 The transition lifecycle
 
 ```
-event (pull_request open/push, /grumpy comment, or repository_dispatch "protocol-continue")
+event (pull_request open/push, /review comment, or repository_dispatch "protocol-continue")
    │
    ▼  orchestrator maps event → command: opened/reopened → start,
-      synchronize → reset, issue_comment /grumpy → start, dispatch → continue
+      synchronize → reset, issue_comment /review → start, dispatch → continue
    │
    ▼
 [plan]      checkout agentic-state; next.py <dir> <instance-key> <protocol.json>
@@ -184,14 +193,16 @@ instance.
 
 ### 3.4 State model
 
-`<protocol-id>/<instance-key>.yaml` (e.g. `grumpy-review/pr-<N>.yaml`; porch-compatible field names):
+Each phase gets its own state file under `<protocol-id>/pr-<N>/`. For a
+single-agent phase (like `preflight` in `code-review`) the shape is
+(porch-compatible field names):
 
 ```yaml
-protocol: grumpy-review
+protocol: code-review
 instance: pr-9
-state: done            # review | publish | done | failed
+state: done            # <phase-id> | done | failed
 iteration: 2           # 1-based, bounded by max_iterations
-gates: {}              # reserved for v2 human gates
+gates: {}              # used by kind:"gate" phases for human decision history
 history:               # one record per iteration — the audit trail
   - iteration: 1
     agent_run_id: "…"
@@ -204,8 +215,14 @@ history:               # one record per iteration — the audit trail
 status_comment_id: 4673907543   # the single PR comment the engine re-renders
 ```
 
-Every transition is a commit to this file on the `agentic-state` branch, so
-`git log agentic-state -- grumpy-review/pr-<N>.yaml` is a complete, auditable history.
+Every transition is a commit to the file on the `agentic-state` branch, so
+`git log agentic-state -- code-review/pr-<N>/preflight.yaml` is a complete,
+auditable history.
+
+> **Single-phase shape for the engine regression fixture:** `tests/fixtures/single-agent/`
+> exercises the pure single-agent iterate loop with a minimal `protocol.json`;
+> its state lives at `single-agent/pr-<N>.yaml` (no sub-directory, matching the
+> `<protocol-id>/<instance-key>.yaml` formula when there is no multi-phase wrapping).
 
 ### 3.5 Resolving the agent's run — the correlation id
 
@@ -239,9 +256,12 @@ them in parallel.
 
 ### 4.1 Anatomy of a protocol (`protocol.json`)
 
+Below is the shape of a **single-agent** protocol state — the simplest form,
+used by the `tests/fixtures/single-agent/` engine regression fixture:
+
 ```jsonc
 {
-  "name": "grumpy-review",
+  "name": "single-agent",   // fixture — not a shipped protocol
   "states": [
     { "id": "review",
       "kind": "agent",                 // an LLM step; dispatched as a gh-aw workflow
@@ -255,14 +275,14 @@ them in parallel.
         { "run": "rubric-coverage",     "on_fail": "iterate" },
         { "run": "traces-exist-in-diff","on_fail": "iterate" }
       ],
-      "next": "publish" },
-    { "id": "publish",
-      "kind": "deterministic",         // no agent; the engine executes `action`
-      "action": "publish-review-from-evidence",
-      "next": null }                   // terminal
+      "next": null }                   // terminal (publish handled by separate hook)
   ]
 }
 ```
+
+The shipped `code-review` protocol is multi-phase and uses `kind:"fanout"` and
+`kind:"gate"` in addition to `kind:"agent"` — see
+`.github/agent-factory/protocols/code-review/protocol.json` for the full declaration.
 
 Designing a protocol state = **choosing the enumerable rubric** (here, 5
 categories × changed files) and the checks that verify the evidence is complete
@@ -509,7 +529,7 @@ without a 422 from the GitHub reviews API. The check *is* the guarantee; the
 publish hook trusts it.
 
 For the full design rationale and the tradeoffs among the four possible
-anchoring strategies, see `.github/agent-factory/protocols/grumpy/README.md` §"Line anchoring".
+anchoring strategies, see `.github/agent-factory/protocols/code-review/README.md` §"Line anchoring" (if present).
 
 ```python
 #!/usr/bin/env python3
@@ -699,9 +719,18 @@ is *anchored in code that actually changed*, at the specific line(s) the agent
 named. None of them judge whether a finding is correct; that's substance,
 reserved for a future judge/gate.
 
-### 4.4 The agent workflow (`grumpy-agent.md`)
+### 4.4 The agent workflows (`*-agent.md`)
 
-A normal gh-aw markdown file with two protocol-specific responsibilities:
+The `code-review` protocol uses three agent workflows:
+
+- **`preflight-agent.md`** — reviews the PR for spec/plan adherence in the
+  `preflight` phase.
+- **`grumpy-agent.md`** — the general code reviewer; dispatched as the `grumpy`
+  leg of the `review` fanout phase.
+- **`security-agent.md`** — the security reviewer; dispatched as the `security`
+  leg of the `review` fanout phase.
+
+Each is a normal gh-aw markdown file with two protocol-specific responsibilities:
 
 - **Frontmatter** declares the engine, read-only permissions, the LLM endpoint
   (`engine.env`), a `pre-agent-steps` step that materializes the dispatched
@@ -714,7 +743,7 @@ A normal gh-aw markdown file with two protocol-specific responsibilities:
   The iteration's `feedback` is injected so the agent fixes exactly what the
   previous round's checks rejected.
 
-Compile it with `gh aw compile` and commit the generated `grumpy-agent.lock.yml`
+Compile with `gh aw compile` and commit the generated `*.lock.yml`
 (workflows run from the committed lock).
 
 > Custom LLM endpoint note: configure it under `engine.env`
@@ -742,7 +771,7 @@ The orchestrator translates events to commands:
 |---|---|---|
 | `pull_request` opened / reopened | — | `start` |
 | `pull_request` synchronize | new commit pushed | `reset` |
-| `issue_comment` created | body starts with `/grumpy` | `start` |
+| `issue_comment` created | body starts with `/review` | `start` |
 | `repository_dispatch` `protocol-continue` | iterate re-entry | `continue` |
 
 The command determines the engine's behaviour based on the instance lifecycle
@@ -774,9 +803,10 @@ a protocol-provided executable resolved via the same `resolve_executable`
 function used for checks (see §4.3), from the publish state's `.action` field:
 
 ```jsonc
-{ "id": "publish",
-  "kind": "deterministic",
-  "action": "publish-review-from-evidence"  // resolved in .github/agent-factory/protocols/<name>/publish/
+{ "id": "review",        // an agent state with a publish hook
+  "kind": "fanout",
+  "branches": [ ... ],
+  // each branch carries its own "publish": "<hook-name>" resolved from the protocol's publish/ dir
 }
 ```
 
@@ -799,10 +829,11 @@ that touches agent-influenced data without being able to affect external
 systems. Do not conflate them: "resolved via `resolve_executable`" describes
 the *mechanical* resolution; the trust boundary is entirely different.
 
-For grumpy-review, the publish hook is
-`.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.py`. It reads the
-evidence, posts a REQUEST_CHANGES or APPROVE review (COMMENT fallback if the
-repo setting is off), and returns `{"conclusion":"failure"|"success","summary":"…"}`.
+For `code-review`, publish hooks live in
+`.github/agent-factory/protocols/code-review/publish/` (one per branch: `publish-grumpy`,
+`publish-security`). Each reads the evidence, posts a REQUEST_CHANGES or APPROVE
+review (COMMENT fallback if the repo setting is off), and returns
+`{"conclusion":"failure"|"success","summary":"…"}`.
 
 ---
 
@@ -811,26 +842,27 @@ repo setting is off), and returns `{"conclusion":"failure"|"success","summary":"
 1. **Open a PR** as usual. The orchestrator triggers automatically on
    `pull_request` `opened`/`synchronize`/`reopened`, so the review runs on open
    **and re-runs on every push** (a new commit resets the instance to a fresh
-   review of the new head — see §5.1). `/grumpy` remains a manual re-trigger.
-2. *(optional)* **Comment `/grumpy`** to re-run on demand.
-3. **Watch it work.** On the happy path you get one workflow run and a review
-   appears — same UX as plain gh-aw. The protocol machinery only becomes
-   visible when it has something to say:
+   review of the new head — see §5.1). `/review` remains a manual re-trigger.
+2. *(optional)* **Comment `/review`** to re-run on demand.
+3. **Watch it work.** On the happy path the pipeline advances through preflight →
+   review fan-out → join → approval gate — same UX as plain gh-aw once you
+   approve. The protocol machinery only becomes visible when it has something to say:
    - The engine maintains **one status comment**, re-rendered each transition
      into a checklist:
      ```
-     🔍 grumpy-review · pr-9
+     🔍 code-review · pr-9
      - ✗ iteration 1/3 — Missing: security × src/auth.js; duplication × src/report.js
      - ✅ iteration 2/3 — all checks passed
      ✅ done — review published.
-     [Full state & audit trail](…/blob/agentic-state/grumpy-review/pr-9.yaml)
+     [Full state & audit trail](…/blob/agentic-state/code-review/pr-9/preflight.yaml)
      ```
-   - The final **review** (REQUEST_CHANGES / APPROVE) is the deliverable.
+   - The final **review** (REQUEST_CHANGES / APPROVE) from each leg and the
+     human approval gate are the deliverables.
 4. **If checks fail**, you don't see half-baked output — the agent silently
    iterates (a second run), and only checked output is ever published. After
    `max_iterations`, the engine posts a clear failure instead of going quiet.
 5. **Inspect the record** any time: the status-comment link, the `agentic-state`
-   branch (`git log agentic-state -- grumpy-review/pr-<N>.yaml`), or the Actions tab
+   branch (`git log agentic-state -- code-review/pr-<N>/`), or the Actions tab
    (one orchestrator run + one agent run per iteration).
 
 The mental-model shift from plain gh-aw: **the PR/issue is the unit of
@@ -842,7 +874,7 @@ cost, because "waiting" is just a line in a committed file.
 
 By default a review verdict is *advisory* — GitHub won't stop a merge just
 because a review requested changes. To make the protocol a real merge gate, it
-publishes a **check run** named after the protocol id (for grumpy-review: `grumpy-review`)
+publishes a **check run** named after the protocol id (for `code-review`: `code-review`)
 on the PR's head commit, reflecting protocol state:
 
 | protocol state | check run | merge box |
@@ -874,13 +906,13 @@ The relevant jobs carry `checks: write`.
 merge box on any repo, but it only *blocks* merge once you make it a **required
 status check** in branch protection / rulesets — which needs a public repo or a
 paid plan for private repos. Configure it once the check has reported at least
-once (so GitHub knows the `grumpy-review` name):
+once (so GitHub knows the `code-review` name):
 
 - **Ruleset** (recommended): *Settings → Rules → Rulesets → New branch ruleset*,
   target the default branch, enable *Require status checks before merging*, add
-  `grumpy-review` (source: GitHub Actions).
+  `code-review` (source: GitHub Actions).
 - **Classic**: *Settings → Branches → Add rule*, pattern `main`, *Require status
-  checks to pass before merging*, search and select `grumpy-review`.
+  checks to pass before merging*, search and select `code-review`.
 
 Optionally layer *Require approvals* on top for a human sign-off in addition to
 the automated gate. (Caveat: the bot can post `action_required`/REQUEST_CHANGES
@@ -931,17 +963,16 @@ See `STATUS.md` for what is and isn't implemented, and the spec/plan under
 
 ---
 
-## 8. v2 — Fan-out / join (multi-agent review)
+## 8. Fan-out / join (multi-agent review)
 
-Everything above describes a protocol where each phase is **one** agent. v2 adds
-a phase that fans out to **several** agents running in parallel, each with its
-own iterate loop, then **joins** them under a strict barrier before the process
-may advance. The example is `multi-grumpy`: its `review` phase fans out to two
-agents — `grumpy` (the §3 reviewer, reused unchanged) and a thin `security`
-stub — and joins on "both finished."
+The `code-review` protocol's `review` phase fans out to **several** agents
+running in parallel, each with its own iterate loop, then **joins** them under a
+strict barrier before the process may advance. Specifically, the `review` phase
+fans out to two agents — `grumpy` (the general reviewer) and a thin `security`
+stub — and joins on "both finished," then hands off to the `approval` gate.
 
-The design goal is that **v1 stays byte-identical**: the engine grows one
-environment variable, not a second code path.
+The design goal is that **the single-agent path stays byte-identical**: the
+engine grows one environment variable, not a second code path.
 
 ### 8.1 The `BRANCH` env seam
 
@@ -949,8 +980,8 @@ environment variable, not a second code path.
 `BRANCH` (and `lib.py` provides the branch-aware `state_file`/`instance_file`
 helpers they pass it to):
 
-- **`BRANCH` empty/unset** → the exact v1 single-agent path (the regression
-  guard — the whole v1 test suite passes unchanged).
+- **`BRANCH` empty/unset** → the single-agent path (exercised by the
+  `tests/fixtures/single-agent/` engine regression fixture — passes unchanged).
 - **`BRANCH=<id>` set** → the same scripts operate on **one fan-out branch**:
   its agent unit, its check list, its publish hook, and its own state file.
 
@@ -960,16 +991,18 @@ each script simply reads one extra variable and selects the per-branch unit.
 
 ### 8.2 The `fanout` and `join` state kinds
 
-A new protocol, `.github/agent-factory/protocols/multi-grumpy/protocol.json`, introduces two state
-kinds alongside v1's `agent`/`deterministic`. The chosen design (**Approach C —
-data-driven**) is that each branch **reuses the v1 single-agent iterate loop
-verbatim**; the only genuinely new logic is the fan-out planner and the join
-barrier.
+The `code-review` protocol (`.github/agent-factory/protocols/code-review/protocol.json`)
+introduces two state kinds alongside `agent` and `gate`. The chosen design
+(**Approach C — data-driven**) is that each branch **reuses the single-agent
+iterate loop verbatim**; the only genuinely new logic is the fan-out planner and
+the join barrier.
 
 ```jsonc
+// excerpt from .github/agent-factory/protocols/code-review/protocol.json
 {
-  "name": "multi-grumpy",
+  "name": "code-review",
   "states": [
+    // ... preflight (kind:"agent") omitted for brevity ...
     { "id": "review",
       "kind": "fanout",                 // fan out to N parallel agent branches
       "branches": [
@@ -990,7 +1023,10 @@ barrier.
     { "id": "join",
       "kind": "join",                   // strict AND-barrier over review's branches
       "of": "review",
-      "next": "done" }                  // advance only when every branch is `done`
+      "next": "approval" },             // advance only when every branch is `done`
+    { "id": "approval",
+      "kind": "gate",                   // human sign-off required
+      "next": "done" }
   ]
 }
 ```
@@ -1007,10 +1043,13 @@ Each branch gets its own state file, byte-shaped exactly like a v1 single-agent
 state, plus one shared instance file per PR:
 
 ```
-multi-grumpy/pr-<N>/grumpy.yaml      # the grumpy branch (looks like a v1 state)
-multi-grumpy/pr-<N>/security.yaml    # the security branch
-multi-grumpy/pr-<N>/_instance.yaml   # shared: { head_sha, joined: false }
+code-review/pr-<N>/review.grumpy.yaml    # the grumpy leg (looks like a single-agent state)
+code-review/pr-<N>/review.security.yaml  # the security leg
+code-review/pr-<N>/_instance.yaml        # shared: { head_sha, joined: false, cursor, ... }
 ```
+
+(The `tests/fixtures/fanout-mini/` regression fixture exercises the same per-branch
+state layout at `fanout-mini/pr-<N>/<branch>.yaml` without the multi-phase wrapping.)
 
 A branch is **active** when its state file's `.state == review` (the fan-out
 state id); **terminal** is `done`/`failed`. Crucially, **each branch writes only
@@ -1026,7 +1065,7 @@ Two things that v1 collapsed into one are deliberately separated in v2:
 - **Eager publish** — each branch publishes its review the **moment it reaches
   `done`** (grumpy 😤, security 🔒), independently of the other. You see results
   as they land, not all-or-nothing at the end.
-- **The gate is the join, not the publish.** The aggregate `multi-grumpy`
+- **The gate is the join, not the publish.** The aggregate `code-review`
   check-run goes green **only when every branch reaches `done`**. A branch that
   exhausts to `failed` publishes nothing and leaves the aggregate **red**
   ("Review incomplete") → merge loudly blocked. A missing review is *always* a
@@ -1063,12 +1102,12 @@ workflow:
 
 | check-run | kind | role |
 |---|---|---|
-| `multi-grumpy/grumpy` | per-branch | informational — the grumpy leg's outcome |
-| `multi-grumpy/security` | per-branch | informational — the security leg's outcome |
-| `multi-grumpy` | aggregate | **the required gating check** |
+| `code-review/grumpy` | per-branch | informational — the grumpy leg's outcome |
+| `code-review/security` | per-branch | informational — the security leg's outcome |
+| `code-review` | aggregate | **the required gating check** |
 
 `plan` marks the aggregate `in_progress`; `join.py` completes it. Make the
-aggregate `multi-grumpy` the required status check (same mechanism as §5.1).
+aggregate `code-review` the required status check (same mechanism as §5.1).
 
 ### 8.7 The orchestrator as a branch matrix — and why artifacts, not job outputs
 
@@ -1112,12 +1151,12 @@ each agent self-decides what to do with it.
 ### 8.9 The fan-out lifecycle
 
 ```
-event (pull_request open/push, /grumpy comment)
+event (pull_request open/push, /review comment)
    │  plan (UNBRANCHED): next.py → run-fanout, branches=[grumpy, security]
    ▼
 review  ── fan out ──┬─────────────────────────┬──────────────────────────
                      │ branch: grumpy           │ branch: security
-                     ▼  (v1 iterate loop)       ▼  (v1 iterate loop, no rubric-coverage)
+                     ▼  (iterate loop)          ▼  (iterate loop, no rubric-coverage)
             dispatch→checks→advance     dispatch→checks→advance
             (BRANCH=grumpy)             (BRANCH=security)
                      │ on terminal:             │ on terminal:
@@ -1127,9 +1166,12 @@ review  ── fan out ──┬────────────────
                      └────────────┬─────────────┘
                                   ▼  protocol-join.yml (SERIALIZED, concurrency join-<instance>)
                               [join] join.py: all branches terminal & not joined?
-                                  • all `done`  → aggregate `multi-grumpy` = success (green gate)
-                                  • any `failed`→ aggregate `multi-grumpy` = failure (red gate)
+                                  • all `done`  → aggregate `code-review` = success
+                                                  → open approval gate
+                                  • any `failed`→ aggregate `code-review` = failure (red gate)
                                   flip _instance.yaml joined:true, CAS-push (idempotent)
+                                  ▼
+                              [approval] kind:"gate" — awaits human /approve
                                   ▼
                                 done
 ```
@@ -1143,19 +1185,16 @@ barrier.
 Fan-out **within one PR** was always safe even though both agents run
 concurrently, because `grumpy` and `security` are **distinct workflow files** —
 each branch's run resolver only ever sees its own workflow's runs, so the two
-legs can't misattribute each other's runs. The case v2 left unsolved was the
-same one as v1 (deviation #11): **concurrent PRs of the *same* workflow**, which
-share a global concurrency group. That is **fixed in v3** by the correlation-id
-resolver (§3.5): each dispatch stamps a `cid:[<cid>]` token into the run's
-displayTitle and `match_run_by_cid` resolves on it, failing loudly on no match
-(see `BACKLOG.md`). v2 itself was live-verified one PR at a time (PR #25 happy
-path, PR #28 sabotage red gate — see `STATUS.md`).
+legs can't misattribute each other's runs. The originally-unsolved case was
+**concurrent PRs of the *same* workflow**, which share a global concurrency
+group. That is **fixed** by the correlation-id resolver (§3.5): each dispatch
+stamps a `cid:[<cid>]` token into the run's displayTitle and
+`match_run_by_cid` resolves on it, failing loudly on no match (see `STATUS.md`).
 
-### 8.11 New tests
+### 8.11 Tests
 
 `tests/test_join.py` (join aggregation + idempotency) and
 `tests/test_fanout_e2e.py` (local end-to-end: fanout start → advance ×2 → join
-success) bring the local suite to **154 pytest tests across 8 modules**, all green:
-`test_checks.py` (39), `test_engine.py` (52), `test_runchecks.py` (19),
-`test_publish.py` (13), `test_correlation.py` (6), `test_status_comment.py` (11),
-`test_join.py` (10), and `test_fanout_e2e.py` (4). Run them with `pytest tests/ -q`.
+success) cover the fan-out/join mechanics. The full suite (338+ tests across
+multiple modules) is run with `pytest tests/ -q`; see `STATUS.md` for the
+current count.

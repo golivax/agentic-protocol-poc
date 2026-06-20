@@ -3,9 +3,13 @@
 Running list of things we've decided to do but haven't yet. For "what is / isn't
 implemented today" see `STATUS.md`.
 
-**v3 = correlation-id run resolver** is DONE (below); the next milestone is
-**v4 = human-in-the-loop (approval gate)**. Both are written up first below.
-The remaining entries are smaller, unsequenced candidates.
+**v3 = correlation-id run resolver** is DONE (below); **v4 = human-in-the-loop
+(approval gate)** is DONE. The remaining entries are smaller, unsequenced
+candidates.
+
+**Live protocol:** `code-review` is the sole routed protocol. `/review` (and PR
+open/synchronize) start or reset the pipeline. `/grumpy` and `/v1-grumpy` are
+retired — those triggers are no longer active.
 
 ## v3 — Correlation-id run resolver (DONE)
 
@@ -65,8 +69,8 @@ existence; runs are heartbeats" model — a protocol can sit gated for weeks.
   wake-up), and `advance.py` remains the sole state writer.
 
 **Status:** DONE (2026-06-17). The `kind:"gate"` pause-and-require approval state
-ships in the generic engine and is wired into `code-review-pipeline` as a final
-sign-off gate after the join. `/approve` · `/request-changes` · `/reject` comments,
+ships in the generic engine and is wired into `code-review` as a final sign-off
+gate after the join. `/approve` · `/request-changes` · `/reject` comments,
 write/admin auth, no self-approval, distinct from `/override`. See
 `docs/superpowers/specs/2026-06-17-v4-approval-gate-design.md` and the plan
 `docs/superpowers/plans/2026-06-17-v4-approval-gate.md`. Out of scope (follow-up):
@@ -180,23 +184,23 @@ Keep the COMMENT fallback regardless, as the safe default when neither is set up
 
 ---
 
-## Make `grumpy-review` a required status check (enforce the merge gate)
+## Make `code-review` a required status check (enforce the merge gate)
 
-**What:** Configure branch protection / a ruleset so the `grumpy-review` check
+**What:** Configure branch protection / a ruleset so the `code-review` check
 run actually *blocks* merges, not just shows red.
 
 **Why deferred:** The producer side is done — `advance.py`/`plan` emit the
-`grumpy-review` check on the PR head SHA (in_progress → failure on
-changes-requested → success on clean), verified live on PR #15. What's left is a
+`code-review` check on the PR head SHA (in_progress → failure on
+changes-requested → success on clean), verified live. What's left is a
 one-time GitHub *config* step, deferred so it's a deliberate choice (turning it
 on blocks merges on every PR that doesn't get a clean review).
 
 **Prerequisites (met):** repo is public (branch protection/rulesets available);
-the `grumpy-review` name has reported at least once, so it's selectable.
+the `code-review` name has reported at least once, so it's selectable.
 
 **How (per HOW-IT-WORKS §5.1):**
 - Ruleset (recommended): *Settings → Rules → Rulesets → New branch ruleset* →
-  target `main` → *Require status checks before merging* → add `grumpy-review`
+  target `main` → *Require status checks before merging* → add `code-review`
   (source: GitHub Actions) → Active → Create.
 - Optionally layer *Require approvals* for a human sign-off too (note: the bot
   can block via `failure` but can't `APPROVE` to unblock unless the
@@ -271,8 +275,8 @@ not worth blocking the first generic orchestrator on.
 **Status:** DONE (2026-06-16). `agentic-orchestrator.yml` (router: read-only
 `route` job calling `lib.route` to scan all protocols' `triggers` blocks at
 runtime) + `agentic-engine.yml` (reusable `on: workflow_call` engine — the 4
-trust zones) are live. The per-protocol trigger shim (`multi-grumpy-trigger.yml`)
-is deleted. No per-protocol workflow YAML remains.
+trust zones) are live. The per-protocol trigger shim (deleted) is gone.
+No per-protocol workflow YAML remains.
 
 ---
 
