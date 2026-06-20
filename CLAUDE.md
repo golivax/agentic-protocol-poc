@@ -46,8 +46,7 @@ deliberate.
 ## Architecture: engine vs. protocol (the key separation)
 
 ```
-.github/agent-factory/engine/   GENERIC — no protocol-specific logic (only a few grumpy
-                       mentions in illustrative comments).
+.github/agent-factory/engine/   GENERIC — no protocol-specific logic.
   lib.py               state checkout, cas_push, status-comment upsert,
                        resolve_executable, set_check_run, match_run_by_cid.
                        Importable module + a `python3 lib.py <subcommand>` CLI

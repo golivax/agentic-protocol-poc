@@ -129,16 +129,19 @@ milestone; they are now retired.
 
 ## Engine couplings — resolved
 
-The engine carries no protocol-specific logic — the only `grumpy` mentions
-under `.github/agent-factory/engine/` are illustrative comments (cid examples, a note that
-grumpy's states happen to both be named `review`). The two previously noted
-couplings are gone:
+The engine carries no protocol-specific logic. The only `grumpy` token
+remaining under `.github/agent-factory/engine/` is the legitimate leg-file example
+`review.grumpy.yaml` in a comment in `next.py` — the state-file name for
+`code-review`'s `grumpy` review leg, not a reference to any deleted protocol.
+The two previously noted couplings are gone:
 
 - **Protocol id from data.** `next.py` and `advance.py` read the protocol id
   from `protocol.json` `.name` via `protocol_id()` in `lib.py`. The check-run
   name, status-comment headline, and state-path prefix all derive from it.
 - **State path from data.** `lib.py`'s `state_file` returns
-  `<dir>/<protocol-id>/<instance-key>.yaml` (e.g. `code-review/pr-<N>/preflight.yaml`).
+  `<dir>/<protocol-id>/<instance-key>/<phase>.yaml` (e.g. `code-review/pr-<N>/preflight.yaml`)
+  for the multi-phase form used by `code-review`; the single-agent fixture form is
+  `<protocol-id>/<instance-key>.yaml` (e.g. `single-agent/pr-<N>.yaml`).
 
 **Trigger policy lives in `agentic-orchestrator.yml` (router) and `agentic-engine.yml` (engine), not the engine scripts.** `next.py`
 accepts a command (`start` / `reset` / `continue`); the orchestrator maps
