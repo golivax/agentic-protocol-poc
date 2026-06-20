@@ -1,7 +1,7 @@
 """Port of tests/test-fanout-e2e.sh — end-to-end fan-out lifecycle (ENGINE_LOCAL).
 
 The bash suite:
-  1. Calls next.py with 'start' on the multi-grumpy fanout protocol.
+  1. Calls next.py with 'start' on the fanout-mini fanout protocol.
   2. Calls advance.py for grumpy branch (BRANCH=grumpy) with all-pass verdicts.
   3. Calls advance.py for security branch (BRANCH=security) with all-pass verdicts.
   4. Checks out state and asserts both branches are 'done'.
@@ -17,15 +17,15 @@ Bash assertion → pytest mapping
       → test_e2e_run_fanout_action
 
   2.  check "e2e: grumpy done"
-      yq -r .state $WORK/v/multi-grumpy/pr-80/grumpy.yaml == done
+      yq -r .state $WORK/v/fanout-mini/pr-80/grumpy.yaml == done
       → test_e2e_grumpy_done
 
   3.  check "e2e: security done"
-      yq -r .state $WORK/v/multi-grumpy/pr-80/security.yaml == done
+      yq -r .state $WORK/v/fanout-mini/pr-80/security.yaml == done
       → test_e2e_security_done
 
   4.  check "e2e: join → success"
-      grep -q "check-run multi-grumpy sha=e2esha status=completed conclusion=success"
+      grep -q "check-run fanout-mini sha=e2esha status=completed conclusion=success"
       → test_e2e_join_success
 """
 
@@ -47,7 +47,7 @@ LIB_PY = ENGINE / "lib.py"
 NEXT_PY = ENGINE / "next.py"
 ADVANCE_PY = ENGINE / "advance.py"
 JOIN_PY = ENGINE / "join.py"
-PROTO = ROOT / ".github/agent-factory/protocols/multi-grumpy/protocol.json"
+PROTO = ROOT / "tests/fixtures/fanout-mini/protocol.json"
 FIXTURES = ROOT / "tests/fixtures"
 
 
@@ -167,7 +167,7 @@ def test_e2e_run_fanout_action(e2e_results):
 
 def test_e2e_grumpy_done(e2e_results):
     """Bash assertion 2: grumpy branch state == done after advance."""
-    sf = e2e_results["verify_dir"] / "multi-grumpy" / "pr-80" / "grumpy.yaml"
+    sf = e2e_results["verify_dir"] / "fanout-mini" / "pr-80" / "grumpy.yaml"
     with open(sf) as f:
         state_data = yaml.safe_load(f)
     assert state_data["state"] == "done"
@@ -175,7 +175,7 @@ def test_e2e_grumpy_done(e2e_results):
 
 def test_e2e_security_done(e2e_results):
     """Bash assertion 3: security branch state == done after advance."""
-    sf = e2e_results["verify_dir"] / "multi-grumpy" / "pr-80" / "security.yaml"
+    sf = e2e_results["verify_dir"] / "fanout-mini" / "pr-80" / "security.yaml"
     with open(sf) as f:
         state_data = yaml.safe_load(f)
     assert state_data["state"] == "done"
@@ -184,6 +184,6 @@ def test_e2e_security_done(e2e_results):
 def test_e2e_join_success(e2e_results):
     """Bash assertion 4: join.py emits aggregate success check-run."""
     assert (
-        "check-run multi-grumpy sha=e2esha status=completed conclusion=success"
+        "check-run fanout-mini sha=e2esha status=completed conclusion=success"
         in e2e_results["join_out"]
     )

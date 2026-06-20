@@ -43,7 +43,7 @@ def main():
         protocol = json.load(f)
 
     # Determine the fan-out phase to evaluate. Multi-phase: the cursor's phase.
-    # Single-phase (multi-grumpy): the sole fan-out state (cursor absent).
+    # Single-phase: the sole fan-out state (cursor absent).
     cursor_phase = instance_data.get("phase", "") or ""
     multiphase = lib.is_multiphase(protocol)
     fanout_state = None

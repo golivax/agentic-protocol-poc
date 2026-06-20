@@ -9,7 +9,7 @@ sys.path.insert(0, str(ENGINE))
 import lib  # noqa: E402
 
 # A protocol that matches /grumpy comments + PR opened/reopened/synchronize.
-GRUMPY_TRIGGERS = [
+DEMO_TRIGGERS = [
     {"on": "issue_comment", "comment_prefix": "/grumpy", "command": "start"},
     {"on": "pull_request", "actions": ["opened", "reopened"], "command": "start"},
     {"on": "pull_request", "actions": ["synchronize"], "command": "reset"},
@@ -31,17 +31,17 @@ def _mk_protocols(tmp_path, protos):
 def test_single_protocol_pr_opened_routes():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        pdir = _mk_protocols(Path(td), {"multi-grumpy": GRUMPY_TRIGGERS})
+        pdir = _mk_protocols(Path(td), {"fanout-demo": DEMO_TRIGGERS})
         r = lib.route(pdir, "pull_request", "opened", "")
         assert r["skip"] is False
-        assert r["protocol"].endswith("multi-grumpy/protocol.json")
+        assert r["protocol"].endswith("fanout-demo/protocol.json")
         assert r["command"] == "start"
 
 
 def test_comment_prefix_routes():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        pdir = _mk_protocols(Path(td), {"multi-grumpy": GRUMPY_TRIGGERS})
+        pdir = _mk_protocols(Path(td), {"fanout-demo": DEMO_TRIGGERS})
         r = lib.route(pdir, "issue_comment", "", "/grumpy please", is_pr_comment=True)
         assert r["skip"] is False
         assert r["command"] == "start"
@@ -50,7 +50,7 @@ def test_comment_prefix_routes():
 def test_no_match_skips():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        pdir = _mk_protocols(Path(td), {"multi-grumpy": GRUMPY_TRIGGERS})
+        pdir = _mk_protocols(Path(td), {"fanout-demo": DEMO_TRIGGERS})
         r = lib.route(pdir, "issue_comment", "", "lgtm", is_pr_comment=True)
         assert r["skip"] is True
         assert r["protocol"] == ""
@@ -59,7 +59,7 @@ def test_no_match_skips():
 def test_non_pr_comment_skips_without_scanning():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        pdir = _mk_protocols(Path(td), {"multi-grumpy": GRUMPY_TRIGGERS})
+        pdir = _mk_protocols(Path(td), {"fanout-demo": DEMO_TRIGGERS})
         r = lib.route(pdir, "issue_comment", "", "/grumpy", is_pr_comment=False)
         assert r["skip"] is True
 
@@ -68,17 +68,17 @@ def test_dispatch_protocol_resolves_name_to_path():
     # repository_dispatch carries the protocol NAME (advance.py sends pid); route
     # reconstructs <protocols_dir>/<name>/protocol.json — the convention join uses.
     import os
-    r = lib.route("protocols", "repository_dispatch", "", dispatch_protocol="multi-grumpy")
+    r = lib.route("protocols", "repository_dispatch", "", dispatch_protocol="fanout-demo")
     assert r["skip"] is False
-    assert r["protocol"] == os.path.join("protocols", "multi-grumpy", "protocol.json")
+    assert r["protocol"] == os.path.join("protocols", "fanout-demo", "protocol.json")
 
 
 def test_ambiguous_match_raises():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         pdir = _mk_protocols(Path(td), {
-            "alpha": GRUMPY_TRIGGERS,
-            "beta": GRUMPY_TRIGGERS,
+            "alpha": DEMO_TRIGGERS,
+            "beta": DEMO_TRIGGERS,
         })
         try:
             lib.route(pdir, "pull_request", "opened", "")
@@ -95,7 +95,7 @@ def test_ambiguous_comment_message_names_the_comment():
     # the actual comment text that two protocols both matched.
     import tempfile
     with tempfile.TemporaryDirectory() as td:
-        pdir = _mk_protocols(Path(td), {"alpha": GRUMPY_TRIGGERS, "beta": GRUMPY_TRIGGERS})
+        pdir = _mk_protocols(Path(td), {"alpha": DEMO_TRIGGERS, "beta": DEMO_TRIGGERS})
         try:
             lib.route(pdir, "issue_comment", "created", "/grumpy please", is_pr_comment=True)
             assert False, "expected ValueError on ambiguous comment match"
@@ -111,7 +111,7 @@ def test_globbing_is_sorted_deterministic():
     with tempfile.TemporaryDirectory() as td:
         pdir = _mk_protocols(Path(td), {
             "zeta-nomatch": [{"on": "pull_request", "actions": ["closed"], "command": "x"}],
-            "alpha-match": GRUMPY_TRIGGERS,
+            "alpha-match": DEMO_TRIGGERS,
         })
         r = lib.route(pdir, "pull_request", "opened", "")
         assert r["protocol"].endswith("alpha-match/protocol.json")
@@ -126,23 +126,23 @@ def _cli(*args):
 
 
 def test_cli_route_prints_github_output_lines(tmp_path):
-    pdir = _mk_protocols(tmp_path, {"multi-grumpy": GRUMPY_TRIGGERS})
+    pdir = _mk_protocols(tmp_path, {"fanout-demo": DEMO_TRIGGERS})
     r = _cli(pdir, "pull_request", "opened", "", "", "false")
     assert r.returncode == 0, r.stderr
     out = r.stdout
     assert "skip=false" in out
-    assert "protocol=" in out and "multi-grumpy/protocol.json" in out
+    assert "protocol=" in out and "fanout-demo/protocol.json" in out
 
 
 def test_cli_route_skip(tmp_path):
-    pdir = _mk_protocols(tmp_path, {"multi-grumpy": GRUMPY_TRIGGERS})
+    pdir = _mk_protocols(tmp_path, {"fanout-demo": DEMO_TRIGGERS})
     r = _cli(pdir, "issue_comment", "", "lgtm", "", "true")
     assert r.returncode == 0, r.stderr
     assert "skip=true" in r.stdout
 
 
 def test_cli_route_ambiguous_exits_nonzero(tmp_path):
-    pdir = _mk_protocols(tmp_path, {"alpha": GRUMPY_TRIGGERS, "beta": GRUMPY_TRIGGERS})
+    pdir = _mk_protocols(tmp_path, {"alpha": DEMO_TRIGGERS, "beta": DEMO_TRIGGERS})
     r = _cli(pdir, "pull_request", "opened", "", "", "false")
     assert r.returncode != 0
     assert "ambiguous" in r.stderr.lower()
@@ -152,25 +152,26 @@ def test_cli_route_ambiguous_exits_nonzero(tmp_path):
 REAL_PROTOCOLS = str(ROOT / ".github/agent-factory/protocols")
 
 
-def test_real_protocols_grumpy_comment_routes_to_multi_grumpy():
+def test_real_protocols_grumpy_comment_no_longer_routes():
+    # fanout-demo protocol was moved to tests/fixtures/fanout-mini; it is no
+    # longer a shipped protocol, so /grumpy has no route → skip.
     r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/grumpy", is_pr_comment=True)
-    assert r["skip"] is False
-    assert r["protocol"].endswith("multi-grumpy/protocol.json")
+    assert r["skip"] is True
 
 
 def test_real_protocols_pr_opened_routes_to_pipeline():
-    # After M3, the pipeline (not multi-grumpy) owns PR auto-triggers.
+    # After M3, the pipeline (not fanout-mini) owns PR auto-triggers.
     r = lib.route(REAL_PROTOCOLS, "pull_request", "opened", "")
-    assert r["skip"] is False and r["protocol"].endswith("code-review-pipeline/protocol.json")
+    assert r["skip"] is False and r["protocol"].endswith("code-review/protocol.json")
 
 
 def test_real_protocols_review_comment_routes_to_pipeline():
     r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/review", is_pr_comment=True)
-    assert r["skip"] is False and r["protocol"].endswith("code-review-pipeline/protocol.json")
+    assert r["skip"] is False and r["protocol"].endswith("code-review/protocol.json")
 
 
-def test_real_protocols_v1_grumpy_comment_routes_to_grumpy():
+def test_real_protocols_v1_grumpy_comment_no_longer_routes():
+    # single-demo protocol was moved to tests/fixtures/single-agent; it is no
+    # longer a shipped protocol, so /v1-grumpy has no route → skip.
     r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/v1-grumpy", is_pr_comment=True)
-    assert r["skip"] is False
-    assert r["protocol"].endswith("grumpy/protocol.json")
-    assert "multi-grumpy" not in r["protocol"]
+    assert r["skip"] is True

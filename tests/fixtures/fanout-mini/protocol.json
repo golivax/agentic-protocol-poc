@@ -1,9 +1,7 @@
 {
-  "name": "multi-grumpy",
+  "name": "fanout-mini",
   "version": "0.1.0",
-  "triggers": [
-    { "on": "issue_comment", "comment_prefix": "/grumpy", "command": "start" }
-  ],
+  "triggers": [],
   "states": [
     {
       "id": "review",

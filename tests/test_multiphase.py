@@ -12,11 +12,10 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
-PROTOCOLS = ROOT / ".github/agent-factory/protocols"
 FIXTURES = ROOT / "tests/fixtures"
 MINI = FIXTURES / "pipeline-mini/protocol.json"
-GRUMPY = PROTOCOLS / "grumpy/protocol.json"
-MULTI = PROTOCOLS / "multi-grumpy/protocol.json"
+GRUMPY = FIXTURES / "single-agent/protocol.json"
+MULTI = FIXTURES / "fanout-mini/protocol.json"
 
 sys.path.insert(0, str(ENGINE))
 import lib  # noqa: E402
@@ -173,7 +172,7 @@ def test_singlephase_grumpy_start_unchanged(tmp_path, engine_env):
     action = json.loads(r.stdout)
     assert action["action"] == "run-agent"
     assert "phase" not in action
-    assert os.path.exists(str(work) + "/grumpy-review/pr-1.yaml")
+    assert os.path.exists(str(work) + "/single-agent/pr-1.yaml")
 
 
 def test_singlephase_multigrumpy_start_unchanged(tmp_path, engine_env):
@@ -183,8 +182,8 @@ def test_singlephase_multigrumpy_start_unchanged(tmp_path, engine_env):
     action = json.loads(r.stdout)
     assert action["action"] == "run-fanout"
     assert "phase" not in action
-    assert os.path.exists(str(work) + "/multi-grumpy/pr-1/_instance.yaml")
-    assert os.path.exists(str(work) + "/multi-grumpy/pr-1/grumpy.yaml")
+    assert os.path.exists(str(work) + "/fanout-mini/pr-1/_instance.yaml")
+    assert os.path.exists(str(work) + "/fanout-mini/pr-1/grumpy.yaml")
 
 
 def test_seed_unknown_phase_exits_nonzero(tmp_path, engine_env):

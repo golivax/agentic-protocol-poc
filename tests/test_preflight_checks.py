@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CHECKS = ROOT / ".github/agent-factory/protocols/code-review-pipeline/checks"
+CHECKS = ROOT / ".github/agent-factory/protocols/code-review/checks"
 sys.path.insert(0, str(CHECKS))
 
 

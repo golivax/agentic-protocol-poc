@@ -1,7 +1,7 @@
 """Unit tests for the UNIFIED protocol-level status comment (multi-phase).
 
 render_pipeline_status_body(dir_, pid, instance, proto) renders EVERY phase of a
-multi-phase protocol (code-review-pipeline: preflight agent → review fan-out) into
+multi-phase protocol (code-review: preflight agent → review fan-out) into
 ONE PR-comment body. This is the regression guard for the three PR #65 bugs:
 
   (i)   fan-out legs in a multi-phase protocol live at <instance>/<phase>.<branch>.yaml,
@@ -26,9 +26,8 @@ sys.path.insert(0, str(ENGINE))
 import lib  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PIPELINE = ROOT / ".github/agent-factory/protocols/code-review-pipeline/protocol.json"
-MULTIGRUMPY = ROOT / ".github/agent-factory/protocols/multi-grumpy/protocol.json"
-PID = "code-review-pipeline"
+PIPELINE = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
+PID = "code-review"
 
 os.environ.setdefault("GITHUB_REPOSITORY", "golivax/agentic-protocol-poc")
 
@@ -101,12 +100,12 @@ def test_preflight_section_present(pr65_done):
 
 
 def test_audit_link_points_at_instance_dir(pr65_done):
-    assert "tree/agentic-state/code-review-pipeline/pr-65" in pr65_done
+    assert "tree/agentic-state/code-review/pr-65" in pr65_done
     assert "pr-65.yaml" not in pr65_done  # tree/ link, no .yaml suffix
 
 
 def test_protocol_header(pr65_done):
-    assert "**code-review-pipeline · pr-65**" in pr65_done
+    assert "**code-review · pr-65**" in pr65_done
 
 
 def test_overridden_preflight_not_failed_headline(pr65_done):
@@ -151,7 +150,7 @@ def test_initial_render_has_audit_link(tmp_path):
     seed_instance(tmp_path, "pr-80", phase="preflight")
     seed_phase(tmp_path, "pr-80", "preflight", "preflight", [])  # no iterations yet
     body = render(tmp_path, "pr-80")
-    assert "tree/agentic-state/code-review-pipeline/pr-80" in body
+    assert "tree/agentic-state/code-review/pr-80" in body
     assert "no iterations yet" in body
     assert "**review · grumpy**" in body and "_pending_" in body
 
@@ -169,8 +168,8 @@ def test_dispatcher_multiphase_uses_pipeline(tmp_path):
 
 def test_ensure_status_comment_noop_for_single_agent(tmp_path, monkeypatch):
     """grumpy (single-agent) has no shared comment → ensure must be a no-op."""
-    grumpy = ROOT / ".github/agent-factory/protocols/grumpy/protocol.json"
+    grumpy = ROOT / "tests/fixtures/single-agent/protocol.json"
     monkeypatch.setenv("ENGINE_LOCAL", "1")
     # Should not raise and should not create an _instance.yaml.
-    lib.ensure_status_comment(str(tmp_path), "grumpy", "pr-1", str(grumpy), "1")
-    assert not (tmp_path / "grumpy" / "pr-1" / "_instance.yaml").exists()
+    lib.ensure_status_comment(str(tmp_path), "single-agent", "pr-1", str(grumpy), "1")
+    assert not (tmp_path / "single-agent" / "pr-1" / "_instance.yaml").exists()

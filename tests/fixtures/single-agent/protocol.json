@@ -1,13 +1,7 @@
 {
-  "name": "grumpy-review",
+  "name": "single-agent",
   "version": "0.1.0",
-  "triggers": [
-    {
-      "on": "issue_comment",
-      "comment_prefix": "/v1-grumpy",
-      "command": "start"
-    }
-  ],
+  "triggers": [],
   "states": [
     {
       "id": "review",

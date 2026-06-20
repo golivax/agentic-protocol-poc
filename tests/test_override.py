@@ -12,7 +12,7 @@ ENGINE = ROOT / ".github/agent-factory/engine"
 NEXT_PY = ENGINE / "next.py"
 ADVANCE_PY = ENGINE / "advance.py"
 LIB_PY = ENGINE / "lib.py"
-PIPELINE_PROTO = ROOT / ".github/agent-factory/protocols/code-review-pipeline/protocol.json"
+PIPELINE_PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
 PID = json.load(open(PIPELINE_PROTO))["name"]
 REVIEW_BRANCHES = [
     b["id"]

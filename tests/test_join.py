@@ -16,7 +16,7 @@ Bash assertion → pytest mapping
 --------------------------------
 Case 1 — both done → aggregate success, joined=true:
   1.  check "all done → check-run success"
-      grep -q "check-run multi-grumpy sha=joinsha status=completed conclusion=success"
+      grep -q "check-run fanout-mini sha=joinsha status=completed conclusion=success"
       → test_all_done_check_run_success
   2.  check "all done → comment shows complete headline"
       grep -q "Review complete — published"
@@ -30,7 +30,7 @@ Case 1 — both done → aggregate success, joined=true:
 
 Case 2 — one failed → aggregate failure:
   5.  check "one failed → check-run failure"
-      grep -q "check-run multi-grumpy sha=joinsha status=completed conclusion=failure"
+      grep -q "check-run fanout-mini sha=joinsha status=completed conclusion=failure"
       → test_one_failed_check_run_failure
   6.  check "one failed → comment shows incomplete headline"
       grep -q "Review incomplete — a branch could not complete"
@@ -69,7 +69,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
 LIB_PY = ENGINE / "lib.py"
 JOIN_PY = ENGINE / "join.py"
-PROTO = ROOT / ".github/agent-factory/protocols/multi-grumpy/protocol.json"
+PROTO = ROOT / "tests/fixtures/fanout-mini/protocol.json"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,11 +107,11 @@ def seed(state_remote, workdir, pr, grumpy_state, security_state):
     env = make_env(state_remote)
     _run(["python3", str(LIB_PY), "state-checkout", str(workdir)], env)
 
-    d = pathlib.Path(workdir) / "multi-grumpy" / pr
+    d = pathlib.Path(workdir) / "fanout-mini" / pr
     d.mkdir(parents=True, exist_ok=True)
 
     grumpy_data = {
-        "protocol": "multi-grumpy",
+        "protocol": "fanout-mini",
         "instance": pr,
         "state": grumpy_state,
         "iteration": 1,
@@ -119,7 +119,7 @@ def seed(state_remote, workdir, pr, grumpy_state, security_state):
         "history": [],
     }
     security_data = {
-        "protocol": "multi-grumpy",
+        "protocol": "fanout-mini",
         "instance": pr,
         "state": security_state,
         "iteration": 1,
@@ -127,7 +127,7 @@ def seed(state_remote, workdir, pr, grumpy_state, security_state):
         "history": [],
     }
     instance_data = {
-        "protocol": "multi-grumpy",
+        "protocol": "fanout-mini",
         "instance": pr,
         "head_sha": "joinsha",
         "joined": False,
@@ -165,7 +165,7 @@ def checkout_verify(state_remote, verify_dir):
 
 
 def load_instance_yaml(verify_dir, pr):
-    p = pathlib.Path(verify_dir) / "multi-grumpy" / pr / "_instance.yaml"
+    p = pathlib.Path(verify_dir) / "fanout-mini" / pr / "_instance.yaml"
     with open(p) as f:
         return yaml.safe_load(f)
 
@@ -191,7 +191,7 @@ def case_all_done(tmp_path_factory):
 def test_all_done_check_run_success(case_all_done):
     """Bash assertion 1: all done → check-run success."""
     out, _, _ = case_all_done
-    assert "check-run multi-grumpy sha=joinsha status=completed conclusion=success" in out
+    assert "check-run fanout-mini sha=joinsha status=completed conclusion=success" in out
 
 
 def test_all_done_comment_headline(case_all_done):
@@ -234,7 +234,7 @@ def case_one_failed(tmp_path_factory):
 def test_one_failed_check_run_failure(case_one_failed):
     """Bash assertion 5: one failed → check-run failure."""
     out, _ = case_one_failed
-    assert "check-run multi-grumpy sha=joinsha status=completed conclusion=failure" in out
+    assert "check-run fanout-mini sha=joinsha status=completed conclusion=failure" in out
 
 
 def test_one_failed_comment_headline(case_one_failed):

@@ -3,8 +3,19 @@
 This records what the PoC actually is, measured against the original design
 spec (`agent-factory/docs/superpowers/specs/2026-06-10-...`) and plan. Read it
 before extending the system so you know which "missing" pieces are deliberate.
-The v1 sections come first; the **v2 — multi-grumpy fan-out/join** section at the
-end records the multi-agent milestone (both are live-verified).
+
+**Shipped protocol (as of 2026-06-20):** `code-review`
+(`.github/agent-factory/protocols/code-review/`) — a multi-phase pipeline:
+`preflight` (agent, pre-flight gate) → `review` (fanout: `grumpy` + `security` legs)
+→ `join` (AND-barrier) → `approval` (human gate). This is the sole protocol in
+`.github/agent-factory/protocols/`. The demo protocols `grumpy` (single-agent) and
+`multi-grumpy` (single-phase fanout) were retired into `tests/fixtures/single-agent/`
+and `tests/fixtures/fanout-mini/` on 2026-06-20 as engine regression fixtures.
+
+The v1/v2/v3/v4 milestone sections below are a dated record of what was built
+in sequence. Protocol names (`grumpy-review`, `multi-grumpy`) inside those
+clearly-historical sections refer to the protocols as they existed at that
+milestone; they are now retired.
 
 ## Proven end-to-end (real GitHub Actions)
 
@@ -12,7 +23,7 @@ end records the multi-agent milestone (both are live-verified).
   `lib.py` (compare-and-swap push to the state branch).
 - Three deterministic checks: `schema-valid`, `rubric-coverage`,
   `traces-exist-in-diff`.
-- Evidence-schema-as-contract (`.github/agent-factory/protocols/grumpy/evidence.schema.json`).
+- Evidence-schema-as-contract (`.github/agent-factory/protocols/code-review/*.evidence.schema.json`).
 - Four-trust-zone orchestrator (plan → dispatch → checks → advance).
 - Bounded iterate-with-feedback (`max_iterations`).
 - Durable state on the `agentic-state` branch, one file per PR, advanced by
@@ -93,11 +104,11 @@ end records the multi-agent milestone (both are live-verified).
   `tests/test_runchecks.py` (19 tests) covers resolution and robustness
   (missing / non-executable / crashing / ambiguous).
 
-- **Merge-gating via a check run.** `advance.py`/`plan` emit a `grumpy-review`
+- **Merge-gating via a check run.** `advance.py`/`plan` emit a `code-review`
   check run on the PR head SHA reflecting protocol state (in_progress while
   reviewing, `action_required` on changes-requested, `success` on clean,
   `failure` on exhausted). Emitting works on any repo; *blocking* the merge
-  requires making `grumpy-review` a required status check in branch protection /
+  requires making `code-review` a required status check in branch protection /
   rulesets (needs a public repo or a paid plan for private). `lib.py`
   `set_check_run`; engine tests assert the three outcomes.
 
@@ -118,16 +129,19 @@ end records the multi-agent milestone (both are live-verified).
 
 ## Engine couplings — resolved
 
-The engine carries no protocol-specific logic — the only `grumpy` mentions
-under `.github/agent-factory/engine/` are illustrative comments (cid examples, a note that
-grumpy's states happen to both be named `review`). The two previously noted
-couplings are gone:
+The engine carries no protocol-specific logic. The only `grumpy` token
+remaining under `.github/agent-factory/engine/` is the legitimate leg-file example
+`review.grumpy.yaml` in a comment in `next.py` — the state-file name for
+`code-review`'s `grumpy` review leg, not a reference to any deleted protocol.
+The two previously noted couplings are gone:
 
 - **Protocol id from data.** `next.py` and `advance.py` read the protocol id
   from `protocol.json` `.name` via `protocol_id()` in `lib.py`. The check-run
   name, status-comment headline, and state-path prefix all derive from it.
 - **State path from data.** `lib.py`'s `state_file` returns
-  `<dir>/<protocol-id>/<instance-key>.yaml` (e.g. `grumpy-review/pr-<N>.yaml`).
+  `<dir>/<protocol-id>/<instance-key>/<phase>.yaml` (e.g. `code-review/pr-<N>/preflight.yaml`)
+  for the multi-phase form used by `code-review`; the single-agent fixture form is
+  `<protocol-id>/<instance-key>.yaml` (e.g. `single-agent/pr-<N>.yaml`).
 
 **Trigger policy lives in `agentic-orchestrator.yml` (router) and `agentic-engine.yml` (engine), not the engine scripts.** `next.py`
 accepts a command (`start` / `reset` / `continue`); the orchestrator maps
@@ -137,7 +151,7 @@ GitHub events to commands:
 |---|---|
 | `pull_request` opened / reopened | `start` |
 | `pull_request` synchronize | `reset` |
-| `issue_comment` `/grumpy` | `start` |
+| `issue_comment` `/review` | `start` |
 | `repository_dispatch` `protocol-continue` | `continue` |
 
 The `start`/`reset`/`continue` action matrix (Absent / Active / Terminal):
@@ -152,8 +166,8 @@ Two intentional v1 behavior divergences (documented, not defects):
 - `start` on Terminal → fresh re-review (prior design: halt).
 - `start` on Active → halt (prior design: resume).
 
-**Publication is a protocol publish hook.** `advance.py` resolves and calls
-`.github/agent-factory/protocols/grumpy/publish/publish-review-from-evidence.py` via
+**Publication is a protocol publish hook.** `advance.py` resolves and calls the
+per-branch publish hook from `.github/agent-factory/protocols/code-review/publish/` via
 `resolve_executable` (the same mechanism as checks). The hook runs trusted in
 zone 4 (engine-post) holding the publish token; it is not a sandboxed check.
 
@@ -192,7 +206,7 @@ approval state (a human sign-off as a *required* transition) — that remains th
 
 ## v4 — kind:"gate" approval state (implemented)
 
-The pause-and-require gate is implemented and wired into `code-review-pipeline`
+The pause-and-require gate is implemented and wired into `code-review`
 (see spec: `docs/superpowers/specs/2026-06-17-v4-approval-gate-design.md`).
 
 **What it is.** A `kind:"gate"` phase in `protocol.json` dispatches **no agent
@@ -239,7 +253,7 @@ refused. Both non-terminal and terminal "no"s are revived by a new commit
 new commit — not by an operator override. `/override` is for agent/check blocks
 only; gate decisions are a separate authority channel.
 
-**Demo layout.** `code-review-pipeline` is now
+**Demo layout.** The `code-review` protocol is
 `preflight → review fan-out → join → approval (gate) → done`. The `join.py`
 AND-barrier opens the approval gate once all branches reach `done`; a human must
 explicitly approve before the aggregate pipeline check-run goes green.
