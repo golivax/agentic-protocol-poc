@@ -12,7 +12,6 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
-PROTOCOLS = ROOT / ".github/agent-factory/protocols"
 FIXTURES = ROOT / "tests/fixtures"
 MINI = FIXTURES / "pipeline-mini/protocol.json"
 GRUMPY = FIXTURES / "single-agent/protocol.json"

@@ -9,7 +9,7 @@ sys.path.insert(0, str(ENGINE))
 import lib  # noqa: E402
 
 MULTI = {
-    "name": "multi-grumpy",
+    "name": "fanout-demo",
     "triggers": [
         {"on": "issue_comment", "comment_prefix": "/grumpy", "command": "start"},
         {"on": "pull_request", "actions": ["opened", "reopened"], "command": "start"},
@@ -25,7 +25,7 @@ MULTI = {
 }
 
 SINGLE = {
-    "name": "grumpy-review",
+    "name": "single-demo",
     "triggers": [{"on": "pull_request", "actions": ["opened"], "command": "start"}],
     "states": [
         {"id": "review", "kind": "agent", "workflow": "grumpy-agent", "next": "publish"},

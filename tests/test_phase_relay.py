@@ -50,7 +50,7 @@ def test_continue_redispatch_carries_phase(tmp_path, state_origin):
 def test_continue_redispatch_single_phase_no_phase_key(tmp_path, state_origin):
     # Regression: a single-phase protocol's continue re-dispatch must NOT append phase key.
     # This guards the `if phase:` conditional in advance.py from silent removal.
-    # Use grumpy-review (single-agent, max_iterations=3) protocol.
+    # Use the single-agent fixture (single-agent, max_iterations=3) protocol.
     work = tmp_path / "seed"
     subprocess.run(["git", "clone", "-q", str(state_origin), str(work)], check=True)
     inst = "pr-1"
