@@ -169,8 +169,8 @@ def test_real_protocols_review_comment_routes_to_pipeline():
     assert r["skip"] is False and r["protocol"].endswith("code-review/protocol.json")
 
 
-def test_real_protocols_v1_grumpy_comment_routes_to_grumpy():
+def test_real_protocols_v1_grumpy_comment_no_longer_routes():
+    # grumpy-review protocol was moved to tests/fixtures/single-agent; it is no
+    # longer a shipped protocol, so /v1-grumpy has no route → skip.
     r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/v1-grumpy", is_pr_comment=True)
-    assert r["skip"] is False
-    assert r["protocol"].endswith("grumpy/protocol.json")
-    assert "multi-grumpy" not in r["protocol"]
+    assert r["skip"] is True

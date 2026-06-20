@@ -15,7 +15,7 @@ ENGINE = ROOT / ".github/agent-factory/engine"
 PROTOCOLS = ROOT / ".github/agent-factory/protocols"
 FIXTURES = ROOT / "tests/fixtures"
 MINI = FIXTURES / "pipeline-mini/protocol.json"
-GRUMPY = PROTOCOLS / "grumpy/protocol.json"
+GRUMPY = FIXTURES / "single-agent/protocol.json"
 MULTI = PROTOCOLS / "multi-grumpy/protocol.json"
 
 sys.path.insert(0, str(ENGINE))
@@ -173,7 +173,7 @@ def test_singlephase_grumpy_start_unchanged(tmp_path, engine_env):
     action = json.loads(r.stdout)
     assert action["action"] == "run-agent"
     assert "phase" not in action
-    assert os.path.exists(str(work) + "/grumpy-review/pr-1.yaml")
+    assert os.path.exists(str(work) + "/single-agent/pr-1.yaml")
 
 
 def test_singlephase_multigrumpy_start_unchanged(tmp_path, engine_env):

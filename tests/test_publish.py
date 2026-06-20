@@ -55,9 +55,9 @@ import pytest
 import pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROTOCOLS = ROOT / ".github/agent-factory/protocols"
-GRUMPY_HOOK = PROTOCOLS / "grumpy/publish/publish-review-from-evidence.py"
-SECURITY_HOOK = PROTOCOLS / "multi-grumpy/publish/publish-security.py"
 FIXTURES = ROOT / "tests/fixtures"
+GRUMPY_HOOK = FIXTURES / "single-agent/publish/publish-review-from-evidence.py"
+SECURITY_HOOK = PROTOCOLS / "multi-grumpy/publish/publish-security.py"
 
 
 # ---------------------------------------------------------------------------

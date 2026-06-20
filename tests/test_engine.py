@@ -99,7 +99,7 @@ ENGINE = ROOT / ".github/agent-factory/engine"
 LIB_PY = ENGINE / "lib.py"
 NEXT_PY = ENGINE / "next.py"
 ADVANCE_PY = ENGINE / "advance.py"
-GRUMPY_PROTO = ROOT / ".github/agent-factory/protocols/grumpy/protocol.json"
+GRUMPY_PROTO = ROOT / "tests/fixtures/single-agent/protocol.json"
 MULTI_PROTO = ROOT / ".github/agent-factory/protocols/multi-grumpy/protocol.json"
 FIXTURES = ROOT / "tests/fixtures"
 
@@ -337,9 +337,9 @@ def test_next_start_absent_iter(next_pr7_state):
 
 def test_next_start_absent_state_pushed(next_pr7_state):
     """Bash: check "start/absent: state pushed"
-    The state file grumpy-review/pr-7.yaml should exist with state=review."""
+    The state file single-agent/pr-7.yaml should exist with state=review."""
     _, verify = next_pr7_state
-    state_path = verify / "grumpy-review" / "pr-7.yaml"
+    state_path = verify / "single-agent" / "pr-7.yaml"
     assert state_path.exists()
     data = read_yaml(state_path)
     assert data["state"] == "review"
@@ -361,7 +361,7 @@ def next_continue_active_state(next_origin, next_pr7_state, tmp_path_factory):
     # Reuse the pr-7 state already created by start/absent
     n2 = tmp_path_factory.mktemp("n2")
     state_checkout(next_origin, n2)
-    sf = n2 / "grumpy-review" / "pr-7.yaml"
+    sf = n2 / "single-agent" / "pr-7.yaml"
     # Bump iteration and inject feedback (mirrors the bash yq command)
     data = read_yaml(sf)
     data["iteration"] = 2
@@ -396,7 +396,7 @@ def next_terminal_pr7(next_origin, next_pr7_state, next_continue_active_state,
     """Push pr-7 to terminal (state=done) and return an action from continue."""
     n4 = tmp_path_factory.mktemp("n4")
     state_checkout(next_origin, n4)
-    sf = n4 / "grumpy-review" / "pr-7.yaml"
+    sf = n4 / "single-agent" / "pr-7.yaml"
     data = read_yaml(sf)
     data["state"] = "done"
     with open(sf, "w") as fh:
@@ -433,7 +433,7 @@ def test_next_start_terminal(next_start_terminal_results):
 def test_next_start_terminal_state_reset(next_start_terminal_results):
     """Bash: check "start/terminal: state reset to review" """
     _, verify = next_start_terminal_results
-    sf = verify / "grumpy-review" / "pr-7.yaml"
+    sf = verify / "single-agent" / "pr-7.yaml"
     data = read_yaml(sf)
     assert data["state"] == "review"
 
@@ -443,9 +443,9 @@ def test_next_start_active(next_origin, tmp_path_factory):
     start on ACTIVE → halt (do not disturb in-flight)."""
     n7 = tmp_path_factory.mktemp("n7")
     state_checkout(next_origin, n7)
-    (n7 / "grumpy-review").mkdir(exist_ok=True)
+    (n7 / "single-agent").mkdir(exist_ok=True)
     state = {
-        "protocol": "grumpy-review",
+        "protocol": "single-agent",
         "instance": "pr-88",
         "state": "review",
         "iteration": 2,
@@ -453,7 +453,7 @@ def test_next_start_active(next_origin, tmp_path_factory):
         "head_sha": "aaa",
         "history": [],
     }
-    with open(n7 / "grumpy-review" / "pr-88.yaml", "w") as fh:
+    with open(n7 / "single-agent" / "pr-88.yaml", "w") as fh:
         yaml.safe_dump(state, fh, sort_keys=False, default_flow_style=False)
     cas_push(next_origin, n7, "seed pr-88 active")
 
@@ -467,9 +467,9 @@ def next_reset_results(next_origin, tmp_path_factory):
     """Seed pr-9 as done@old111, then reset to new222. Returns (action, verify_dir)."""
     n9 = tmp_path_factory.mktemp("n9")
     state_checkout(next_origin, n9)
-    (n9 / "grumpy-review").mkdir(exist_ok=True)
+    (n9 / "single-agent").mkdir(exist_ok=True)
     state = {
-        "protocol": "grumpy-review",
+        "protocol": "single-agent",
         "instance": "pr-9",
         "state": "done",
         "iteration": 3,
@@ -477,7 +477,7 @@ def next_reset_results(next_origin, tmp_path_factory):
         "head_sha": "old111",
         "history": [{"iteration": 1, "feedback": "old"}],
     }
-    with open(n9 / "grumpy-review" / "pr-9.yaml", "w") as fh:
+    with open(n9 / "single-agent" / "pr-9.yaml", "w") as fh:
         yaml.safe_dump(state, fh, sort_keys=False, default_flow_style=False)
     cas_push(next_origin, n9, "seed pr-9 done@old111")
 
@@ -499,7 +499,7 @@ def test_next_reset_run_agent(next_reset_results):
 def test_next_reset_head_and_state(next_reset_results):
     """Bash: check "reset: new head recorded + state review" """
     _, verify = next_reset_results
-    sf = verify / "grumpy-review" / "pr-9.yaml"
+    sf = verify / "single-agent" / "pr-9.yaml"
     data = read_yaml(sf)
     assert data["head_sha"] == "new222"
     assert data["state"] == "review"
@@ -510,9 +510,9 @@ def test_next_reset_active(next_origin, tmp_path_factory):
     reset on ACTIVE → also fresh iter 1 (unconditional)."""
     n12 = tmp_path_factory.mktemp("n12")
     state_checkout(next_origin, n12)
-    (n12 / "grumpy-review").mkdir(exist_ok=True)
+    (n12 / "single-agent").mkdir(exist_ok=True)
     state = {
-        "protocol": "grumpy-review",
+        "protocol": "single-agent",
         "instance": "pr-99",
         "state": "review",
         "iteration": 2,
@@ -520,7 +520,7 @@ def test_next_reset_active(next_origin, tmp_path_factory):
         "head_sha": "x",
         "history": [{"iteration": 1, "feedback": "prev"}],
     }
-    with open(n12 / "grumpy-review" / "pr-99.yaml", "w") as fh:
+    with open(n12 / "single-agent" / "pr-99.yaml", "w") as fh:
         yaml.safe_dump(state, fh, sort_keys=False, default_flow_style=False)
     cas_push(next_origin, n12, "seed pr-99 active")
 
@@ -565,14 +565,14 @@ def advance_fail_results(advance_origin, tmp_path_factory):
 def test_advance_fail_iter_bumped(advance_fail_results):
     """Bash: check "advance: iteration bumped" """
     _, verify = advance_fail_results
-    data = read_yaml(verify / "grumpy-review" / "pr-8.yaml")
+    data = read_yaml(verify / "single-agent" / "pr-8.yaml")
     assert data["iteration"] == 2
 
 
 def test_advance_fail_feedback(advance_fail_results):
     """Bash: check "advance: feedback in history" """
     _, verify = advance_fail_results
-    data = read_yaml(verify / "grumpy-review" / "pr-8.yaml")
+    data = read_yaml(verify / "single-agent" / "pr-8.yaml")
     history = data.get("history", [])
     assert any("duplication × src/report.js" in (e.get("feedback", "") or "") for e in history)
 
@@ -607,13 +607,13 @@ def advance_pass_results(advance_origin, advance_fail_results, tmp_path_factory)
 def test_advance_pass_blob_link(advance_pass_results):
     """Bash: check "single-agent comment keeps per-file blob link" """
     out, _ = advance_pass_results
-    assert "blob/agentic-state/grumpy-review/pr-8.yaml" in out
+    assert "blob/agentic-state/single-agent/pr-8.yaml" in out
 
 
 def test_advance_pass_state_done(advance_pass_results):
     """Bash: check "advance: state done" """
     _, verify = advance_pass_results
-    data = read_yaml(verify / "grumpy-review" / "pr-8.yaml")
+    data = read_yaml(verify / "single-agent" / "pr-8.yaml")
     assert data["state"] == "done"
 
 
@@ -638,7 +638,7 @@ def advance_exhaust_results(advance_origin, advance_pass_results, tmp_path_facto
     state and bumps it."""
     w9 = tmp_path_factory.mktemp("w9")
     state_checkout(advance_origin, w9)
-    sf = w9 / "grumpy-review" / "pr-8.yaml"
+    sf = w9 / "single-agent" / "pr-8.yaml"
     data = read_yaml(sf)
     data["iteration"] = 3
     data["state"] = "review"
@@ -664,7 +664,7 @@ def advance_exhaust_results(advance_origin, advance_pass_results, tmp_path_facto
 def test_advance_exhaust(advance_exhaust_results):
     """Bash: check "advance: exhausted → failed" """
     _, verify = advance_exhaust_results
-    data = read_yaml(verify / "grumpy-review" / "pr-8.yaml")
+    data = read_yaml(verify / "single-agent" / "pr-8.yaml")
     assert data["state"] == "failed"
 
 
@@ -689,7 +689,7 @@ def advance_empty_results(advance_origin, advance_exhaust_results, tmp_path_fact
 def test_advance_empty_not_done(advance_empty_results):
     """Bash: check "advance: empty verdicts → not done" """
     _, verify = advance_empty_results
-    data = read_yaml(verify / "grumpy-review" / "pr-9.yaml")
+    data = read_yaml(verify / "single-agent" / "pr-9.yaml")
     assert data["state"] != "done"
 
 
@@ -723,7 +723,7 @@ def test_checkrun_iterate_in_progress(checkrun_origin, tmp_path_factory):
         checkrun_origin, c1, "pr-20", GRUMPY_PROTO, vf, EVIDENCE_LAZY,
         pr=20, agent_run_id=300, pr_head_sha="testsha123",
     )
-    assert "check-run grumpy-review sha=testsha123 status=in_progress" in out
+    assert "check-run single-agent sha=testsha123 status=in_progress" in out
 
 
 def test_checkrun_pass_failure(checkrun_origin, tmp_path_factory):
@@ -745,16 +745,16 @@ def test_checkrun_exhaust_failure(checkrun_origin, tmp_path_factory):
     # Seed pr-21 at iteration 3
     w12 = tmp_path_factory.mktemp("c3")
     state_checkout(checkrun_origin, w12)
-    (w12 / "grumpy-review").mkdir(exist_ok=True)
+    (w12 / "single-agent").mkdir(exist_ok=True)
     state = {
-        "protocol": "grumpy-review",
+        "protocol": "single-agent",
         "instance": "pr-21",
         "state": "review",
         "iteration": 3,
         "gates": {},
         "history": [],
     }
-    with open(w12 / "grumpy-review" / "pr-21.yaml", "w") as fh:
+    with open(w12 / "single-agent" / "pr-21.yaml", "w") as fh:
         yaml.safe_dump(state, fh, sort_keys=False, default_flow_style=False)
     cas_push(checkrun_origin, w12, "seed pr-21 iter3")
 
@@ -789,7 +789,7 @@ def test_advance_relay(tmp_path):
     origin = tmp_path / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
 
-    # Build a stub protocol directory mirroring .github/agent-factory/protocols/grumpy/
+    # Build a stub protocol directory mirroring tests/fixtures/single-agent/
     # but with all paths redirected into tmp_path.
     stub_proto_dir = tmp_path / "stub-proto"
     stub_proto_dir.mkdir()
@@ -841,12 +841,12 @@ def test_advance_relay(tmp_path):
 
 def test_lib_state_file_single_agent(tmp_path):
     """Bash: check "state_file single-agent form unchanged"
-    state_file /s grumpy-review pr-5 → /s/grumpy-review/pr-5.yaml"""
-    out, _, rc = lib_cmd(None, "state-file", "/s", "grumpy-review", "pr-5",
+    state_file /s single-agent pr-5 → /s/single-agent/pr-5.yaml"""
+    out, _, rc = lib_cmd(None, "state-file", "/s", "single-agent", "pr-5",
                          extra_env={"STATE_REMOTE": str(tmp_path)})
     # lib_cmd passes STATE_REMOTE but state_file is pure — no remote needed
     assert rc == 0
-    assert out == "/s/grumpy-review/pr-5.yaml"
+    assert out == "/s/single-agent/pr-5.yaml"
 
 
 def test_lib_state_file_branch(tmp_path):

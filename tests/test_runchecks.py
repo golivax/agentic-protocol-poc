@@ -78,10 +78,10 @@ from conftest import FIXTURES, PROTOCOLS, ENGINE as ENGINE_CONST, run_engine
 # Paths
 # ---------------------------------------------------------------------------
 
-GRUMPY_PROTO = PROTOCOLS / "grumpy/protocol.json"
+GRUMPY_PROTO = FIXTURES / "single-agent/protocol.json"
 MULTI_GRUMPY_PROTO = PROTOCOLS / "multi-grumpy/protocol.json"
-GRUMPY_CHECKS_DIR = PROTOCOLS / "grumpy/checks"
-GRUMPY_PDIR = PROTOCOLS / "grumpy"
+GRUMPY_CHECKS_DIR = FIXTURES / "single-agent/checks"
+GRUMPY_PDIR = FIXTURES / "single-agent"
 
 EV_COMPLETE = FIXTURES / "evidence-complete.json"
 EV_LAZY = FIXTURES / "evidence-lazy.json"

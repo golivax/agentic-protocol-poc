@@ -458,7 +458,7 @@ def test_join_finalizes_failed_sets_failed_label(tmp_path):
 # End-to-end phase-label progression + v1 regression guard (Task 7)
 # ---------------------------------------------------------------------------
 
-GRUMPY_PROTO = ROOT / ".github/agent-factory/protocols/grumpy/protocol.json"
+GRUMPY_PROTO = ROOT / "tests/fixtures/single-agent/protocol.json"
 
 
 def test_phase_advance_relabels(engine_env, tmp_path):
@@ -492,9 +492,9 @@ def test_v1_grumpy_records_no_phase_label(engine_env, tmp_path):
                             "start", "f00dface", env=engine_env)
     assert rc == 0, err
     # no instance file at all for v1
-    assert not (state_dir / "grumpy-review" / "pr-702" / "_instance.yaml").exists()
+    assert not (state_dir / "single-agent" / "pr-702" / "_instance.yaml").exists()
     # v1 single-agent path: state file lives at <pid>/<instance>.yaml (no subdir)
-    sf = state_dir / "grumpy-review" / "pr-702.yaml"
+    sf = state_dir / "single-agent" / "pr-702.yaml"
     assert "phase_label" not in read_state_yaml(sf)
 
 
