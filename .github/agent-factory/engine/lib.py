@@ -114,7 +114,7 @@ def pipeline_states(protocol):
 
 def is_multiphase(protocol):
     """A protocol is multi-phase iff it has more than one agent|fanout phase.
-    Single-phase protocols (grumpy=1 agent, multi-grumpy=1 fanout) keep the
+    Single-phase protocols (a lone agent, or a single fanout phase) keep the
     legacy layout + code paths untouched."""
     return len(phase_states(protocol)) > 1
 
@@ -201,7 +201,7 @@ def route(protocols_dir, event_name, action="", comment_body="",
         names = ", ".join(p for p, _ in matches)
         # Describe WHAT collided in the trigger's own terms, not the raw GitHub
         # event/action (e.g. "issue_comment/created" hides that the comment text
-        # "/grumpy" is the thing two protocols both matched).
+        # "/review" is the thing two protocols both matched).
         if event_name == "issue_comment":
             what = f'the comment "{comment_body}"'
         elif event_name == "pull_request":
