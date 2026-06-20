@@ -67,7 +67,7 @@ Section: next.py branch lifecycle
   43. check "branch continue/terminal: halts"          → test_branch_lifecycle_terminal
   44. check "branch continue/absent: fresh run-agent iter 1" → test_branch_lifecycle_absent
 
-Section: advance.py branch-scoped (multi-grumpy grumpy branch)
+Section: advance.py branch-scoped (fanout-mini grumpy branch)
   45. check "advance branch: grumpy.yaml state done"            → test_advance_branch_state_done
   46. check "advance branch: published via hook"                → test_advance_branch_published
   47. check "advance branch: per-branch check-run name"         → test_advance_branch_checkrun_name
@@ -100,7 +100,7 @@ LIB_PY = ENGINE / "lib.py"
 NEXT_PY = ENGINE / "next.py"
 ADVANCE_PY = ENGINE / "advance.py"
 GRUMPY_PROTO = ROOT / "tests/fixtures/single-agent/protocol.json"
-MULTI_PROTO = ROOT / ".github/agent-factory/protocols/multi-grumpy/protocol.json"
+MULTI_PROTO = ROOT / "tests/fixtures/fanout-mini/protocol.json"
 FIXTURES = ROOT / "tests/fixtures"
 
 EVIDENCE_LAZY = FIXTURES / "evidence-lazy.json"
@@ -851,20 +851,20 @@ def test_lib_state_file_single_agent(tmp_path):
 
 def test_lib_state_file_branch(tmp_path):
     """Bash: check "state_file branch form nests under instance dir"
-    state_file /s multi-grumpy pr-5 grumpy → /s/multi-grumpy/pr-5/grumpy.yaml"""
-    out, _, rc = lib_cmd(None, "state-file", "/s", "multi-grumpy", "pr-5", "grumpy",
+    state_file /s fanout-mini pr-5 grumpy → /s/fanout-mini/pr-5/grumpy.yaml"""
+    out, _, rc = lib_cmd(None, "state-file", "/s", "fanout-mini", "pr-5", "grumpy",
                          extra_env={"STATE_REMOTE": str(tmp_path)})
     assert rc == 0
-    assert out == "/s/multi-grumpy/pr-5/grumpy.yaml"
+    assert out == "/s/fanout-mini/pr-5/grumpy.yaml"
 
 
 def test_lib_instance_file(tmp_path):
     """Bash: check "instance_file points at _instance.yaml"
-    instance_file /s multi-grumpy pr-5 → /s/multi-grumpy/pr-5/_instance.yaml"""
-    out, _, rc = lib_cmd(None, "instance-file", "/s", "multi-grumpy", "pr-5",
+    instance_file /s fanout-mini pr-5 → /s/fanout-mini/pr-5/_instance.yaml"""
+    out, _, rc = lib_cmd(None, "instance-file", "/s", "fanout-mini", "pr-5",
                          extra_env={"STATE_REMOTE": str(tmp_path)})
     assert rc == 0
-    assert out == "/s/multi-grumpy/pr-5/_instance.yaml"
+    assert out == "/s/fanout-mini/pr-5/_instance.yaml"
 
 
 # ===========================================================================
@@ -885,16 +885,16 @@ def branch_continue_results(branch_continue_origin, tmp_path_factory):
     """Seed pr-77 security branch at iter 2 and run continue with BRANCH=security."""
     nb1 = tmp_path_factory.mktemp("nb1")
     state_checkout(branch_continue_origin, nb1)
-    (nb1 / "multi-grumpy" / "pr-77").mkdir(parents=True, exist_ok=True)
+    (nb1 / "fanout-mini" / "pr-77").mkdir(parents=True, exist_ok=True)
     state = {
-        "protocol": "multi-grumpy",
+        "protocol": "fanout-mini",
         "instance": "pr-77",
         "state": "review",
         "iteration": 2,
         "gates": {},
         "history": [{"iteration": 1, "feedback": "sec: missing anchor"}],
     }
-    with open(nb1 / "multi-grumpy" / "pr-77" / "security.yaml", "w") as fh:
+    with open(nb1 / "fanout-mini" / "pr-77" / "security.yaml", "w") as fh:
         yaml.safe_dump(state, fh, sort_keys=False, default_flow_style=False)
     cas_push(branch_continue_origin, nb1, "seed pr-77 security active@iter2")
 
@@ -929,7 +929,7 @@ def fanout_origin(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def fanout_start_results(fanout_origin, tmp_path_factory):
-    """Run next.py start on multi-grumpy (fanout) protocol for pr-50."""
+    """Run next.py start on fanout-mini (fanout) protocol for pr-50."""
     fo1 = tmp_path_factory.mktemp("fo1")
     action = run_next(fanout_origin, fo1, "pr-50", MULTI_PROTO, "start", head_sha="head50")
     fo2 = tmp_path_factory.mktemp("fo2")
@@ -960,7 +960,7 @@ def test_fanout_start_grumpy_workflow(fanout_start_results):
 def test_fanout_start_grumpy_seeded(fanout_start_results):
     """Bash: check "fanout start: grumpy file seeded active" """
     _, verify = fanout_start_results
-    sf = verify / "multi-grumpy" / "pr-50" / "grumpy.yaml"
+    sf = verify / "fanout-mini" / "pr-50" / "grumpy.yaml"
     assert sf.exists()
     data = read_yaml(sf)
     assert data["state"] == "review"
@@ -970,7 +970,7 @@ def test_fanout_start_grumpy_seeded(fanout_start_results):
 def test_fanout_start_security_seeded(fanout_start_results):
     """Bash: check "fanout start: security file seeded active" """
     _, verify = fanout_start_results
-    sf = verify / "multi-grumpy" / "pr-50" / "security.yaml"
+    sf = verify / "fanout-mini" / "pr-50" / "security.yaml"
     assert sf.exists()
     data = read_yaml(sf)
     assert data["state"] == "review"
@@ -980,7 +980,7 @@ def test_fanout_start_security_seeded(fanout_start_results):
 def test_fanout_start_instance_file(fanout_start_results):
     """Bash: check "fanout start: instance file w/ head" """
     _, verify = fanout_start_results
-    inf = verify / "multi-grumpy" / "pr-50" / "_instance.yaml"
+    inf = verify / "fanout-mini" / "pr-50" / "_instance.yaml"
     assert inf.exists()
     data = read_yaml(inf)
     assert data["head_sha"] == "head50"
@@ -1005,16 +1005,16 @@ def test_branch_lifecycle_terminal(lifecycle_origin, tmp_path_factory):
     Terminal branch (done) → halt."""
     bl1 = tmp_path_factory.mktemp("bl1")
     state_checkout(lifecycle_origin, bl1)
-    (bl1 / "multi-grumpy" / "pr-60").mkdir(parents=True, exist_ok=True)
+    (bl1 / "fanout-mini" / "pr-60").mkdir(parents=True, exist_ok=True)
     state = {
-        "protocol": "multi-grumpy",
+        "protocol": "fanout-mini",
         "instance": "pr-60",
         "state": "done",
         "iteration": 2,
         "gates": {},
         "history": [],
     }
-    with open(bl1 / "multi-grumpy" / "pr-60" / "grumpy.yaml", "w") as fh:
+    with open(bl1 / "fanout-mini" / "pr-60" / "grumpy.yaml", "w") as fh:
         yaml.safe_dump(state, fh, sort_keys=False, default_flow_style=False)
     cas_push(lifecycle_origin, bl1, "seed pr-60 grumpy done")
 
@@ -1035,7 +1035,7 @@ def test_branch_lifecycle_absent(lifecycle_origin, tmp_path_factory):
 
 
 # ===========================================================================
-# Section: advance.py branch-scoped (multi-grumpy grumpy branch)
+# Section: advance.py branch-scoped (fanout-mini grumpy branch)
 # ===========================================================================
 
 
@@ -1054,15 +1054,15 @@ def adv_branch_origin(tmp_path_factory):
 
 
 def _seed_fanout_pr50(origin, tmp_path_factory):
-    """Seed multi-grumpy/pr-50 with both branch files + _instance.yaml."""
+    """Seed fanout-mini/pr-50 with both branch files + _instance.yaml."""
     seed_dir = tmp_path_factory.mktemp("seed_pr50")
     state_checkout(origin, seed_dir)
-    (seed_dir / "multi-grumpy" / "pr-50").mkdir(parents=True, exist_ok=True)
+    (seed_dir / "fanout-mini" / "pr-50").mkdir(parents=True, exist_ok=True)
 
     for bid in ("grumpy", "security"):
-        sf = seed_dir / "multi-grumpy" / "pr-50" / f"{bid}.yaml"
+        sf = seed_dir / "fanout-mini" / "pr-50" / f"{bid}.yaml"
         yaml_content = {
-            "protocol": "multi-grumpy",
+            "protocol": "fanout-mini",
             "instance": "pr-50",
             "state": "review",
             "iteration": 1,
@@ -1072,10 +1072,10 @@ def _seed_fanout_pr50(origin, tmp_path_factory):
         with open(sf, "w") as fh:
             yaml.safe_dump(yaml_content, fh, sort_keys=False, default_flow_style=False)
 
-    inf = seed_dir / "multi-grumpy" / "pr-50" / "_instance.yaml"
+    inf = seed_dir / "fanout-mini" / "pr-50" / "_instance.yaml"
     with open(inf, "w") as fh:
         yaml.safe_dump({
-            "protocol": "multi-grumpy",
+            "protocol": "fanout-mini",
             "instance": "pr-50",
             "head_sha": "mgsha1",
             "joined": False,
@@ -1107,7 +1107,7 @@ def adv_branch_grumpy_results(adv_branch_origin, tmp_path_factory):
 def test_advance_branch_state_done(adv_branch_grumpy_results):
     """Bash: check "advance branch: grumpy.yaml state done" """
     _, verify = adv_branch_grumpy_results
-    data = read_yaml(verify / "multi-grumpy" / "pr-50" / "grumpy.yaml")
+    data = read_yaml(verify / "fanout-mini" / "pr-50" / "grumpy.yaml")
     assert data["state"] == "done"
 
 
@@ -1120,7 +1120,7 @@ def test_advance_branch_published(adv_branch_grumpy_results):
 def test_advance_branch_checkrun_name(adv_branch_grumpy_results):
     """Bash: check "advance branch: per-branch check-run name" """
     out, _ = adv_branch_grumpy_results
-    assert "check-run multi-grumpy/grumpy " in out
+    assert "check-run fanout-mini/grumpy " in out
 
 
 def test_advance_branch_comment_section(adv_branch_grumpy_results):
@@ -1132,7 +1132,7 @@ def test_advance_branch_comment_section(adv_branch_grumpy_results):
 def test_advance_branch_comment_tree_link(adv_branch_grumpy_results):
     """Bash: check "advance branch: shared comment tree/ link" """
     out, _ = adv_branch_grumpy_results
-    assert "tree/agentic-state/multi-grumpy/pr-50" in out
+    assert "tree/agentic-state/fanout-mini/pr-50" in out
 
 
 def test_advance_branch_comment_no_blob(adv_branch_grumpy_results):
@@ -1160,22 +1160,22 @@ def _seed_pr(origin, tmp_path_factory, pr_num, branches=("grumpy", "security"),
     """Seed a fan-out PR with given branches all at iteration=1, state=review."""
     seed_dir = tmp_path_factory.mktemp(f"seed_pr{pr_num}")
     state_checkout(origin, seed_dir)
-    (seed_dir / "multi-grumpy" / f"pr-{pr_num}").mkdir(parents=True, exist_ok=True)
+    (seed_dir / "fanout-mini" / f"pr-{pr_num}").mkdir(parents=True, exist_ok=True)
     for bid in branches:
-        sf = seed_dir / "multi-grumpy" / f"pr-{pr_num}" / f"{bid}.yaml"
+        sf = seed_dir / "fanout-mini" / f"pr-{pr_num}" / f"{bid}.yaml"
         with open(sf, "w") as fh:
             yaml.safe_dump({
-                "protocol": "multi-grumpy",
+                "protocol": "fanout-mini",
                 "instance": f"pr-{pr_num}",
                 "state": "review",
                 "iteration": 1,
                 "gates": {},
                 "history": [],
             }, fh, sort_keys=False, default_flow_style=False)
-    inf = seed_dir / "multi-grumpy" / f"pr-{pr_num}" / "_instance.yaml"
+    inf = seed_dir / "fanout-mini" / f"pr-{pr_num}" / "_instance.yaml"
     with open(inf, "w") as fh:
         yaml.safe_dump({
-            "protocol": "multi-grumpy",
+            "protocol": "fanout-mini",
             "instance": f"pr-{pr_num}",
             "head_sha": head_sha,
             "joined": False,

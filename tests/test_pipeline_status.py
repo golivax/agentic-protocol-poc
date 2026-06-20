@@ -27,7 +27,6 @@ import lib  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PIPELINE = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
-MULTIGRUMPY = ROOT / ".github/agent-factory/protocols/multi-grumpy/protocol.json"
 PID = "code-review"
 
 os.environ.setdefault("GITHUB_REPOSITORY", "golivax/agentic-protocol-poc")

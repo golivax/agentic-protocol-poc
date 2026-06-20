@@ -57,7 +57,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROTOCOLS = ROOT / ".github/agent-factory/protocols"
 FIXTURES = ROOT / "tests/fixtures"
 GRUMPY_HOOK = FIXTURES / "single-agent/publish/publish-review-from-evidence.py"
-SECURITY_HOOK = PROTOCOLS / "multi-grumpy/publish/publish-security.py"
+SECURITY_HOOK = FIXTURES / "fanout-mini/publish/publish-security.py"
 
 
 # ---------------------------------------------------------------------------

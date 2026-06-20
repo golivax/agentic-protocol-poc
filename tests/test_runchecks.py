@@ -44,7 +44,7 @@ resolve_executable unit tests (via lib.py direct import)
   14. "resolve: explicit exec resolves"
       → test_resolve_explicit_exec
 
-Branch-aware check list (multi-grumpy protocol)
+Branch-aware check list (fanout-mini protocol)
   15. "branch grumpy → 3 checks run"
       → test_branch_grumpy_three_checks
   16. "branch security → 2 checks run (no rubric-coverage)"
@@ -79,7 +79,7 @@ from conftest import FIXTURES, PROTOCOLS, ENGINE as ENGINE_CONST, run_engine
 # ---------------------------------------------------------------------------
 
 GRUMPY_PROTO = FIXTURES / "single-agent/protocol.json"
-MULTI_GRUMPY_PROTO = PROTOCOLS / "multi-grumpy/protocol.json"
+MULTI_GRUMPY_PROTO = FIXTURES / "fanout-mini/protocol.json"
 GRUMPY_CHECKS_DIR = FIXTURES / "single-agent/checks"
 GRUMPY_PDIR = FIXTURES / "single-agent"
 
@@ -276,7 +276,7 @@ def test_resolve_explicit_exec():
 
 
 # ===========================================================================
-# Branch-aware check list (multi-grumpy protocol)
+# Branch-aware check list (fanout-mini protocol)
 # ===========================================================================
 
 # 15

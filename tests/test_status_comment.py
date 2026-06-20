@@ -26,7 +26,7 @@ Scenario A: both branches present, grumpy passed iter 1, security failed iter 1 
       grep -q "iteration 1/3 — sec: bad anchor"
       → test_render_failed_checklist_line_with_feedback
   5.  check "render: tree/ link, not blob"
-      grep -q "tree/agentic-state/multi-grumpy/pr-80" and not grep "blob"
+      grep -q "tree/agentic-state/fanout-mini/pr-80" and not grep "blob"
       → test_render_tree_link_not_blob
   6.  check "render: link has no .yaml suffix"
       not grep -q "pr-80.yaml"
@@ -67,7 +67,7 @@ sys.path.insert(0, str(ENGINE))
 import lib  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROTO = ROOT / ".github/agent-factory/protocols/multi-grumpy/protocol.json"
+PROTO = ROOT / "tests/fixtures/fanout-mini/protocol.json"
 
 # The renderer reads GITHUB_REPOSITORY from the environment to build state links.
 os.environ.setdefault("GITHUB_REPOSITORY", "golivax/agentic-protocol-poc")
@@ -82,15 +82,15 @@ def seed_branch(base_dir, instance, branch, state, history):
 
     Mirrors the bash seed_branch():
         jq -n --arg inst $inst --arg st $st --argjson h $hist \
-          '{protocol:"multi-grumpy", instance:$inst, state:$st, iteration:1, gates:{}, history:$h}' \
-          > "$d/multi-grumpy/$inst/$b.yaml"
+          '{protocol:"fanout-mini", instance:$inst, state:$st, iteration:1, gates:{}, history:$h}' \
+          > "$d/fanout-mini/$inst/$b.yaml"
 
     JSON is valid YAML, so we write JSON directly (identical to what the bash does).
     """
-    d = pathlib.Path(base_dir) / "multi-grumpy" / instance
+    d = pathlib.Path(base_dir) / "fanout-mini" / instance
     d.mkdir(parents=True, exist_ok=True)
     data = {
-        "protocol": "multi-grumpy",
+        "protocol": "fanout-mini",
         "instance": instance,
         "state": state,
         "iteration": 1,
@@ -103,7 +103,7 @@ def seed_branch(base_dir, instance, branch, state, history):
 def render(base_dir, instance):
     """Call render_fanout_status_body and return the body string."""
     return lib.render_fanout_status_body(
-        str(base_dir), "multi-grumpy", instance, str(PROTO)
+        str(base_dir), "fanout-mini", instance, str(PROTO)
     )
 
 
@@ -141,7 +141,7 @@ def test_render_failed_checklist_line_with_feedback(scenario_a):
 
 def test_render_tree_link_not_blob(scenario_a):
     """Bash assertion 5: tree/ link present and no blob link."""
-    assert "tree/agentic-state/multi-grumpy/pr-80" in scenario_a
+    assert "tree/agentic-state/fanout-mini/pr-80" in scenario_a
     assert "blob" not in scenario_a
 
 

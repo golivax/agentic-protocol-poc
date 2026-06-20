@@ -294,8 +294,8 @@ def test_advance_preflight_blocked_sets_blocked_label(tmp_path):
 # These tests drive the REAL join.py and assert that _instance.yaml carries
 # the correct phase_label at each of join's three terminals:
 #   1. join → opens following gate  (code-review: review→approval)
-#   2. join finalizes done          (multi-grumpy: all branches done)
-#   3. join finalizes failed        (multi-grumpy: one branch failed)
+#   2. join finalizes done          (fanout-mini: all branches done)
+#   3. join finalizes failed        (fanout-mini: one branch failed)
 #
 # Seeding pattern mirrors test_join.py seed() and test_gate.py
 # _seed_review_all_done(): state-checkout → write YAML files → cas-push,
@@ -303,8 +303,8 @@ def test_advance_preflight_blocked_sets_blocked_label(tmp_path):
 # ---------------------------------------------------------------------------
 
 JOIN_PY = ENGINE / "join.py"
-MG_PROTO = ROOT / ".github/agent-factory/protocols/multi-grumpy/protocol.json"
-MG_PID = "multi-grumpy"
+MG_PROTO = ROOT / "tests/fixtures/fanout-mini/protocol.json"
+MG_PID = "fanout-mini"
 
 CRP_REVIEW_BRANCHES = [
     b["id"]
@@ -324,7 +324,7 @@ def _join_env(state_origin, **extra):
 
 
 def _seed_mg(state_origin, work, instance, grumpy_state, security_state):
-    """Seed multi-grumpy per-branch state + _instance.yaml and push."""
+    """Seed fanout-mini per-branch state + _instance.yaml and push."""
     env = _join_env(state_origin)
     _run(LIB_PY, ["state-checkout", str(work)], env)
     base = work / MG_PID / instance
@@ -397,7 +397,7 @@ def test_join_opens_gate_sets_gate_phase_label(tmp_path):
 
 
 def test_join_finalizes_done_sets_done_label(tmp_path):
-    """join (multi-grumpy) all branches done → aggregate success.
+    """join (fanout-mini) all branches done → aggregate success.
     _instance.yaml phase_label must be '✅ done'.
 
     This drives the finalize tail in join.py where concl=='success', which now
@@ -426,7 +426,7 @@ def test_join_finalizes_done_sets_done_label(tmp_path):
 
 
 def test_join_finalizes_failed_sets_failed_label(tmp_path):
-    """join (multi-grumpy) one branch failed → aggregate failure.
+    """join (fanout-mini) one branch failed → aggregate failure.
     _instance.yaml phase_label must be '❌ failed'.
 
     This drives the finalize tail in join.py where concl=='failure', which now

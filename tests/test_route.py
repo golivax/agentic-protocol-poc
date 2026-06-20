@@ -152,14 +152,15 @@ def test_cli_route_ambiguous_exits_nonzero(tmp_path):
 REAL_PROTOCOLS = str(ROOT / ".github/agent-factory/protocols")
 
 
-def test_real_protocols_grumpy_comment_routes_to_multi_grumpy():
+def test_real_protocols_grumpy_comment_no_longer_routes():
+    # multi-grumpy protocol was moved to tests/fixtures/fanout-mini; it is no
+    # longer a shipped protocol, so /grumpy has no route → skip.
     r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/grumpy", is_pr_comment=True)
-    assert r["skip"] is False
-    assert r["protocol"].endswith("multi-grumpy/protocol.json")
+    assert r["skip"] is True
 
 
 def test_real_protocols_pr_opened_routes_to_pipeline():
-    # After M3, the pipeline (not multi-grumpy) owns PR auto-triggers.
+    # After M3, the pipeline (not fanout-mini) owns PR auto-triggers.
     r = lib.route(REAL_PROTOCOLS, "pull_request", "opened", "")
     assert r["skip"] is False and r["protocol"].endswith("code-review/protocol.json")
 
