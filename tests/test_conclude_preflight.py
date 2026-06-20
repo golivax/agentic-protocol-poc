@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-HOOK = ROOT / ".github/agent-factory/protocols/code-review-pipeline/publish/conclude-preflight.py"
+HOOK = ROOT / ".github/agent-factory/protocols/code-review/publish/conclude-preflight.py"
 
 
 def _conclude(evidence_obj, blocking, tmp_path):

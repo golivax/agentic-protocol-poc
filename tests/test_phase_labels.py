@@ -85,18 +85,18 @@ def test_ensure_phase_label_terminal_key(tmp_path, monkeypatch):
 
 from conftest import run_engine, read_state_yaml  # noqa: E402
 
-CRP_PROTO = ROOT / ".github/agent-factory/protocols/code-review-pipeline/protocol.json"
+CRP_PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
 
 
 def test_start_seeds_first_phase_label(engine_env, tmp_path):
-    """A fresh `start` on code-review-pipeline records the first phase's label."""
+    """A fresh `start` on code-review records the first phase's label."""
     state_dir = tmp_path / "state"
     out, err, rc = run_engine(
         "next.py", state_dir, "pr-700", CRP_PROTO, "start", "deadbeef",
         env=engine_env,
     )
     assert rc == 0, err
-    inf = state_dir / "code-review-pipeline" / "pr-700" / "_instance.yaml"
+    inf = state_dir / "code-review" / "pr-700" / "_instance.yaml"
     data = read_state_yaml(inf)
     assert data["phase"] == "preflight"
     assert data["phase_label"] == "pre-flight gate"
@@ -105,7 +105,7 @@ def test_start_seeds_first_phase_label(engine_env, tmp_path):
 # ---------------------------------------------------------------------------
 # Integration tests: advance.py agent-phase label wiring
 # ---------------------------------------------------------------------------
-# These tests drive the REAL advance.py through the code-review-pipeline
+# These tests drive the REAL advance.py through the code-review
 # protocol's `preflight` agent phase and assert that _instance.yaml carries
 # the correct phase_label at each terminal.
 #
@@ -121,7 +121,7 @@ import subprocess
 LIB_PY = ENGINE / "lib.py"
 ADVANCE_PY = ENGINE / "advance.py"
 NEXT_PY = ENGINE / "next.py"
-PID = "code-review-pipeline"
+PID = "code-review"
 
 
 def _crp_env(state_origin, **extra):
@@ -260,7 +260,7 @@ def test_advance_preflight_blocked_sets_blocked_label(tmp_path):
     phase_label == '⛔ blocked'.
 
     This drives advance.py's is_agent_phase + conclude.blocked + on_blocked=halt branch.
-    The conclude hook for code-review-pipeline/preflight is conclude-preflight;
+    The conclude hook for code-review/preflight is conclude-preflight;
     with EVIDENCE_MIN (no 'spec' key) the hook should return blocked=False, but we
     use VERDICTS_BLOCK which sets blocking=True → conclude-preflight with BLOCKING=1
     returns blocked=True. The preflight state's on_blocked == 'halt' triggers the
@@ -293,7 +293,7 @@ def test_advance_preflight_blocked_sets_blocked_label(tmp_path):
 # ---------------------------------------------------------------------------
 # These tests drive the REAL join.py and assert that _instance.yaml carries
 # the correct phase_label at each of join's three terminals:
-#   1. join → opens following gate  (code-review-pipeline: review→approval)
+#   1. join → opens following gate  (code-review: review→approval)
 #   2. join finalizes done          (multi-grumpy: all branches done)
 #   3. join finalizes failed        (multi-grumpy: one branch failed)
 #
@@ -345,7 +345,7 @@ def _seed_mg(state_origin, work, instance, grumpy_state, security_state):
 
 
 def _seed_crp_review_done(state_origin, work, instance):
-    """Seed code-review-pipeline with all review branches done + _instance cursor."""
+    """Seed code-review with all review branches done + _instance cursor."""
     env = _join_env(state_origin)
     _run(LIB_PY, ["state-checkout", str(work)], env)
     base = work / PID / instance
@@ -363,7 +363,7 @@ def _seed_crp_review_done(state_origin, work, instance):
 
 
 def test_join_opens_gate_sets_gate_phase_label(tmp_path):
-    """join (code-review-pipeline) clears all review branches done → opens 'approval' gate.
+    """join (code-review) clears all review branches done → opens 'approval' gate.
     _instance.yaml phase_label must equal phase_label_text(proto, 'approval').
 
     This drives the `if gns and gns.get("kind") == "gate":` branch in join.py
@@ -469,7 +469,7 @@ def test_phase_advance_relabels(engine_env, tmp_path):
     _, err, rc = run_engine("next.py", state_dir, "pr-701", CRP_PROTO,
                             "start", "cafe1234", env=engine_env)
     assert rc == 0, err
-    inf = state_dir / "code-review-pipeline" / "pr-701" / "_instance.yaml"
+    inf = state_dir / "code-review" / "pr-701" / "_instance.yaml"
     assert read_state_yaml(inf)["phase_label"] == "pre-flight gate"
 
     # advance-phase to the review fanout (orchestrator would set PHASE=review);
@@ -480,7 +480,7 @@ def test_phase_advance_relabels(engine_env, tmp_path):
     _, err, rc = run_engine("next.py", state_dir2, "pr-701", CRP_PROTO,
                             "advance-phase", "cafe1234", env=env2)
     assert rc == 0, err
-    inf2 = state_dir2 / "code-review-pipeline" / "pr-701" / "_instance.yaml"
+    inf2 = state_dir2 / "code-review" / "pr-701" / "_instance.yaml"
     assert read_state_yaml(inf2)["phase_label"] == "review"
 
 

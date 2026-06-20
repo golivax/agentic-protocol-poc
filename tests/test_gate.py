@@ -14,7 +14,7 @@ ENGINE = ROOT / ".github/agent-factory/engine"
 NEXT_PY = ENGINE / "next.py"
 JOIN_PY = ENGINE / "join.py"
 LIB_PY = ENGINE / "lib.py"
-PIPELINE_PROTO = ROOT / ".github/agent-factory/protocols/code-review-pipeline/protocol.json"
+PIPELINE_PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
 PID = json.load(open(PIPELINE_PROTO))["name"]
 
 sys.path.insert(0, str(ENGINE))
@@ -61,7 +61,7 @@ def test_open_gate_seeds_file_and_check_run(tmp_path, capfd, monkeypatch):
     assert gate["state"] == "approval"
     assert gate["head_sha"] == "sha9"
     err = capfd.readouterr().err
-    assert "check-run code-review-pipeline/approval" in err
+    assert "check-run code-review/approval" in err
     assert "status=in_progress" in err
 
 
@@ -208,7 +208,7 @@ def test_join_opens_following_gate(state_origin, tmp_path):
     gate = yaml.safe_load((base / "approval.yaml").read_text())
     assert gate["gates"]["state"] == "open"
     # the aggregate pid check-run is NOT completed at the gate (still in_progress)
-    assert "check-run code-review-pipeline sha=js status=completed" not in err
+    assert "check-run code-review sha=js status=completed" not in err
 
 
 def test_advance_phase_into_gate_opens_it(state_origin, tmp_path):
@@ -262,7 +262,7 @@ def test_resolve_approve_finalizes_last_gate(state_origin, tmp_path):
     assert g["gates"]["state"] == "approved"
     assert g["gates"]["history"][-1] == {"decision": "approve", "actor": "bob", "reason": "lgtm"}
     # final gate → aggregate pid check-run completed success
-    assert "check-run code-review-pipeline sha=gs status=completed conclusion=success" in err
+    assert "check-run code-review sha=gs status=completed conclusion=success" in err
 
 
 def test_resolve_request_changes_halts_no_cursor_move(state_origin, tmp_path):
@@ -298,7 +298,7 @@ def test_resolve_reject_is_terminal(state_origin, tmp_path):
     _clone(state_origin, tmp_path / "verify")
     g = yaml.safe_load((tmp_path / "verify" / PID / inst / "approval.yaml").read_text())
     assert g["gates"]["state"] == "rejected" and g["state"] == "failed"
-    assert "check-run code-review-pipeline sha=gs status=completed conclusion=failure" in err
+    assert "check-run code-review sha=gs status=completed conclusion=failure" in err
 
 
 def test_resolve_reject_then_approve_refused(state_origin, tmp_path):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared PR-review publication mechanism for multi-grumpy branches.
+"""Shared PR-review publication mechanism for code-review review branches.
 
 Imported by the thin per-branch entrypoints (publish-grumpy.py,
 publish-security.py), not invoked directly. Each entrypoint supplies its own
