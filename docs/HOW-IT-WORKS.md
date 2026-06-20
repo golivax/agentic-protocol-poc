@@ -529,7 +529,9 @@ without a 422 from the GitHub reviews API. The check *is* the guarantee; the
 publish hook trusts it.
 
 For the full design rationale and the tradeoffs among the four possible
-anchoring strategies, see `.github/agent-factory/protocols/code-review/README.md` §"Line anchoring" (if present).
+anchoring strategies, see the `traces-exist-in-diff` check itself
+(`.github/agent-factory/protocols/code-review/checks/traces-exist-in-diff.py`) — it
+is the executable specification of the anchoring contract.
 
 ```python
 #!/usr/bin/env python3
