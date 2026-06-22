@@ -129,3 +129,37 @@ def test_answer_partial_keeps_gate_open(tmp_path, engine_env):
     work = _clone(tmp_path, engine_env)
     gate = read_state_yaml(work / "subpipeline-mini/pr-1/B.clarify.yaml")
     assert gate["gates"]["state"] == "open"   # still waiting on q2
+
+
+def test_gated_leg_full_walk(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    _seed_open_gate(tmp_path, engine_env, proto)   # start + draft done + clarify gate open
+
+    # Answer the gate.
+    e = dict(engine_env)
+    e["ANSWER_BODY"] = "/answer q1: postgres"
+    e["ANSWER_ACTOR"] = "al"
+    e["PR_HEAD_SHA"] = "abc123"
+    out, err, rc = run_engine("next.py", tmp_path / "dir2", "pr-1", proto, "answer", env=e)
+    assert rc == 0, err
+
+    # finalize resume → action must carry both inputs: answers and draft.
+    out, err, rc = run_engine("next.py", tmp_path / "dir3", "pr-1", proto, "continue",
+                              env=engine_env, branch="B", substate="finalize")
+    assert rc == 0, err
+    action = json.loads(out)
+    names = {i["as"] for i in action.get("inputs", [])}
+    assert "answers" in names and "draft" in names, f"missing inputs in action: {action}"
+
+    # Advance finalize to done.
+    v = tmp_path / "v.json"; v.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    ev = tmp_path / "fin.json"; ev.write_text("{}")
+    ef = dict(engine_env)
+    ef.update(BRANCH="B", SUBSTATE="finalize", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    out2, err2, rc2 = run_engine("advance.py", tmp_path / "dir-fin", "pr-1", proto, v, ev, env=ef)
+    assert rc2 == 0, err2
+
+    # Assert the leg cursor reached "done".
+    work = _clone(tmp_path, engine_env)
+    assert read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")["state"] == "done"
