@@ -1,5 +1,5 @@
 import importlib, json, os, subprocess, sys
-from conftest import ENGINE, FIXTURES, run_engine, read_state_yaml
+from conftest import ENGINE, FIXTURES, run_engine, run_check, read_state_yaml
 sys.path.insert(0, str(ENGINE))
 lib = importlib.import_module("lib")
 import pathlib
@@ -52,3 +52,26 @@ def test_advance_into_gate_opens_it(tmp_path, engine_env):
     gate = read_state_yaml(work / "subpipeline-mini/pr-1/B.clarify.yaml")
     assert gate["gates"]["state"] == "open"
     assert gate["gates"]["questions"][0]["id"] == "q1"
+
+
+def _cov(tmp_path, questions, answers):
+    doc = tmp_path / "doc.json"
+    doc.write_text(json.dumps({"questions": questions, "answers": answers}))
+    empty = tmp_path / "e.txt"; empty.write_text("")
+    return run_check(FIXTURES / "subpipeline-mini/checks/answers-coverage.py", doc, empty, empty)
+
+
+def test_answers_coverage_pass(tmp_path):
+    r = _cov(tmp_path, [{"id": "q1"}, {"id": "q2"}], {"q1": "pg", "q2": "async"})
+    assert r["pass"] is True
+
+
+def test_answers_coverage_missing(tmp_path):
+    r = _cov(tmp_path, [{"id": "q1"}, {"id": "q2"}], {"q1": "pg"})
+    assert r["pass"] is False
+    assert "q2" in r["feedback"]
+
+
+def test_answers_coverage_empty_value(tmp_path):
+    r = _cov(tmp_path, [{"id": "q1"}], {"q1": "   "})
+    assert r["pass"] is False
