@@ -32,17 +32,23 @@ def engine_env(state_origin):
     return env
 
 
-def run_engine(script, *args, env=None, branch=None):
+def run_engine(script, *args, env=None, branch=None, phase=None, substate=None):
     """Run an engine Python script and return (stdout, stderr, returncode).
 
     ``script`` is a filename relative to ENGINE (e.g. "next.py").
     ``env`` defaults to os.environ; pass ``engine_env`` from the fixture to get
     ENGINE_LOCAL + STATE_REMOTE wired up.
     ``branch`` sets the BRANCH env var for fan-out branch-scoped calls.
+    ``phase`` sets the PHASE env var.
+    ``substate`` sets the SUBSTATE env var.
     """
     e = dict(env or os.environ)
     if branch is not None:
         e["BRANCH"] = branch
+    if phase is not None:
+        e["PHASE"] = phase
+    if substate is not None:
+        e["SUBSTATE"] = substate
     r = subprocess.run(
         ["python3", str(ENGINE / script), *map(str, args)],
         text=True,

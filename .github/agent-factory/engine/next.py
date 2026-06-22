@@ -47,7 +47,6 @@ def is_fanout():
 
 
 def start_fanout():
-    # Find the fanout state
     fstate = None
     branches_config = []
     for s in proto_data.get("states", []):
@@ -56,40 +55,45 @@ def start_fanout():
             branches_config = s.get("branches", [])
             break
 
-    # Seed one fresh state file per branch
+    branches = []
     for b in branches_config:
         bid = b["id"]
-        sf = lib.state_file(DIR, PID, INSTANCE, bid)
-        os.makedirs(os.path.dirname(sf), exist_ok=True)
-        lib.dump_yaml(sf, {
-            "protocol": PID,
-            "instance": INSTANCE,
-            "state": fstate,
-            "iteration": 1,
-            "gates": {},
-            "history": [],
-        })
+        if lib.is_subpipeline_branch(b):
+            first = b["states"][0]
+            # Branch CURSOR: sub_state + leg life-state (the fanout id).
+            cf = lib.state_file(DIR, PID, INSTANCE, bid)
+            os.makedirs(os.path.dirname(cf), exist_ok=True)
+            lib.dump_yaml(cf, {
+                "protocol": PID, "instance": INSTANCE, "state": fstate,
+                "sub_state": first["id"], "iteration": 1, "gates": {}, "history": [],
+            })
+            # First SUB-STATE file (the per-step iterate state).
+            sf = lib.state_file(DIR, PID, INSTANCE, bid, substate=first["id"])
+            lib.dump_yaml(sf, {
+                "protocol": PID, "instance": INSTANCE, "state": fstate,
+                "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": [],
+            })
+            branches.append({"id": bid, "workflow": first["workflow"],
+                             "substate": first["id"], "iteration": 1, "feedback": ""})
+        else:
+            sf = lib.state_file(DIR, PID, INSTANCE, bid)
+            os.makedirs(os.path.dirname(sf), exist_ok=True)
+            lib.dump_yaml(sf, {
+                "protocol": PID, "instance": INSTANCE, "state": fstate,
+                "iteration": 1, "gates": {}, "history": [],
+            })
+            branches.append({"id": bid, "workflow": b["workflow"],
+                             "iteration": 1, "feedback": ""})
 
-    # Seed the shared _instance.yaml
     inf = lib.instance_file(DIR, PID, INSTANCE)
     os.makedirs(os.path.dirname(inf), exist_ok=True)
     lib.dump_yaml(inf, {
-        "protocol": PID,
-        "instance": INSTANCE,
-        "head_sha": HEAD_SHA,
-        "joined": False,
+        "protocol": PID, "instance": INSTANCE, "head_sha": HEAD_SHA, "joined": False,
     })
 
     pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
     lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, fstate)
-
     lib.cas_push(DIR, f"{PID}/{INSTANCE}: fan-out review ({COMMAND})")
-
-    # Build branch dispatch list (id, workflow, iteration, feedback)
-    branches = [
-        {"id": b["id"], "workflow": b["workflow"], "iteration": 1, "feedback": ""}
-        for b in branches_config
-    ]
     emit_run_fanout(branches)
 
 

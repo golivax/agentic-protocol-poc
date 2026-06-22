@@ -1,4 +1,5 @@
-from conftest import ENGINE, FIXTURES  # noqa: F401  (ensures sys.path includes tests/)
+import json, shutil, subprocess
+from conftest import run_engine, read_state_yaml, FIXTURES, ENGINE  # noqa: F401  (ensures sys.path includes tests/)
 import sys, importlib, json, pathlib
 sys.path.insert(0, str(ENGINE))
 lib = importlib.import_module("lib")
@@ -78,3 +79,32 @@ def test_subpipeline_mini_loads():
     assert [s["id"] for s in b["states"]] == ["draft", "finalize"]
     chk = FIXTURES / "subpipeline-mini/checks/always-pass.py"
     assert chk.stat().st_mode & 0o111  # executable
+
+
+def _state_dir(tmp_path, engine_env):
+    """Clone the fake origin so we can read pushed state files back."""
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(work)], check=True)
+    return work
+
+
+def test_start_seeds_subpipeline_first_substate(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    workdir = tmp_path / "dir"
+    out, err, rc = run_engine("next.py", workdir, "pr-1", proto, "start", "abc123", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out)
+    assert action["action"] == "run-fanout"
+    b = next(x for x in action["branches"] if x["id"] == "B")
+    assert b["substate"] == "draft"
+    assert b["workflow"] == "draft-agent"
+    a = next(x for x in action["branches"] if x["id"] == "A")
+    assert "substate" not in a  # flat branch unchanged
+
+    # State files: branch cursor carries sub_state; sub-state file seeded.
+    work = _state_dir(tmp_path, engine_env)
+    cursor = read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")
+    assert cursor["sub_state"] == "draft"
+    assert cursor["state"] == "review"
+    sub = read_state_yaml(work / "subpipeline-mini/pr-1/B.draft.yaml")
+    assert sub["state"] == "review" and sub["iteration"] == 1
