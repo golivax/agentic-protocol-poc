@@ -63,6 +63,13 @@ def state_file(d, pid, instance, branch=None, phase=None, substate=None):
     return f"{base}.yaml"
 
 
+def output_artifact_path(d, pid, instance, branch=None, phase=None, substate=None, kind="evidence"):
+    """Persisted-output path for a state, parallel to state_file but with a
+    .<kind>.json suffix. kind is 'evidence' (agent) or 'answers' (gate)."""
+    sf = state_file(d, pid, instance, branch=branch, phase=phase, substate=substate)
+    return sf[:-len(".yaml")] + f".{kind}.json"
+
+
 def state_by_id(protocol, state_id):
     """Return the state dict with the given id, or None."""
     for s in protocol.get("states", []):
