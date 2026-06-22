@@ -1026,6 +1026,39 @@ def materialize_inputs(resolved, target_dir):
     return manifest
 
 
+def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
+    """Resolve+materialize a merge state's inputs and run its trusted reduce hook.
+    Returns {conclusion, summary}; neutral fallback on any resolution/exec error."""
+    pdir = os.path.dirname(os.path.abspath(proto_path))
+    with open(proto_path) as f:
+        proto = json.load(f)
+    fo = _fanout_state(proto)
+    phase = fo["id"] if (fo and is_multiphase(proto)) else None
+    # Branch-id refs resolve against branch leg outputs (Plan 2 resolve_inputs).
+    resolved = resolve_inputs(proto, dir_, pid, instance,
+                              consuming_branch=None, consuming_phase=phase,
+                              inputs=merge_state.get("inputs", []))
+    workdir = os.path.join(dir_, "_merge", instance.replace("/", "_"))
+    os.makedirs(workdir, exist_ok=True)
+    materialize_inputs(resolved, workdir)
+    res = resolve_executable(f"{pdir}/publish", merge_state.get("hook", ""), pdir, "")
+    kind, path = res.split("\t", 1)
+    if kind == "ERR" or not os.access(path, os.X_OK):
+        sys.stderr.write(f"[merge] hook unresolved/not-exec: {path}\n")
+        return {"conclusion": "neutral", "summary": "merge hook unresolved"}
+    r = subprocess.run([path, workdir, instance], text=True, capture_output=True)
+    if r.returncode != 0:
+        sys.stderr.write(f"[merge] hook nonzero: {r.stderr}\n")
+        return {"conclusion": "neutral", "summary": "merge hook failed"}
+    try:
+        parsed = json.loads(r.stdout.strip())
+        if isinstance(parsed, dict) and "conclusion" in parsed and "summary" in parsed:
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return {"conclusion": "neutral", "summary": "merge hook returned no verdict"}
+
+
 def _cli(argv):
     if not argv:
         sys.stderr.write("lib.py: no subcommand given\n")
