@@ -4,6 +4,7 @@
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import yaml
@@ -969,6 +970,21 @@ def ensure_status_comment(state_dir, pid, instance, proto_path, pr):
     body = render_instance_status_body(state_dir, pid, instance, proto_path)
     upsert_status_comment(inf, pr, body)
     cas_push(state_dir, f"{instance}: ensure shared status comment")
+
+
+def materialize_inputs(resolved, target_dir):
+    """Copy each existing resolved input to <target_dir>/inputs/<as>.json.
+    Returns [{as, staged_path}] for the ones that existed."""
+    inputs_dir = os.path.join(str(target_dir), "inputs")
+    os.makedirs(inputs_dir, exist_ok=True)
+    manifest = []
+    for r in resolved:
+        if not os.path.isfile(r["path"]):
+            continue
+        dst = os.path.join(inputs_dir, f"{r['as']}.json")
+        shutil.copyfile(r["path"], dst)
+        manifest.append({"as": r["as"], "staged_path": dst})
+    return manifest
 
 
 def _cli(argv):

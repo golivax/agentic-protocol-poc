@@ -88,3 +88,13 @@ def test_resolve_inputs_branch_leg_outputs():
     paths = {r["as"]: r["path"] for r in res}
     assert paths["a"] == "/s/rev/pr-1/A.evidence.json"
     assert paths["b"] == "/s/rev/pr-1/B.finalize.evidence.json"
+
+
+def test_materialize_inputs(tmp_path):
+    src = tmp_path / "src.json"; src.write_text('{"k": 1}')
+    resolved = [{"as": "draft", "path": str(src), "kind": "evidence"},
+                {"as": "missing", "path": str(tmp_path / "nope.json"), "kind": "evidence"}]
+    manifest = lib.materialize_inputs(resolved, tmp_path / "agentwork")
+    staged = {m["as"]: m["staged_path"] for m in manifest}
+    assert set(staged) == {"draft"}   # missing source skipped
+    assert (tmp_path / "agentwork/inputs/draft.json").read_text() == '{"k": 1}'
