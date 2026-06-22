@@ -4,8 +4,10 @@
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import yaml
 
 STATE_REMOTE = os.environ.get("STATE_REMOTE", "")
@@ -36,21 +38,38 @@ def protocol_id(proto_path):
         return json.load(f)["name"]
 
 
-def state_file(d, pid, instance, branch=None, phase=None):
+def state_file(d, pid, instance, branch=None, phase=None, substate=None):
     """
-    state_file <dir> <protocol-id> <instance-key> [branch] [phase]
-      no branch, no phase → single-agent path     <dir>/<pid>/<instance>.yaml
-      branch, no phase    → fan-out per-branch     <dir>/<pid>/<instance>/<branch>.yaml
-      phase, no branch    → multi-phase agent      <dir>/<pid>/<instance>/<phase>.yaml
-      phase + branch      → multi-phase fan-out leg <dir>/<pid>/<instance>/<phase>.<branch>.yaml
+    state_file <dir> <protocol-id> <instance-key> [branch] [phase] [substate]
+      no branch, no phase            → single-agent     <dir>/<pid>/<instance>.yaml
+      branch, no phase               → fan-out leg       <dir>/<pid>/<instance>/<branch>.yaml
+      phase, no branch               → multi-phase agent <dir>/<pid>/<instance>/<phase>.yaml
+      phase + branch                 → fan-out leg       <dir>/<pid>/<instance>/<phase>.<branch>.yaml
+      branch + substate              → sub-pipeline step <dir>/<pid>/<instance>/<branch>.<substate>.yaml
+      phase + branch + substate      → sub-pipeline step <dir>/<pid>/<instance>/<phase>.<branch>.<substate>.yaml
+    The branch CURSOR file is the (phase+)branch path WITHOUT substate; a
+    sub-pipeline branch stores `sub_state` there and the per-step state in the
+    substate path.
     """
+    base = f"{d}/{pid}/{instance}"
+    if phase and branch and substate:
+        return f"{base}/{phase}.{branch}.{substate}.yaml"
     if phase and branch:
-        return f"{d}/{pid}/{instance}/{phase}.{branch}.yaml"
+        return f"{base}/{phase}.{branch}.yaml"
     if phase:
-        return f"{d}/{pid}/{instance}/{phase}.yaml"
+        return f"{base}/{phase}.yaml"
+    if branch and substate:
+        return f"{base}/{branch}.{substate}.yaml"
     if branch:
-        return f"{d}/{pid}/{instance}/{branch}.yaml"
-    return f"{d}/{pid}/{instance}.yaml"
+        return f"{base}/{branch}.yaml"
+    return f"{base}.yaml"
+
+
+def output_artifact_path(d, pid, instance, branch=None, phase=None, substate=None, kind="evidence"):
+    """Persisted-output path for a state, parallel to state_file but with a
+    .<kind>.json suffix. kind is 'evidence' (agent) or 'answers' (gate)."""
+    sf = state_file(d, pid, instance, branch=branch, phase=phase, substate=substate)
+    return sf[:-len(".yaml")] + f".{kind}.json"
 
 
 def state_by_id(protocol, state_id):
@@ -61,10 +80,109 @@ def state_by_id(protocol, state_id):
     return None
 
 
-def resolve_agent_unit(protocol, phase="", branch=""):
+def _fanout_state(protocol):
+    for s in protocol.get("states", []):
+        if s.get("kind") == "fanout":
+            return s
+    return None
+
+
+def branch_config(protocol, branch):
+    """The branch entry dict from the protocol's fanout state, or None."""
+    fo = _fanout_state(protocol)
+    if not fo:
+        return None
+    for b in fo.get("branches", []):
+        if b.get("id") == branch:
+            return b
+    return None
+
+
+def is_subpipeline_branch(branch_cfg):
+    """True iff the branch entry is a linear sub-pipeline (has `states`)."""
+    return bool(branch_cfg) and bool(branch_cfg.get("states"))
+
+
+def branch_substates(protocol, branch):
+    """Ordered list of sub-state dicts for a sub-pipeline branch ([] if flat)."""
+    cfg = branch_config(protocol, branch)
+    if not is_subpipeline_branch(cfg):
+        return []
+    return list(cfg.get("states", []))
+
+
+def next_substate_id(protocol, branch, substate):
+    """Id of the sub-state following `substate`, or None if it is the last."""
+    subs = branch_substates(protocol, branch)
+    ids = [s["id"] for s in subs]
+    if substate in ids:
+        i = ids.index(substate)
+        if i + 1 < len(ids):
+            return ids[i + 1]
+    return None
+
+
+def branch_output_substate(protocol, branch):
+    """The last sub-state id of a sub-pipeline branch (its leg output), else None."""
+    subs = branch_substates(protocol, branch)
+    return subs[-1]["id"] if subs else None
+
+
+def state_inputs(protocol, state_id):
+    """The `inputs` list declared on a top-level state OR a branch sub-state."""
+    st = state_by_id(protocol, state_id)
+    if st is not None:
+        return list(st.get("inputs", []))
+    fo = _fanout_state(protocol)
+    if fo:
+        for b in fo.get("branches", []):
+            for s in b.get("states", []):
+                if s.get("id") == state_id:
+                    return list(s.get("inputs", []))
+    return []
+
+
+def _branch_ids(protocol):
+    """Extract branch IDs from the fanout state."""
+    fo = _fanout_state(protocol)
+    return [b["id"] for b in fo.get("branches", [])] if fo else []
+
+
+def resolve_inputs(protocol, d, pid, instance, consuming_branch, consuming_phase, inputs):
+    """Map each {from, as} to {as, path, kind}. Resolution order for `from`:
+      1) a sub-state of the consuming branch  → that sub-state's evidence
+      2) a fanout branch id                   → that branch's leg-output evidence
+                                                 (last sub-state, or the flat leg)
+      3) a phase id                           → that phase's evidence
+    `kind` is 'evidence' unless the source sub-state is a gate (then 'answers')."""
+    phase = consuming_phase or None
+    out = []
+    sub_ids = {s["id"]: s for s in branch_substates(protocol, consuming_branch)} if consuming_branch else {}
+    branch_ids = set(_branch_ids(protocol))
+    for ref in inputs:
+        frm, as_ = ref["from"], ref["as"]
+        if frm in sub_ids:
+            kind = "answers" if sub_ids[frm].get("kind") == "gate" else "evidence"
+            path = output_artifact_path(d, pid, instance, branch=consuming_branch,
+                                        phase=phase, substate=frm, kind=kind)
+        elif frm in branch_ids:
+            kind = "evidence"
+            last = branch_output_substate(protocol, frm)
+            path = output_artifact_path(d, pid, instance, branch=frm, phase=phase,
+                                        substate=last, kind="evidence")
+        else:
+            path = output_artifact_path(d, pid, instance, phase=frm, kind="evidence")
+            kind = "evidence"
+            out.append({"as": as_, "path": path, "kind": kind})
+            continue
+        out.append({"as": as_, "path": path, "kind": kind})
+    return out
+
+
+def resolve_agent_unit(protocol, phase="", branch="", substate=""):
     """Resolve the agent unit for a leg: its agent_state id, max_iterations, and
-    life_state (the .state value a live state file carries in flight). Mirrors the
-    PHASE-first → BRANCH → single-agent ladder. Raises ValueError if unresolved."""
+    life_state. Adds a SUBSTATE rung above BRANCH: a sub-pipeline branch resolves
+    to its current sub-state. Mirrors the PHASE → BRANCH → single-agent ladder."""
     if phase:
         st = state_by_id(protocol, phase)
         if not st:
@@ -74,25 +192,33 @@ def resolve_agent_unit(protocol, phase="", branch=""):
                 raise ValueError(f"PHASE='{phase}' is a fanout phase but BRANCH is empty")
             for b in st.get("branches", []):
                 if b["id"] == branch:
+                    if substate:
+                        for s in b.get("states", []):
+                            if s["id"] == substate:
+                                return {"agent_state": substate,
+                                        "max_iterations": s.get("max_iterations"),
+                                        "life_state": phase}
+                        raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
                     return {"agent_state": branch, "max_iterations": b.get("max_iterations"), "life_state": phase}
             raise ValueError(f"no branch '{branch}' in phase '{phase}'")
         return {"agent_state": phase, "max_iterations": st.get("max_iterations"), "life_state": phase}
     if branch:
-        agent_id = None
-        max_it = None
         fanout_id = None
         for st in protocol.get("states", []):
             if st.get("kind") == "fanout":
                 fanout_id = st["id"]
                 for b in st.get("branches", []):
                     if b["id"] == branch:
-                        agent_id = b["id"]
-                        max_it = b.get("max_iterations")
-                        break
+                        if substate:
+                            for s in b.get("states", []):
+                                if s["id"] == substate:
+                                    return {"agent_state": substate,
+                                            "max_iterations": s.get("max_iterations"),
+                                            "life_state": fanout_id}
+                            raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
+                        return {"agent_state": b["id"], "max_iterations": b.get("max_iterations"), "life_state": fanout_id}
                 break
-        if not agent_id:
-            raise ValueError(f"no branch '{branch}' in protocol")
-        return {"agent_state": agent_id, "max_iterations": max_it, "life_state": fanout_id}
+        raise ValueError(f"no branch '{branch}' in protocol")
     for st in protocol.get("states", []):
         if st.get("kind") == "agent":
             return {"agent_state": st["id"], "max_iterations": st.get("max_iterations"), "life_state": st["id"]}
@@ -235,19 +361,33 @@ def instance_file(d, pid, instance):
     return f"{d}/{pid}/{instance}/_instance.yaml"
 
 
-def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr):
-    """Seed a gate phase's state file (gates.state=open), emit the awaiting
-    check-run, and refresh the shared status comment. Does NOT set the cursor
-    (caller owns _instance.yaml) and does NOT cas_push (caller pushes)."""
-    sf = state_file(dir_, pid, instance, phase=gate_id)
+def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, questions=None):
+    """Seed a gate state file (gates.state=open), emit the awaiting check-run, and
+    refresh the status comment. `branch` scopes the gate to a sub-pipeline leg.
+    `questions` (a list of {id,text}) turns this into a data-carrying gate whose
+    comment lists them with the /answer syntax. Caller owns the cursor + cas_push."""
+    if branch:
+        sf = state_file(dir_, pid, instance, branch=branch, substate=gate_id)
+    else:
+        sf = state_file(dir_, pid, instance, phase=gate_id)
     os.makedirs(os.path.dirname(sf), exist_ok=True)
+    gates = {"state": "open", "history": []}
+    if questions:
+        gates["questions"] = questions
     dump_yaml(sf, {
         "protocol": pid, "instance": instance, "state": gate_id,
-        "head_sha": sha, "gates": {"state": "open", "history": []},
+        "head_sha": sha, "gates": gates,
     })
-    set_check_run(f"{pid}/{gate_id}", sha, "in_progress", "",
-                  "Awaiting human approval",
-                  "Comment `/approve`, `/request-changes`, or `/reject` on this PR.")
+    cr_name = f"{pid}/{branch}/{gate_id}" if branch else f"{pid}/{gate_id}"
+    if questions:
+        listed = "\n".join(f"{i+1}. `{q['id']}` — {q['text']}" for i, q in enumerate(questions))
+        summary = ("Answer with `/answer <id>: <value>` (one or more per comment), e.g. "
+                   f"`/answer {questions[0]['id']}: …`.")
+        set_check_run(cr_name, sha, "in_progress", "", "Awaiting answers", summary)
+        post_pr_comment(pr, f"❓ **{gate_id}** needs input:\n\n{listed}\n\n{summary}")
+    else:
+        set_check_run(cr_name, sha, "in_progress", "", "Awaiting human approval",
+                      "Comment `/approve`, `/request-changes`, or `/reject` on this PR.")
     inf = instance_file(dir_, pid, instance)
     if os.path.isfile(inf):
         body = render_pipeline_status_body(dir_, pid, instance, proto_path)
@@ -845,6 +985,78 @@ def ensure_status_comment(state_dir, pid, instance, proto_path, pr):
     body = render_instance_status_body(state_dir, pid, instance, proto_path)
     upsert_status_comment(inf, pr, body)
     cas_push(state_dir, f"{instance}: ensure shared status comment")
+
+
+def _gh_dispatch(event_type, fields):
+    """Fire a repository_dispatch. ENGINE_LOCAL → no-op (logs to stderr)."""
+    if os.environ.get("ENGINE_LOCAL", "0") == "1":
+        sys.stderr.write(f"[ENGINE_LOCAL] dispatch {event_type} {fields}\n")
+        return
+    args = ["gh", "api", f"repos/{os.environ.get('GITHUB_REPOSITORY', '')}/dispatches",
+            "-f", f"event_type={event_type}"]
+    for k, v in fields.items():
+        args += ["-F", f"client_payload[{k}]={v}"]
+    subprocess.run(args, text=True, capture_output=True)
+
+
+def dispatch_continue(pid, instance, branch, substate, phase=""):
+    """Dispatch a protocol-continue event to resume a sub-pipeline leg at substate."""
+    f = {"protocol": pid, "instance": instance, "branch": branch, "substate": substate}
+    if phase:
+        f["phase"] = phase
+    _gh_dispatch("protocol-continue", f)
+
+
+def fire_join_dispatch(pid, instance):
+    """Dispatch a protocol-join event (all legs done; trigger the join barrier)."""
+    _gh_dispatch("protocol-join", {"protocol": pid, "instance": instance})
+
+
+def materialize_inputs(resolved, target_dir):
+    """Copy each existing resolved input to <target_dir>/inputs/<as>.json.
+    Returns [{as, staged_path}] for the ones that existed."""
+    inputs_dir = os.path.join(str(target_dir), "inputs")
+    os.makedirs(inputs_dir, exist_ok=True)
+    manifest = []
+    for r in resolved:
+        if not os.path.isfile(r["path"]):
+            continue
+        dst = os.path.join(inputs_dir, f"{r['as']}.json")
+        shutil.copyfile(r["path"], dst)
+        manifest.append({"as": r["as"], "staged_path": dst})
+    return manifest
+
+
+def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
+    """Resolve+materialize a merge state's inputs and run its trusted reduce hook.
+    Returns {conclusion, summary}; neutral fallback on any resolution/exec error."""
+    pdir = os.path.dirname(os.path.abspath(proto_path))
+    with open(proto_path) as f:
+        proto = json.load(f)
+    fo = _fanout_state(proto)
+    phase = fo["id"] if (fo and is_multiphase(proto)) else None
+    # Branch-id refs resolve against branch leg outputs (Plan 2 resolve_inputs).
+    resolved = resolve_inputs(proto, dir_, pid, instance,
+                              consuming_branch=None, consuming_phase=phase,
+                              inputs=merge_state.get("inputs", []))
+    workdir = tempfile.mkdtemp(prefix="merge-")
+    materialize_inputs(resolved, workdir)
+    res = resolve_executable(f"{pdir}/publish", merge_state.get("hook", ""), pdir, "")
+    kind, path = res.split("\t", 1)
+    if kind == "ERR" or not os.access(path, os.X_OK):
+        sys.stderr.write(f"[merge] hook unresolved/not-exec: {path}\n")
+        return {"conclusion": "neutral", "summary": "merge hook unresolved"}
+    r = subprocess.run([path, workdir, instance], text=True, capture_output=True)
+    if r.returncode != 0:
+        sys.stderr.write(f"[merge] hook nonzero: {r.stderr}\n")
+        return {"conclusion": "neutral", "summary": "merge hook failed"}
+    try:
+        parsed = json.loads(r.stdout.strip())
+        if isinstance(parsed, dict) and "conclusion" in parsed and "summary" in parsed:
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return {"conclusion": "neutral", "summary": "merge hook returned no verdict"}
 
 
 def _cli(argv):

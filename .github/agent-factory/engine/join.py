@@ -63,6 +63,9 @@ def main():
     all_terminal = True
     all_done = True
     for b in branches:
+        # NOTE: a sub-pipeline branch's terminal state lives in its CURSOR file
+        # (review.<b>.yaml), written by advance.py only when the LAST sub-state is
+        # done. We deliberately read the cursor here, never a sub-state file.
         sf = lib.state_file(dir_, pid, instance, b, phase=phase_for_path)
         st = ""
         if os.path.isfile(sf):
@@ -105,6 +108,34 @@ def main():
             lib.open_gate(dir_, pid, instance, proto, gate_next, sha, pr)
             lib.ensure_phase_label(dir_, pid, instance, protocol, pr, gate_next)
             lib.cas_push(dir_, f"{instance}: join clear → gate {gate_next} open")
+            return
+
+        # If an AGENT state follows the join, advance + dispatch it (mode 2).
+        merge_next = (join_state or {}).get("next")
+        mns = lib.state_by_id(protocol, merge_next) if merge_next else None
+        if mns and mns.get("kind") == "agent":
+            instance_data["joined"] = True
+            instance_data["phase"] = merge_next
+            lib.dump_yaml(inf, instance_data)
+            lib.ensure_phase_label(dir_, pid, instance, protocol, pr, merge_next)
+            lib.cas_push(dir_, f"{instance}: join clear -> agent combine {merge_next}")
+            lib._gh_dispatch("protocol-advance",
+                             {"protocol": pid, "instance": instance, "phase": merge_next})
+            return
+
+        # If a MERGE state follows the join, run its reduce hook before finalizing.
+        if mns and mns.get("kind") == "merge":
+            result = lib.run_merge_hook(dir_, pid, instance, proto, mns)
+            instance_data["joined"] = True
+            instance_data["phase"] = merge_next
+            lib.dump_yaml(inf, instance_data)
+            lib.set_check_run(pid, sha, "completed", result.get("conclusion", "neutral"),
+                              "Combined", result.get("summary", ""))
+            lib.post_pr_comment(pr, f"🧬 **{merge_next}**: {result.get('summary','')}")
+            body = lib.render_instance_status_body(dir_, pid, instance, proto)
+            lib.upsert_status_comment(inf, pr, body)
+            lib.ensure_phase_label(dir_, pid, instance, protocol, pr, "done")
+            lib.cas_push(dir_, f"{instance}: join clear → merge {merge_next} → done")
             return
 
         concl = "success"

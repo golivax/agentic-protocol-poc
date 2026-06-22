@@ -11,12 +11,26 @@ Env: AGENT_RUN_ID, GITHUB_REPOSITORY, PUBLISH_TOKEN (reviews+comments),
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 
 # Import shared library from the same directory as this script.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib
+
+
+def persist_output(dir_, pid, instance, branch, phase, substate, evid, kind="evidence"):
+    """Copy the agent's artifact to its deterministic persisted path so
+    downstream `inputs` can resolve it. Best-effort: a missing/empty evid is a
+    no-op (the leg simply has no output to forward)."""
+    if not evid or not os.path.isfile(evid):
+        return
+    dst = lib.output_artifact_path(dir_, pid, instance,
+                                   branch=(branch or None), phase=(phase or None),
+                                   substate=(substate or None), kind=kind)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(evid, dst)
 
 
 def gh_api(*args):
@@ -208,6 +222,7 @@ def main():
 
     branch = os.environ.get("BRANCH", "")
     phase = os.environ.get("PHASE", "")
+    substate = os.environ.get("SUBSTATE", "")
     pr = os.environ.get("PR", instance)
     agent_run_id = os.environ.get("AGENT_RUN_ID", "unknown")
     github_repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -223,7 +238,7 @@ def main():
     # prefixes. The "no branch in fanout phase" message keeps its [advance] prefix
     # and "fanout phase" wording to preserve the original advance.py error text.
     try:
-        _unit = lib.resolve_agent_unit(proto, phase, branch)
+        _unit = lib.resolve_agent_unit(proto, phase, branch, substate)
     except ValueError as e:
         _msg = str(e)
         if "in phase '" in _msg:
@@ -241,7 +256,8 @@ def main():
     # State file and check-run name
     sf = lib.state_file(dir_, pid, instance,
                         branch=(branch if branch else None),
-                        phase=(phase if phase else None))
+                        phase=(phase if phase else None),
+                        substate=(substate if substate else None))
     if phase and branch:
         cr_name = f"{pid}/{phase}/{branch}"
     elif phase:
@@ -250,6 +266,11 @@ def main():
         cr_name = f"{pid}/{branch}"
     else:
         cr_name = pid
+
+    # A sub-pipeline leg gets a per-sub-state check-run so draft/finalize don't
+    # collide on one GitHub check-run.
+    if substate:
+        cr_name = f"{cr_name}/{substate}"
 
     # Checkout state
     lib.state_checkout(dir_)
@@ -319,6 +340,71 @@ def main():
         state_data = lib.load_yaml(sf)
         state_data["state"] = "done"
         lib.dump_yaml(sf, state_data)
+
+        # Persist the evidence artifact so downstream `inputs` can resolve it.
+        # Best-effort: a missing/empty evid file is silently skipped.
+        persist_output(dir_, pid, instance, branch, phase, substate, evid)
+
+        # --- Sub-pipeline branch leg: advance the BRANCH CURSOR, not the phase. ---
+        if branch and substate:
+            cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
+                                       phase=(phase if phase else None))
+            nxt_sub = lib.next_substate_id(proto, branch, substate)
+            # Mark this sub-state's own file done (already set above), then move on.
+            lib.set_check_run(cr_name, sha, "completed", "success",
+                              f"{substate} complete", "")
+            cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
+            if nxt_sub:
+                cur["sub_state"] = nxt_sub
+                cur["state"] = life_state         # leg stays in flight
+                lib.dump_yaml(cursor_sf, cur)
+                nxt_state = lib.state_by_id(
+                    {"states": lib.branch_substates(proto, branch)}, nxt_sub)
+                if nxt_state and nxt_state.get("kind") == "gate":
+                    # Open the gate (scoped to this branch); read questions from
+                    # the source sub-state's persisted evidence.
+                    questions = []
+                    qfrom = nxt_state.get("questions_from")
+                    if qfrom:
+                        qpath = lib.output_artifact_path(dir_, pid, instance,
+                                                         branch=branch, phase=(phase or None),
+                                                         substate=qfrom, kind="evidence")
+                        if os.path.isfile(qpath):
+                            try:
+                                questions = json.load(open(qpath)).get("questions", []) or []
+                            except (json.JSONDecodeError, ValueError):
+                                questions = []
+                    lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
+                                  branch=branch, questions=questions)
+                    lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → gate {nxt_sub} open")
+                    return
+                # Otherwise: an agent sub-state → seed + dispatch (Plan 1 behaviour).
+                nsf = lib.state_file(dir_, pid, instance, branch=branch,
+                                     phase=(phase if phase else None), substate=nxt_sub)
+                lib.dump_yaml(nsf, {
+                    "protocol": pid, "instance": instance, "state": life_state,
+                    "iteration": 1, "gates": {}, "head_sha": sha, "history": [],
+                })
+                lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → {nxt_sub}")
+                redispatch = [
+                    f"repos/{github_repository}/dispatches",
+                    "-f", "event_type=protocol-continue",
+                    "-F", f"client_payload[protocol]={pid}",
+                    "-F", f"client_payload[instance]={instance}",
+                    "-F", f"client_payload[branch]={branch}",
+                    "-F", f"client_payload[substate]={nxt_sub}",
+                ]
+                if phase:
+                    redispatch += ["-F", f"client_payload[phase]={phase}"]
+                gh_api(*redispatch)
+            else:
+                cur["state"] = "done"             # last sub-state → leg terminal
+                lib.dump_yaml(cursor_sf, cur)
+                update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                                      "✅ done — published.", max_iter, github_repository)
+                lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → leg done")
+                fire_join(pid, instance, branch)
+            return
 
         this_state = lib.state_by_id(proto, agent_state)
         is_agent_phase = phase and this_state and this_state.get("kind") == "agent"
@@ -434,6 +520,8 @@ def main():
             "-F", f"client_payload[instance]={instance}",
             "-F", f"client_payload[branch]={branch}",
         ]
+        if substate:
+            redispatch += ["-F", f"client_payload[substate]={substate}"]
         if phase:
             redispatch += ["-F", f"client_payload[phase]={phase}"]
         gh_api(*redispatch)
@@ -443,6 +531,13 @@ def main():
         state_data = lib.load_yaml(sf)
         state_data["state"] = "failed"
         lib.dump_yaml(sf, state_data)
+
+        if branch and substate:
+            cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
+                                       phase=(phase if phase else None))
+            cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
+            cur["state"] = "failed"
+            lib.dump_yaml(cursor_sf, cur)
 
         # An agent PHASE that exhausts its iterations is a terminal phase failure
         # (label it). A fan-out leg / single-agent v1 reaching here is NOT a phase

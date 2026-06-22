@@ -17,6 +17,35 @@ in sequence. Protocol names (`grumpy-review`, `multi-grumpy`) inside those
 clearly-historical sections refer to the protocols as they existed at that
 milestone; they are now retired.
 
+## Nested sub-workflow branches + data-carrying gate (engine — in progress, 2026-06-22)
+
+Design: `docs/superpowers/specs/2026-06-22-nested-subworkflow-branches-design.md`;
+implementation Plans 1–4 under `docs/superpowers/plans/2026-06-22-plan-*.md`.
+Unlocks the target protocol **`recover-mental-model-stub`** (one automated leg ∥
+one human-gated leg → join → combine).
+
+Engine capability (Python + pytest layer) being built on branch
+`feat/nested-subworkflow-branches`:
+
+- **Sub-pipeline branches** — a fanout `branch` may be a linear sub-pipeline
+  (`states: [...]`) the engine sequences with its own cursor (`<branch>.yaml`
+  carrying `sub_state`) + per-step files (`<branch>.<substate>.yaml`). Same
+  seed/advance loop as top-level phases, one scope deeper (`SUBSTATE` env var).
+- **Inputs channel + output persistence** — states persist their `evidence.json`
+  beside their state file; a state may declare `inputs:[{from,as}]` resolved by
+  `lib.resolve_inputs` and staged as `inputs/<as>.json`.
+- **Data-carrying gate** — a gate with `questions_from` renders agent-emitted
+  questions; `/answer qID: value` accumulates answers, an `answers-coverage`
+  check gates resumption, and the answers artifact feeds the next sub-state.
+- **Combine/merge state** — `join` advances to its `.next`; `kind:"merge"` runs a
+  trusted reduce hook, or an agent combine, or publish-only.
+
+Exercised by the `tests/fixtures/subpipeline-mini/` fixture (single-phase fanout:
+A flat ∥ B `draft → clarify → finalize` → join → combine). **Deferred:** the
+GitHub-Actions workflow wiring (input artifact staging, `/answer` routing, merge
+job env) — see `docs/superpowers/notes-deferred-workflow-integration.md`; it lands
+on `main` per the workflow-on-default-branch rule.
+
 ## Proven end-to-end (real GitHub Actions)
 
 - Engine: `next.py` (planner), `advance.py` (sole state writer + publisher),
