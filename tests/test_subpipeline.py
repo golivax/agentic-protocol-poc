@@ -160,3 +160,13 @@ def test_start_seeds_subpipeline_first_substate(tmp_path, engine_env):
     assert cursor["state"] == "review"
     sub = read_state_yaml(work / "subpipeline-mini/pr-1/B.draft.yaml")
     assert sub["state"] == "review" and sub["iteration"] == 1
+
+
+def test_advance_substate_in_check_run_name(tmp_path, engine_env):
+    """Verify that sub-pipeline advance includes sub-state in check-run name."""
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
+    out, err, rc = _advance(tmp_path, engine_env, "pr-1", "B", "draft", proto)
+    assert rc == 0, err
+    # set_check_run emits name to stderr under ENGINE_LOCAL=1
+    assert "check-run subpipeline-mini/B/draft" in err, f"Expected sub-state in check-run name. stderr: {err}"

@@ -253,6 +253,11 @@ def main():
     else:
         cr_name = pid
 
+    # A sub-pipeline leg gets a per-sub-state check-run so draft/finalize don't
+    # collide on one GitHub check-run.
+    if substate:
+        cr_name = f"{cr_name}/{substate}"
+
     # Checkout state
     lib.state_checkout(dir_)
 
