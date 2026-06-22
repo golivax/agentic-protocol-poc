@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Finalize evidence",
+  "description": "Evidence produced by the finalize agent: the recovered rationale for the PR's changes.",
+  "type": "object",
+  "required": ["rationale"],
+  "properties": {
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Non-empty human-readable rationale explaining the PR's design decisions."
+    }
+  },
+  "additionalProperties": true
+}
