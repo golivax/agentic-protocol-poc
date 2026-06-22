@@ -469,8 +469,9 @@ def do_answer():
     pdir = os.path.dirname(os.path.abspath(PROTO))
     res = lib.resolve_executable(f"{pdir}/checks", check_run, pdir, "")
     kind, path = res.split("\t", 1)
-    empty = os.path.join(DIR, "_empty.txt")
-    open(empty, "w").close()
+    import tempfile
+    empty_fd, empty = tempfile.mkstemp(prefix="answers-empty-")
+    os.close(empty_fd)
     cov = _sp.run([path, apath, empty, empty], text=True, capture_output=True)
     verdict = json.loads(cov.stdout) if cov.stdout.strip() else {"pass": False, "feedback": "no verdict"}
 

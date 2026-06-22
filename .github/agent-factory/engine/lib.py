@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import yaml
 
 STATE_REMOTE = os.environ.get("STATE_REMOTE", "")
@@ -1038,8 +1039,7 @@ def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
     resolved = resolve_inputs(proto, dir_, pid, instance,
                               consuming_branch=None, consuming_phase=phase,
                               inputs=merge_state.get("inputs", []))
-    workdir = os.path.join(dir_, "_merge", instance.replace("/", "_"))
-    os.makedirs(workdir, exist_ok=True)
+    workdir = tempfile.mkdtemp(prefix="merge-")
     materialize_inputs(resolved, workdir)
     res = resolve_executable(f"{pdir}/publish", merge_state.get("hook", ""), pdir, "")
     kind, path = res.split("\t", 1)
