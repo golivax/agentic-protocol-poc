@@ -110,6 +110,23 @@ def main():
             lib.cas_push(dir_, f"{instance}: join clear → gate {gate_next} open")
             return
 
+        # If a MERGE state follows the join, run its reduce hook before finalizing.
+        merge_next = (join_state or {}).get("next")
+        mns = lib.state_by_id(protocol, merge_next) if merge_next else None
+        if mns and mns.get("kind") == "merge":
+            result = lib.run_merge_hook(dir_, pid, instance, proto, mns)
+            instance_data["joined"] = True
+            instance_data["phase"] = merge_next
+            lib.dump_yaml(inf, instance_data)
+            lib.set_check_run(pid, sha, "completed", result.get("conclusion", "neutral"),
+                              "Combined", result.get("summary", ""))
+            lib.post_pr_comment(pr, f"🧬 **{merge_next}**: {result.get('summary','')}")
+            body = lib.render_instance_status_body(dir_, pid, instance, proto)
+            lib.upsert_status_comment(inf, pr, body)
+            lib.ensure_phase_label(dir_, pid, instance, protocol, pr, "done")
+            lib.cas_push(dir_, f"{instance}: join clear → merge {merge_next} → done")
+            return
+
         concl = "success"
         title = "Review complete"
         summary = "All review branches completed."
