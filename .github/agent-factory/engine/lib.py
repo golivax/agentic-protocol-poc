@@ -360,19 +360,33 @@ def instance_file(d, pid, instance):
     return f"{d}/{pid}/{instance}/_instance.yaml"
 
 
-def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr):
-    """Seed a gate phase's state file (gates.state=open), emit the awaiting
-    check-run, and refresh the shared status comment. Does NOT set the cursor
-    (caller owns _instance.yaml) and does NOT cas_push (caller pushes)."""
-    sf = state_file(dir_, pid, instance, phase=gate_id)
+def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, questions=None):
+    """Seed a gate state file (gates.state=open), emit the awaiting check-run, and
+    refresh the status comment. `branch` scopes the gate to a sub-pipeline leg.
+    `questions` (a list of {id,text}) turns this into a data-carrying gate whose
+    comment lists them with the /answer syntax. Caller owns the cursor + cas_push."""
+    if branch:
+        sf = state_file(dir_, pid, instance, branch=branch, substate=gate_id)
+    else:
+        sf = state_file(dir_, pid, instance, phase=gate_id)
     os.makedirs(os.path.dirname(sf), exist_ok=True)
+    gates = {"state": "open", "history": []}
+    if questions:
+        gates["questions"] = questions
     dump_yaml(sf, {
         "protocol": pid, "instance": instance, "state": gate_id,
-        "head_sha": sha, "gates": {"state": "open", "history": []},
+        "head_sha": sha, "gates": gates,
     })
-    set_check_run(f"{pid}/{gate_id}", sha, "in_progress", "",
-                  "Awaiting human approval",
-                  "Comment `/approve`, `/request-changes`, or `/reject` on this PR.")
+    cr_name = f"{pid}/{branch}/{gate_id}" if branch else f"{pid}/{gate_id}"
+    if questions:
+        listed = "\n".join(f"{i+1}. `{q['id']}` — {q['text']}" for i, q in enumerate(questions))
+        summary = ("Answer with `/answer <id>: <value>` (one or more per comment), e.g. "
+                   f"`/answer {questions[0]['id']}: …`.")
+        set_check_run(cr_name, sha, "in_progress", "", "Awaiting answers", summary)
+        post_pr_comment(pr, f"❓ **{gate_id}** needs input:\n\n{listed}\n\n{summary}")
+    else:
+        set_check_run(cr_name, sha, "in_progress", "", "Awaiting human approval",
+                      "Comment `/approve`, `/request-changes`, or `/reject` on this PR.")
     inf = instance_file(dir_, pid, instance)
     if os.path.isfile(inf):
         body = render_pipeline_status_body(dir_, pid, instance, proto_path)
