@@ -1,5 +1,5 @@
-from conftest import ENGINE  # noqa: F401  (ensures sys.path includes tests/)
-import sys, importlib
+from conftest import ENGINE, FIXTURES  # noqa: F401  (ensures sys.path includes tests/)
+import sys, importlib, json, pathlib
 sys.path.insert(0, str(ENGINE))
 lib = importlib.import_module("lib")
 
@@ -69,3 +69,12 @@ def test_resolve_agent_unit_flat_branch_unchanged():
     u = lib.resolve_agent_unit(SUBPIPE_PROTO, phase="review", branch="A")
     assert u["agent_state"] == "A"
     assert u["life_state"] == "review"
+
+
+def test_subpipeline_mini_loads():
+    proto = json.loads((FIXTURES / "subpipeline-mini/protocol.json").read_text())
+    assert proto["name"] == "subpipeline-mini"
+    b = next(x for x in proto["states"][0]["branches"] if x["id"] == "B")
+    assert [s["id"] for s in b["states"]] == ["draft", "finalize"]
+    chk = FIXTURES / "subpipeline-mini/checks/always-pass.py"
+    assert chk.stat().st_mode & 0o111  # executable
