@@ -208,6 +208,7 @@ def main():
 
     branch = os.environ.get("BRANCH", "")
     phase = os.environ.get("PHASE", "")
+    substate = os.environ.get("SUBSTATE", "")
     pr = os.environ.get("PR", instance)
     agent_run_id = os.environ.get("AGENT_RUN_ID", "unknown")
     github_repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -223,7 +224,7 @@ def main():
     # prefixes. The "no branch in fanout phase" message keeps its [advance] prefix
     # and "fanout phase" wording to preserve the original advance.py error text.
     try:
-        _unit = lib.resolve_agent_unit(proto, phase, branch)
+        _unit = lib.resolve_agent_unit(proto, phase, branch, substate)
     except ValueError as e:
         _msg = str(e)
         if "in phase '" in _msg:
@@ -241,7 +242,8 @@ def main():
     # State file and check-run name
     sf = lib.state_file(dir_, pid, instance,
                         branch=(branch if branch else None),
-                        phase=(phase if phase else None))
+                        phase=(phase if phase else None),
+                        substate=(substate if substate else None))
     if phase and branch:
         cr_name = f"{pid}/{phase}/{branch}"
     elif phase:
@@ -319,6 +321,47 @@ def main():
         state_data = lib.load_yaml(sf)
         state_data["state"] = "done"
         lib.dump_yaml(sf, state_data)
+
+        # --- Sub-pipeline branch leg: advance the BRANCH CURSOR, not the phase. ---
+        if branch and substate:
+            cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
+                                       phase=(phase if phase else None))
+            nxt_sub = lib.next_substate_id(proto, branch, substate)
+            # Mark this sub-state's own file done (already set above), then move on.
+            lib.set_check_run(cr_name, sha, "completed", "success",
+                              f"{substate} complete", "")
+            cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
+            if nxt_sub:
+                cur["sub_state"] = nxt_sub
+                cur["state"] = life_state         # leg stays in flight
+                lib.dump_yaml(cursor_sf, cur)
+                # Seed the next sub-state's per-step file.
+                nsf = lib.state_file(dir_, pid, instance, branch=branch,
+                                     phase=(phase if phase else None), substate=nxt_sub)
+                lib.dump_yaml(nsf, {
+                    "protocol": pid, "instance": instance, "state": life_state,
+                    "iteration": 1, "gates": {}, "head_sha": sha, "history": [],
+                })
+                lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → {nxt_sub}")
+                redispatch = [
+                    f"repos/{github_repository}/dispatches",
+                    "-f", "event_type=protocol-continue",
+                    "-F", f"client_payload[protocol]={pid}",
+                    "-F", f"client_payload[instance]={instance}",
+                    "-F", f"client_payload[branch]={branch}",
+                    "-F", f"client_payload[substate]={nxt_sub}",
+                ]
+                if phase:
+                    redispatch += ["-F", f"client_payload[phase]={phase}"]
+                gh_api(*redispatch)
+            else:
+                cur["state"] = "done"             # last sub-state → leg terminal
+                lib.dump_yaml(cursor_sf, cur)
+                update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                                      "✅ done — published.", max_iter, github_repository)
+                lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → leg done")
+                fire_join(pid, instance, branch)
+            return
 
         this_state = lib.state_by_id(proto, agent_state)
         is_agent_phase = phase and this_state and this_state.get("kind") == "agent"
@@ -434,6 +477,8 @@ def main():
             "-F", f"client_payload[instance]={instance}",
             "-F", f"client_payload[branch]={branch}",
         ]
+        if substate:
+            redispatch += ["-F", f"client_payload[substate]={substate}"]
         if phase:
             redispatch += ["-F", f"client_payload[phase]={phase}"]
         gh_api(*redispatch)
@@ -443,6 +488,13 @@ def main():
         state_data = lib.load_yaml(sf)
         state_data["state"] = "failed"
         lib.dump_yaml(sf, state_data)
+
+        if branch and substate:
+            cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
+                                       phase=(phase if phase else None))
+            cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
+            cur["state"] = "failed"
+            lib.dump_yaml(cursor_sf, cur)
 
         # An agent PHASE that exhausts its iterations is a terminal phase failure
         # (label it). A fan-out leg / single-agent v1 reaching here is NOT a phase

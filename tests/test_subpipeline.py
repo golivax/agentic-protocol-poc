@@ -88,6 +88,58 @@ def _state_dir(tmp_path, engine_env):
     return work
 
 
+_advance_call_count = {}
+
+
+def _advance(tmp_path, engine_env, instance, branch, substate, proto, sha="abc123"):
+    """Run advance.py for a leg with an all-pass verdict + empty evidence.
+
+    Uses a unique workdir per (branch, substate) call to avoid git-clone collisions
+    with the next.py call that already populated tmp_path / "dir".
+    """
+    key = f"{branch}-{substate}"
+    _advance_call_count[key] = _advance_call_count.get(key, 0) + 1
+    verdicts = tmp_path / f"verdicts-{branch}-{substate}.json"
+    verdicts.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    evid = tmp_path / "evidence.json"
+    evid.write_text("{}")
+    e = dict(engine_env)
+    e["BRANCH"] = branch
+    e["SUBSTATE"] = substate
+    e["PR_HEAD_SHA"] = sha
+    e["AGENT_RUN_ID"] = "run-1"
+    workdir = tmp_path / f"adv-{branch}-{substate}-{_advance_call_count[key]}"
+    out, err, rc = run_engine("advance.py", workdir, instance, proto,
+                              verdicts, evid, env=e)
+    return out, err, rc
+
+
+def test_advance_draft_moves_cursor_to_finalize(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
+    out, err, rc = _advance(tmp_path, engine_env, "pr-1", "B", "draft", proto)
+    assert rc == 0, err
+
+    work = _state_dir(tmp_path, engine_env)
+    cursor = read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")
+    assert cursor["sub_state"] == "finalize"
+    assert cursor.get("state") == "review"   # leg still in flight
+    fin = read_state_yaml(work / "subpipeline-mini/pr-1/B.finalize.yaml")
+    assert fin["state"] == "review" and fin["iteration"] == 1
+
+
+def test_advance_finalize_marks_leg_done(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
+    _advance(tmp_path, engine_env, "pr-1", "B", "draft", proto)
+    out, err, rc = _advance(tmp_path, engine_env, "pr-1", "B", "finalize", proto)
+    assert rc == 0, err
+    work = _state_dir(tmp_path, engine_env)
+    cursor = read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")
+    assert cursor["state"] == "done"
+
+
 def test_start_seeds_subpipeline_first_substate(tmp_path, engine_env):
     proto = FIXTURES / "subpipeline-mini/protocol.json"
     workdir = tmp_path / "dir"
