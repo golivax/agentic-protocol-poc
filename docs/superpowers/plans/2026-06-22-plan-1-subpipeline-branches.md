@@ -625,7 +625,6 @@ def _advance(tmp_path, engine_env, instance, branch, substate, proto, sha="abc12
     evid.write_text("{}")
     e = dict(engine_env)
     e["BRANCH"] = branch
-    e["PHASE"] = "review"
     e["SUBSTATE"] = substate
     e["PR_HEAD_SHA"] = sha
     e["AGENT_RUN_ID"] = "run-1"
@@ -793,11 +792,11 @@ def test_continue_resumes_substate(tmp_path, engine_env):
     run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
     # Resume the draft sub-state explicitly.
     out, err, rc = run_engine("next.py", tmp_path / "dir", "pr-1", proto, "continue",
-                              env=engine_env, branch="B", phase="review", substate="draft")
+                              env=engine_env, branch="B", substate="draft")
     assert rc == 0, err
     action = json.loads(out)
     assert action["action"] == "run-agent"
-    assert action.get("phase") == "review"
+    assert "phase" not in action
     assert action.get("substate") == "draft"
 ```
 
@@ -867,7 +866,7 @@ git commit -m "feat(engine): next.py resumes a sub-pipeline sub-state on continu
 - Test: `tests/test_subpipeline.py`
 
 **Interfaces:**
-- Consumes: branch cursor files `review.B.yaml` / `A.yaml` carrying `state: done|failed`.
+- Consumes: branch cursor files `B.yaml` / `A.yaml` carrying `state: done|failed`.
 - Produces: the join evaluator marks the instance joined + the aggregate check `success` only after **both** `A` (flat) and `B`'s last sub-state (`finalize`) are `done`. After `draft` done but `finalize` pending, the leg is NOT terminal.
 
 - [ ] **Step 1: Write the failing/￼regression test**
@@ -888,7 +887,7 @@ def test_join_waits_for_subpipeline_then_joins(tmp_path, engine_env):
     va = tmp_path / "va.json"; va.write_text(json.dumps({"results": [
         {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
     ev = tmp_path / "ev.json"; ev.write_text("{}")
-    ea = dict(engine_env); ea.update(BRANCH="A", PHASE="review", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    ea = dict(engine_env); ea.update(BRANCH="A", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
     run_engine("advance.py", tmp_path / "dir", "pr-1", proto, va, ev, env=ea)
 
     # B: draft done, finalize NOT yet → join must wait.

@@ -177,7 +177,7 @@ def test_advance_into_gate_opens_it(tmp_path, engine_env):
         {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
     ev = tmp_path / "draft.json"
     ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "Which DB?"}]}))
-    e = dict(engine_env); e.update(BRANCH="B", PHASE="review", SUBSTATE="draft",
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
                                    PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
     run_engine("advance.py", tmp_path / "dir", "pr-1", proto, v, ev, env=e)
 
@@ -185,7 +185,7 @@ def test_advance_into_gate_opens_it(tmp_path, engine_env):
     cursor = read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")
     assert cursor["sub_state"] == "clarify"
     assert cursor["state"] == "review"      # leg NOT terminal; not joined
-    gate = read_state_yaml(work / "subpipeline-mini/pr-1/review.B.clarify.yaml")
+    gate = read_state_yaml(work / "subpipeline-mini/pr-1/B.clarify.yaml")
     assert gate["gates"]["state"] == "open"
     assert gate["gates"]["questions"][0]["id"] == "q1"
 ```
@@ -378,7 +378,7 @@ def _seed_open_gate(tmp_path, engine_env, proto):
         {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
     ev = tmp_path / "draft.json"
     ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "Which DB?"}]}))
-    e = dict(engine_env); e.update(BRANCH="B", PHASE="review", SUBSTATE="draft",
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
                                    PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
     run_engine("advance.py", tmp_path / "dir", "pr-1", proto, v, ev, env=e)
 
@@ -394,9 +394,9 @@ def test_answer_completes_gate_and_advances(tmp_path, engine_env):
     assert rc == 0, err
 
     work = _clone(tmp_path, engine_env)
-    gate = read_state_yaml(work / "subpipeline-mini/pr-1/review.B.clarify.yaml")
+    gate = read_state_yaml(work / "subpipeline-mini/pr-1/B.clarify.yaml")
     assert gate["gates"]["state"] == "answered"
-    answers = json.loads((work / "subpipeline-mini/pr-1/review.B.clarify.answers.json").read_text())
+    answers = json.loads((work / "subpipeline-mini/pr-1/B.clarify.answers.json").read_text())
     assert answers["answers"]["q1"] == "postgres"
     cursor = read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")
     assert cursor["sub_state"] == "finalize"
@@ -411,14 +411,14 @@ def test_answer_partial_keeps_gate_open(tmp_path, engine_env):
         {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
     ev = tmp_path / "draft.json"
     ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "A?"}, {"id": "q2", "text": "B?"}]}))
-    e = dict(engine_env); e.update(BRANCH="B", PHASE="review", SUBSTATE="draft",
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
                                    PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
     run_engine("advance.py", tmp_path / "dir", "pr-1", proto, v, ev, env=e)
 
     e2 = dict(engine_env); e2["ANSWER_BODY"] = "/answer q1: x"; e2["ANSWER_ACTOR"] = "al"; e2["PR_HEAD_SHA"] = "abc123"
     run_engine("next.py", tmp_path / "dir", "pr-1", proto, "answer", env=e2)
     work = _clone(tmp_path, engine_env)
-    gate = read_state_yaml(work / "subpipeline-mini/pr-1/review.B.clarify.yaml")
+    gate = read_state_yaml(work / "subpipeline-mini/pr-1/B.clarify.yaml")
     assert gate["gates"]["state"] == "open"   # still waiting on q2
 ```
 
@@ -496,7 +496,7 @@ def do_answer():
 
     # Merge new answers into the persisted answers artifact.
     apath = lib.output_artifact_path(DIR, PID, INSTANCE, branch=branch,
-                                     phase="review", substate=gate, kind="answers")
+                                     substate=gate, kind="answers")
     existing = {}
     if os.path.isfile(apath):
         try:
@@ -547,7 +547,7 @@ def do_answer():
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered → {nxt_sub}")
         lib.post_pr_comment(pr, f"✅ {gate} answered by @{actor}; continuing to {nxt_sub}.")
         gh_api = None  # next.py has no gh_api; dispatch via lib helper below
-        lib.dispatch_continue(PID, INSTANCE, branch, nxt_sub, phase="review")
+        lib.dispatch_continue(PID, INSTANCE, branch, nxt_sub)
     else:
         cur["state"] = "done"
         lib.dump_yaml(cf, cur)
@@ -629,7 +629,7 @@ def test_gated_leg_full_walk(tmp_path, engine_env):
 
     # finalize resume → action carries the answers input.
     out, err, rc = run_engine("next.py", tmp_path / "dir", "pr-1", proto, "continue",
-                              env=engine_env, branch="B", phase="review", substate="finalize")
+                              env=engine_env, branch="B", substate="finalize")
     action = json.loads(out)
     names = {i["as"] for i in action.get("inputs", [])}
     assert "answers" in names and "draft" in names
@@ -638,7 +638,7 @@ def test_gated_leg_full_walk(tmp_path, engine_env):
     v = tmp_path / "v.json"; v.write_text(json.dumps({"results": [
         {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
     ev = tmp_path / "fin.json"; ev.write_text("{}")
-    ef = dict(engine_env); ef.update(BRANCH="B", PHASE="review", SUBSTATE="finalize",
+    ef = dict(engine_env); ef.update(BRANCH="B", SUBSTATE="finalize",
                                      PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
     run_engine("advance.py", tmp_path / "dir", "pr-1", proto, v, ev, env=ef)
     work = _clone(tmp_path, engine_env)

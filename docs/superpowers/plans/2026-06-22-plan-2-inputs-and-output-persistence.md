@@ -116,22 +116,22 @@ def test_evidence_persisted_on_done(tmp_path, engine_env):
         {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
     evid = tmp_path / "evidence.json"
     evid.write_text(json.dumps({"summary": "draft output", "questions": []}))
-    e = dict(engine_env); e.update(BRANCH="B", PHASE="review", SUBSTATE="draft",
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
                                    PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
     out, err, rc = run_engine("advance.py", tmp_path / "dir", "pr-1", proto, verdicts, evid, env=e)
     assert rc == 0, err
     work = _clone(tmp_path, engine_env)
-    persisted = work / "subpipeline-mini/pr-1/review.B.draft.evidence.json"
+    persisted = work / "subpipeline-mini/pr-1/B.draft.evidence.json"
     assert persisted.exists()
     assert json.loads(persisted.read_text())["summary"] == "draft output"
 ```
 
-> Note: `subpipeline-mini` has no `phase` in its fanout (single fanout phase), so `PHASE=review` makes the path `review.B.draft.*`. Keep `PHASE=review` consistent with Plan 1's advance tests.
+> Note: `subpipeline-mini` is a single-phase fanout, so branch state paths have NO phase prefix (`B.draft.*`). Do NOT set `PHASE` when invoking advance on this fixture — it must match what `start_fanout` seeded (no phase).
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_inputs.py -k evidence_persisted -v`
-Expected: FAIL — no `review.B.draft.evidence.json` is written.
+Expected: FAIL — no `B.draft.evidence.json` is written.
 
 - [ ] **Step 3: Implement persistence**
 
@@ -227,20 +227,20 @@ def test_state_inputs():
 
 def test_resolve_inputs_sibling_substate():
     res = lib.resolve_inputs(SUBPIPE, "/s", "rev", "pr-1",
-                             consuming_branch="B", consuming_phase="review",
+                             consuming_branch="B", consuming_phase=None,
                              inputs=[{"from": "draft", "as": "draft"}])
     assert res == [{"as": "draft",
-                    "path": "/s/rev/pr-1/review.B.draft.evidence.json",
+                    "path": "/s/rev/pr-1/B.draft.evidence.json",
                     "kind": "evidence"}]
 
 
 def test_resolve_inputs_branch_leg_outputs():
     res = lib.resolve_inputs(SUBPIPE, "/s", "rev", "pr-1",
-                             consuming_branch=None, consuming_phase="review",
+                             consuming_branch=None, consuming_phase=None,
                              inputs=[{"from": "A", "as": "a"}, {"from": "B", "as": "b"}])
     paths = {r["as"]: r["path"] for r in res}
-    assert paths["a"] == "/s/rev/pr-1/review.A.evidence.json"
-    assert paths["b"] == "/s/rev/pr-1/review.B.finalize.evidence.json"
+    assert paths["a"] == "/s/rev/pr-1/A.evidence.json"
+    assert paths["b"] == "/s/rev/pr-1/B.finalize.evidence.json"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -417,13 +417,13 @@ def test_run_agent_action_carries_inputs(tmp_path, engine_env):
     run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
     # Resume finalize → its action should carry resolved inputs.
     out, err, rc = run_engine("next.py", tmp_path / "dir", "pr-1", proto, "continue",
-                              env=engine_env, branch="B", phase="review", substate="finalize")
+                              env=engine_env, branch="B", substate="finalize")
     assert rc == 0, err
     action = json.loads(out)
     assert action["action"] == "run-agent"
     names = {i["as"]: i for i in action.get("inputs", [])}
     assert "draft" in names
-    assert names["draft"]["path"].endswith("review.B.draft.evidence.json")
+    assert names["draft"]["path"].endswith("B.draft.evidence.json")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -494,7 +494,7 @@ def test_draft_output_flows_to_finalize_inputs(tmp_path, engine_env):
         {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
     ev = tmp_path / "draft-evidence.json"
     ev.write_text(json.dumps({"summary": "DRAFT-PAYLOAD"}))
-    e = dict(engine_env); e.update(BRANCH="B", PHASE="review", SUBSTATE="draft",
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
                                    PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
     run_engine("advance.py", tmp_path / "dir", "pr-1", proto, v, ev, env=e)
 
@@ -505,7 +505,7 @@ def test_draft_output_flows_to_finalize_inputs(tmp_path, engine_env):
     declared = _lib.state_inputs(json.loads(proto.read_text()), "finalize")
     resolved = _lib.resolve_inputs(json.loads(proto.read_text()), str(work),
                                    "subpipeline-mini", "pr-1",
-                                   consuming_branch="B", consuming_phase="review",
+                                   consuming_branch="B", consuming_phase=None,
                                    inputs=declared)
     manifest = _lib.materialize_inputs(resolved, tmp_path / "agentwork")
     staged = (tmp_path / "agentwork/inputs/draft.json")

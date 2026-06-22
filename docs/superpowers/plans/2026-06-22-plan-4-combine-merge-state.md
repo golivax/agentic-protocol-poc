@@ -134,8 +134,8 @@ def test_run_merge_hook(tmp_path, engine_env):
     base = f"{dir_}/subpipeline-mini/pr-1"
     os.makedirs(base, exist_ok=True)
     # A flat leg output + B sub-pipeline leg output (finalize).
-    open(f"{base}/review.A.evidence.json", "w").write(json.dumps({"summary": "FROM-A"}))
-    open(f"{base}/review.B.finalize.evidence.json", "w").write(json.dumps({"summary": "FROM-B"}))
+    open(f"{base}/A.evidence.json", "w").write(json.dumps({"summary": "FROM-A"}))
+    open(f"{base}/B.finalize.evidence.json", "w").write(json.dumps({"summary": "FROM-B"}))
 
     proto_path = str(FIXTURES / "subpipeline-mini/protocol.json")
     proto = json.load(open(proto_path))
@@ -162,7 +162,7 @@ def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
     with open(proto_path) as f:
         proto = json.load(f)
     fo = _fanout_state(proto)
-    phase = fo["id"] if (fo and is_multiphase(proto)) else (fo["id"] if fo else None)
+    phase = fo["id"] if (fo and is_multiphase(proto)) else None
     # Branch-id refs resolve against branch leg outputs (Plan 2 resolve_inputs).
     resolved = resolve_inputs(proto, dir_, pid, instance,
                               consuming_branch=None, consuming_phase=phase,
@@ -188,7 +188,7 @@ def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
     return {"conclusion": "neutral", "summary": "merge hook returned no verdict"}
 ```
 
-> Note on `phase`: `subpipeline-mini` is single-fanout (not multi-phase), but Plan-1/2 tests run advance/persist with `PHASE=review`, so branch outputs live at `review.A.*` / `review.B.finalize.*`. Passing `phase=fo["id"]` ("review") makes `resolve_inputs` build the same paths. (If a future single-fanout protocol persists without a phase segment, drop the phase — keep this consistent with how the leg outputs were actually persisted.)
+> Note on `phase`: `subpipeline-mini` is single-fanout (not multi-phase), so `is_multiphase` is False and `phase` resolves to `None` — branch outputs live at `A.evidence.json` / `B.finalize.evidence.json` (no phase prefix), matching how advance/persist seeded them (no `PHASE` set). For a multi-phase protocol the fanout phase id would prefix the path.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -228,7 +228,7 @@ def _drive_to_all_done(tmp_path, engine_env):
     def adv(branch, substate, summary):
         ev = tmp_path / f"{branch}-{substate}.json"
         ev.write_text(json.dumps({"summary": summary, "questions": []}))
-        e = dict(engine_env); e.update(BRANCH=branch, PHASE="review", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+        e = dict(engine_env); e.update(BRANCH=branch, PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
         if substate:
             e["SUBSTATE"] = substate
         run_engine("advance.py", tmp_path / "dir", "pr-1", proto, passv, ev, env=e)
@@ -255,7 +255,7 @@ def test_join_runs_merge_then_finalizes(tmp_path, engine_env):
     def adv(branch, substate, summary, questions=None):
         ev = tmp_path / f"{branch}-{substate or 'flat'}.json"
         ev.write_text(json.dumps({"summary": summary, "questions": questions or []}))
-        e = dict(engine_env); e.update(BRANCH=branch, PHASE="review", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+        e = dict(engine_env); e.update(BRANCH=branch, PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
         if substate:
             e["SUBSTATE"] = substate
         run_engine("advance.py", tmp_path / "dir", "pr-1", proto, passv, ev, env=e)
@@ -461,7 +461,7 @@ def test_full_pipeline_with_merge(tmp_path, engine_env):
     def adv(branch, substate, summary, questions=None):
         ev = tmp_path / f"{branch}-{substate or 'flat'}.json"
         ev.write_text(json.dumps({"summary": summary, "questions": questions or []}))
-        e = dict(engine_env); e.update(BRANCH=branch, PHASE="review", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+        e = dict(engine_env); e.update(BRANCH=branch, PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
         if substate:
             e["SUBSTATE"] = substate
         run_engine("advance.py", tmp_path / "dir", "pr-1", proto, passv, ev, env=e)
