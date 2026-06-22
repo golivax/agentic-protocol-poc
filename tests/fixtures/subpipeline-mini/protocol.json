@@ -49,6 +49,13 @@
       ],
       "next": "join"
     },
-    { "id": "join", "kind": "join", "of": "review", "next": "done" }
+    { "id": "join", "kind": "join", "of": "review", "next": "combine" },
+    {
+      "id": "combine",
+      "kind": "merge",
+      "hook": "append-outputs",
+      "inputs": [{ "from": "A", "as": "a" }, { "from": "B", "as": "b" }],
+      "next": "done"
+    }
   ]
 }
