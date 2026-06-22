@@ -170,3 +170,16 @@ def test_advance_substate_in_check_run_name(tmp_path, engine_env):
     assert rc == 0, err
     # set_check_run emits name to stderr under ENGINE_LOCAL=1
     assert "check-run subpipeline-mini/B/draft" in err, f"Expected sub-state in check-run name. stderr: {err}"
+
+
+def test_continue_resumes_substate(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
+    # Resume the draft sub-state explicitly (use a unique workdir to avoid git-clone collision).
+    out, err, rc = run_engine("next.py", tmp_path / "dir2", "pr-1", proto, "continue",
+                              env=engine_env, branch="B", substate="draft")
+    assert rc == 0, err
+    action = json.loads(out)
+    assert action["action"] == "run-agent"
+    assert "phase" not in action
+    assert action.get("substate") == "draft"

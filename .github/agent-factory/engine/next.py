@@ -23,6 +23,7 @@ COMMAND = sys.argv[4]
 HEAD_SHA = sys.argv[5] if len(sys.argv) > 5 else ""
 BRANCH = os.environ.get("BRANCH", "")
 PHASE = os.environ.get("PHASE", "")
+SUBSTATE = os.environ.get("SUBSTATE", "")
 
 with open(PROTO) as f:
     proto_data = json.load(f)
@@ -433,7 +434,7 @@ if not BRANCH and is_fanout() and not PHASE:
 # Single-agent path is the regression-guarded baseline and must stay byte-for-byte
 # identical. Error messages are mapped back to the original next.py / engine prefixes.
 try:
-    _unit = lib.resolve_agent_unit(proto_data, PHASE, BRANCH)
+    _unit = lib.resolve_agent_unit(proto_data, PHASE, BRANCH, SUBSTATE)
 except ValueError as e:
     _msg = str(e)
     if _msg.startswith("no phase") or _msg.startswith("PHASE=") or "in phase '" in _msg:
@@ -452,7 +453,8 @@ if MAX is None:
 # BRANCH/PHASE empty → single-agent path (branch=None, phase=None)
 SF = lib.state_file(DIR, PID, INSTANCE,
                     branch=(BRANCH if BRANCH else None),
-                    phase=(PHASE if PHASE else None))
+                    phase=(PHASE if PHASE else None),
+                    substate=(SUBSTATE if SUBSTATE else None))
 
 
 def write_fresh_state():
@@ -472,6 +474,8 @@ def emit_run_agent(iteration, feedback, reason):
     action = {"action": "run-agent", "iteration": iteration, "feedback": feedback, "reason": reason}
     if PHASE:
         action["phase"] = PHASE
+    if SUBSTATE:
+        action["substate"] = SUBSTATE
     print(json.dumps(action))
 
 
