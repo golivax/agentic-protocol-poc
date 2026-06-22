@@ -267,17 +267,21 @@ def match_trigger(protocol, event_name, action="", comment_body=""):
     return ""
 
 
-def agent_workflow(protocol, phase="", branch=""):
+def agent_workflow(protocol, phase="", branch="", substate=""):
     """Resolve the gh-aw agent workflow basename for a leg.
     phase set + fanout phase -> that branch's workflow;
     phase set + agent phase  -> the phase state's workflow;
     branch only (single-phase fanout) -> that branch's workflow;
-    neither -> the first agent state's workflow. "" if unresolved."""
+    neither -> the first agent state's workflow. "" if unresolved.
+    substate set + sub-pipeline branch -> that sub-state's workflow."""
     if phase:
         st = state_by_id(protocol, phase)
         if st and st.get("kind") == "fanout":
             for b in st.get("branches", []):
                 if b["id"] == branch:
+                    if substate and "states" in b:
+                        sub = next((s for s in b["states"] if s.get("id") == substate), None)
+                        return (sub or {}).get("workflow", "")
                     return b.get("workflow", "")
             return ""
         return (st or {}).get("workflow", "")
@@ -286,6 +290,9 @@ def agent_workflow(protocol, phase="", branch=""):
             if st.get("kind") == "fanout":
                 for b in st.get("branches", []):
                     if b["id"] == branch:
+                        if substate and "states" in b:
+                            sub = next((s for s in b["states"] if s.get("id") == substate), None)
+                            return (sub or {}).get("workflow", "")
                         return b.get("workflow", "")
         return ""
     for st in protocol.get("states", []):

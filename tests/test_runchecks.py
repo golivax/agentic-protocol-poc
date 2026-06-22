@@ -89,13 +89,14 @@ DIFF_PR1 = FIXTURES / "diff-pr1.txt"
 FILES_PR1 = FIXTURES / "changed-files-pr1.txt"
 
 
-def run_checks(proto, state_id, evidence, diff, files, branch=None, env=None):
+def run_checks(proto, state_id, evidence, diff, files, branch=None, substate=None, env=None):
     """Invoke run-checks.py and return the parsed dict with 'results' list."""
     stdout, stderr, rc = run_engine(
         "run-checks.py",
         proto, state_id, evidence, diff, files,
         env=env,
         branch=branch,
+        substate=substate,
     )
     return json.loads(stdout)
 
@@ -377,3 +378,74 @@ def test_runner_stamps_declared_on_fail_on_passing_verdict(temp_proto_in_grumpy)
     out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
     assert out["results"][0]["pass"] is True
     assert out["results"][0]["on_fail"] == "advisory"
+
+
+# ===========================================================================
+# Gap B — SUBSTATE support in run-checks.py
+# Tests written BEFORE implementation (TDD RED).
+# ===========================================================================
+
+SUBPIPE_PROTO_PATH = FIXTURES / "subpipeline-mini/protocol.json"
+EV_EMPTY = FIXTURES / "diff-pr1.txt"   # reuse as a stand-in; we just need a valid file path
+# Use /dev/null as a minimal empty evidence file
+import tempfile as _tempfile
+
+
+def _empty_evidence(tmp_path_local=None):
+    """Return a path to a minimal empty JSON evidence file."""
+    if tmp_path_local:
+        p = tmp_path_local / "empty-ev.json"
+        p.write_text("{}")
+        return p
+    # Fallback: create in system temp
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".json")
+    os.write(fd, b"{}")
+    os.close(fd)
+    return pathlib.Path(path)
+
+
+def _empty_diff(tmp_path_local=None):
+    """Return a path to an empty diff file."""
+    if tmp_path_local:
+        p = tmp_path_local / "empty-diff.txt"
+        p.write_text("")
+        return p
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".txt")
+    os.close(fd)
+    return pathlib.Path(path)
+
+
+def _empty_files(tmp_path_local=None):
+    """Return a path to an empty changed-files file."""
+    if tmp_path_local:
+        p = tmp_path_local / "empty-files.txt"
+        p.write_text("")
+        return p
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".txt")
+    os.close(fd)
+    return pathlib.Path(path)
+
+
+# 20
+def test_substate_draft_runs_always_pass(tmp_path):
+    """BRANCH=B SUBSTATE=draft → sub-state 'draft' has always-pass check → 1 passing result."""
+    ev = _empty_evidence(tmp_path)
+    diff = _empty_diff(tmp_path)
+    files = _empty_files(tmp_path)
+    out = run_checks(SUBPIPE_PROTO_PATH, "review", ev, diff, files, branch="B", substate="draft")
+    assert len(out["results"]) == 1
+    assert out["results"][0]["check"] == "always-pass"
+    assert out["results"][0]["pass"] is True
+
+
+# 21
+def test_substate_branch_only_no_checks(tmp_path):
+    """BRANCH=B with NO SUBSTATE → the branch node itself has no 'checks' → empty results."""
+    ev = _empty_evidence(tmp_path)
+    diff = _empty_diff(tmp_path)
+    files = _empty_files(tmp_path)
+    out = run_checks(SUBPIPE_PROTO_PATH, "review", ev, diff, files, branch="B")
+    assert out["results"] == []

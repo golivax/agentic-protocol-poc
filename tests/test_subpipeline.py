@@ -309,3 +309,43 @@ def test_advance_agent_to_agent_seeds_next(tmp_path, engine_env):
     fin_state = read_state_yaml(nsf)
     assert fin_state.get("state") == "review", f"finalize state: {fin_state}"
     assert fin_state.get("iteration") == 1, f"finalize iteration: {fin_state}"
+
+
+# ===========================================================================
+# Gap A — lib.agent_workflow substate awareness
+# Tests written BEFORE implementation (TDD RED).
+# ===========================================================================
+
+SUBPIPE_FIXTURE_PROTO = json.loads(
+    (FIXTURES / "subpipeline-mini/protocol.json").read_text()
+)
+
+
+def test_agent_workflow_substate_draft():
+    """Sub-pipeline branch B, substate=draft → 'draft-agent'."""
+    result = lib.agent_workflow(SUBPIPE_FIXTURE_PROTO, phase="review", branch="B", substate="draft")
+    assert result == "draft-agent"
+
+
+def test_agent_workflow_substate_finalize():
+    """Sub-pipeline branch B, substate=finalize → 'finalize-agent'."""
+    result = lib.agent_workflow(SUBPIPE_FIXTURE_PROTO, phase="review", branch="B", substate="finalize")
+    assert result == "finalize-agent"
+
+
+def test_agent_workflow_flat_branch_unchanged():
+    """Flat branch A (no substates) with no substate arg → 'a-agent' (unchanged behaviour)."""
+    result = lib.agent_workflow(SUBPIPE_FIXTURE_PROTO, phase="review", branch="A")
+    assert result == "a-agent"
+
+
+def test_agent_workflow_substate_unknown_returns_empty():
+    """Sub-pipeline branch B, unknown substate → '' (not found)."""
+    result = lib.agent_workflow(SUBPIPE_FIXTURE_PROTO, phase="review", branch="B", substate="nonexistent")
+    assert result == ""
+
+
+def test_agent_workflow_substate_via_branch_only_arm():
+    """branch-only arm (no phase) with substate=draft on sub-pipeline branch B → 'draft-agent'."""
+    result = lib.agent_workflow(SUBPIPE_FIXTURE_PROTO, branch="B", substate="draft")
+    assert result == "draft-agent"

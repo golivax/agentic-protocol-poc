@@ -46,6 +46,7 @@ def main():
         protocol = json.load(f)
 
     branch = os.environ.get("BRANCH", "")
+    substate = os.environ.get("SUBSTATE", "")
 
     # Find the state node
     state_node = None
@@ -55,13 +56,17 @@ def main():
             break
 
     # Resolve the config node: the branch node when BRANCH is set, else the state node.
-    # CHECK_PARAMS (branch-scoped params else state-scoped) and the check list both
-    # come from this one node.
+    # When BRANCH and SUBSTATE are both set and the branch is a sub-pipeline branch,
+    # descend into the branch's sub-states to find the config node for that sub-state.
+    # CHECK_PARAMS (sub-state-scoped, branch-scoped, or state-scoped) and the check list
+    # both come from this one node.
     if branch:
         node = next(
             (b for b in (state_node or {}).get("branches", []) if b.get("id") == branch),
             None,
         )
+        if substate and node:
+            node = next((s for s in node.get("states", []) if s.get("id") == substate), None)
     else:
         node = state_node
 
