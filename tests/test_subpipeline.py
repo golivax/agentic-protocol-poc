@@ -19,3 +19,40 @@ def test_state_file_existing_shapes_unchanged():
     assert lib.state_file("/s", "rev", "pr-1", branch="B") == "/s/rev/pr-1/B.yaml"
     assert lib.state_file("/s", "rev", "pr-1", phase="review") == "/s/rev/pr-1/review.yaml"
     assert lib.state_file("/s", "rev", "pr-1", branch="B", phase="review") == "/s/rev/pr-1/review.B.yaml"
+
+
+SUBPIPE_PROTO = {
+    "name": "rev",
+    "states": [
+        {"id": "review", "kind": "fanout", "branches": [
+            {"id": "A", "workflow": "a-agent", "max_iterations": 2},
+            {"id": "B", "states": [
+                {"id": "draft", "kind": "agent", "workflow": "draft-agent", "max_iterations": 2},
+                {"id": "finalize", "kind": "agent", "workflow": "final-agent", "max_iterations": 2},
+            ]},
+        ]},
+        {"id": "join", "kind": "join", "of": "review", "next": "done"},
+    ],
+}
+
+
+def test_branch_config():
+    assert lib.branch_config(SUBPIPE_PROTO, "A")["workflow"] == "a-agent"
+    assert lib.branch_config(SUBPIPE_PROTO, "B")["id"] == "B"
+    assert lib.branch_config(SUBPIPE_PROTO, "missing") is None
+
+
+def test_is_subpipeline_branch():
+    assert lib.is_subpipeline_branch(lib.branch_config(SUBPIPE_PROTO, "B")) is True
+    assert lib.is_subpipeline_branch(lib.branch_config(SUBPIPE_PROTO, "A")) is False
+
+
+def test_branch_substates():
+    ids = [s["id"] for s in lib.branch_substates(SUBPIPE_PROTO, "B")]
+    assert ids == ["draft", "finalize"]
+    assert lib.branch_substates(SUBPIPE_PROTO, "A") == []
+
+
+def test_next_substate_id():
+    assert lib.next_substate_id(SUBPIPE_PROTO, "B", "draft") == "finalize"
+    assert lib.next_substate_id(SUBPIPE_PROTO, "B", "finalize") is None

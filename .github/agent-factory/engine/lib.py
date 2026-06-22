@@ -71,6 +71,48 @@ def state_by_id(protocol, state_id):
     return None
 
 
+def _fanout_state(protocol):
+    for s in protocol.get("states", []):
+        if s.get("kind") == "fanout":
+            return s
+    return None
+
+
+def branch_config(protocol, branch):
+    """The branch entry dict from the protocol's fanout state, or None."""
+    fo = _fanout_state(protocol)
+    if not fo:
+        return None
+    for b in fo.get("branches", []):
+        if b.get("id") == branch:
+            return b
+    return None
+
+
+def is_subpipeline_branch(branch_cfg):
+    """True iff the branch entry is a linear sub-pipeline (has `states`)."""
+    return bool(branch_cfg) and bool(branch_cfg.get("states"))
+
+
+def branch_substates(protocol, branch):
+    """Ordered list of sub-state dicts for a sub-pipeline branch ([] if flat)."""
+    cfg = branch_config(protocol, branch)
+    if not is_subpipeline_branch(cfg):
+        return []
+    return list(cfg.get("states", []))
+
+
+def next_substate_id(protocol, branch, substate):
+    """Id of the sub-state following `substate`, or None if it is the last."""
+    subs = branch_substates(protocol, branch)
+    ids = [s["id"] for s in subs]
+    if substate in ids:
+        i = ids.index(substate)
+        if i + 1 < len(ids):
+            return ids[i + 1]
+    return None
+
+
 def resolve_agent_unit(protocol, phase="", branch=""):
     """Resolve the agent unit for a leg: its agent_state id, max_iterations, and
     life_state (the .state value a live state file carries in flight). Mirrors the
