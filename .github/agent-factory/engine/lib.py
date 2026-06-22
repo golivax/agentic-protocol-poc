@@ -36,21 +36,31 @@ def protocol_id(proto_path):
         return json.load(f)["name"]
 
 
-def state_file(d, pid, instance, branch=None, phase=None):
+def state_file(d, pid, instance, branch=None, phase=None, substate=None):
     """
-    state_file <dir> <protocol-id> <instance-key> [branch] [phase]
-      no branch, no phase → single-agent path     <dir>/<pid>/<instance>.yaml
-      branch, no phase    → fan-out per-branch     <dir>/<pid>/<instance>/<branch>.yaml
-      phase, no branch    → multi-phase agent      <dir>/<pid>/<instance>/<phase>.yaml
-      phase + branch      → multi-phase fan-out leg <dir>/<pid>/<instance>/<phase>.<branch>.yaml
+    state_file <dir> <protocol-id> <instance-key> [branch] [phase] [substate]
+      no branch, no phase            → single-agent     <dir>/<pid>/<instance>.yaml
+      branch, no phase               → fan-out leg       <dir>/<pid>/<instance>/<branch>.yaml
+      phase, no branch               → multi-phase agent <dir>/<pid>/<instance>/<phase>.yaml
+      phase + branch                 → fan-out leg       <dir>/<pid>/<instance>/<phase>.<branch>.yaml
+      branch + substate              → sub-pipeline step <dir>/<pid>/<instance>/<branch>.<substate>.yaml
+      phase + branch + substate      → sub-pipeline step <dir>/<pid>/<instance>/<phase>.<branch>.<substate>.yaml
+    The branch CURSOR file is the (phase+)branch path WITHOUT substate; a
+    sub-pipeline branch stores `sub_state` there and the per-step state in the
+    substate path.
     """
+    base = f"{d}/{pid}/{instance}"
+    if phase and branch and substate:
+        return f"{base}/{phase}.{branch}.{substate}.yaml"
     if phase and branch:
-        return f"{d}/{pid}/{instance}/{phase}.{branch}.yaml"
+        return f"{base}/{phase}.{branch}.yaml"
     if phase:
-        return f"{d}/{pid}/{instance}/{phase}.yaml"
+        return f"{base}/{phase}.yaml"
+    if branch and substate:
+        return f"{base}/{branch}.{substate}.yaml"
     if branch:
-        return f"{d}/{pid}/{instance}/{branch}.yaml"
-    return f"{d}/{pid}/{instance}.yaml"
+        return f"{base}/{branch}.yaml"
+    return f"{base}.yaml"
 
 
 def state_by_id(protocol, state_id):
