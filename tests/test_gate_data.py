@@ -75,3 +75,57 @@ def test_answers_coverage_missing(tmp_path):
 def test_answers_coverage_empty_value(tmp_path):
     r = _cov(tmp_path, [{"id": "q1"}], {"q1": "   "})
     assert r["pass"] is False
+
+
+# ── /answer command tests ────────────────────────────────────────────────────
+
+def _seed_open_gate(tmp_path, engine_env, proto):
+    """Drive start → draft done so the clarify gate is open with one question."""
+    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
+    v = tmp_path / "v.json"
+    v.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    ev = tmp_path / "draft.json"
+    ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "Which DB?"}]}))
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
+                                   PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    run_engine("advance.py", tmp_path / "dir-adv", "pr-1", proto, v, ev, env=e)
+
+
+def test_answer_completes_gate_and_advances(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    _seed_open_gate(tmp_path, engine_env, proto)
+    e = dict(engine_env)
+    e["ANSWER_BODY"] = "/answer q1: postgres"
+    e["ANSWER_ACTOR"] = "alice"
+    e["PR_HEAD_SHA"] = "abc123"
+    out, err, rc = run_engine("next.py", tmp_path / "dir2", "pr-1", proto, "answer", env=e)
+    assert rc == 0, err
+
+    work = _clone(tmp_path, engine_env)
+    gate = read_state_yaml(work / "subpipeline-mini/pr-1/B.clarify.yaml")
+    assert gate["gates"]["state"] == "answered"
+    answers = json.loads((work / "subpipeline-mini/pr-1/B.clarify.answers.json").read_text())
+    assert answers["answers"]["q1"] == "postgres"
+    cursor = read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")
+    assert cursor["sub_state"] == "finalize"
+
+
+def test_answer_partial_keeps_gate_open(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    # Two questions; answer only one.
+    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
+    v = tmp_path / "v.json"
+    v.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    ev = tmp_path / "draft.json"
+    ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "A?"}, {"id": "q2", "text": "B?"}]}))
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
+                                   PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    run_engine("advance.py", tmp_path / "dir-adv", "pr-1", proto, v, ev, env=e)
+
+    e2 = dict(engine_env); e2["ANSWER_BODY"] = "/answer q1: x"; e2["ANSWER_ACTOR"] = "al"; e2["PR_HEAD_SHA"] = "abc123"
+    run_engine("next.py", tmp_path / "dir2", "pr-1", proto, "answer", env=e2)
+    work = _clone(tmp_path, engine_env)
+    gate = read_state_yaml(work / "subpipeline-mini/pr-1/B.clarify.yaml")
+    assert gate["gates"]["state"] == "open"   # still waiting on q2

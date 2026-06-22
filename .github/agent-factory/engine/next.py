@@ -11,6 +11,7 @@
 # NEVER compared to decide policy — that decision lives in the workflow.
 import json
 import os
+import re
 import sys
 
 # The script's directory is sys.path[0], so `import lib` finds lib.py alongside.
@@ -386,10 +387,139 @@ def do_resolve_gate():
     refuse(f"Unknown gate decision '{decision}'.", "gate: unknown decision")
 
 
+def _find_open_gate_branch(proto, want_branch=""):
+    """Return (branch_id, gate_substate_id) for the first open data-gate, or (None, None)."""
+    fo = lib._fanout_state(proto)
+    if not fo:
+        return None, None
+    for b in fo.get("branches", []):
+        if want_branch and b["id"] != want_branch:
+            continue
+        cf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"])
+        if not os.path.isfile(cf):
+            continue
+        cur = lib.load_yaml(cf)
+        sub = cur.get("sub_state", "")
+        for s in b.get("states", []):
+            if s["id"] == sub and s.get("kind") == "gate":
+                gsf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"], substate=sub)
+                if os.path.isfile(gsf) and lib.load_yaml(gsf).get("gates", {}).get("state") == "open":
+                    return b["id"], sub
+    return None, None
+
+
+def _parse_answers(body):
+    """Parse `/answer qID: value` pairs (one or many lines). Returns {id: value}.
+    The body is UNTRUSTED input: it is parsed and stored in a JSON file whose
+    path (never its content) is passed to the coverage check — safe."""
+    out = {}
+    for line in body.splitlines():
+        line = line.strip()
+        if line.startswith("/answer"):
+            line = line[len("/answer"):].strip()
+        m = re.match(r"^([A-Za-z0-9_.-]+)\s*[:=]\s*(.+)$", line)
+        if m:
+            out[m.group(1)] = m.group(2).strip()
+    return out
+
+
+def do_answer():
+    """Parse /answer comments, accumulate answers, run coverage check, advance gate."""
+    import subprocess as _sp
+    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    body = os.environ.get("ANSWER_BODY", "")
+    actor = os.environ.get("ANSWER_ACTOR", "")
+    # Optional explicit branch: `/answer <branch> qID: val` — first bare token.
+    want = ""
+    head = body[len("/answer"):].strip() if body.startswith("/answer") else body
+    first = head.split()[0] if head.split() else ""
+    if first and ":" not in first and "=" not in first:
+        want = first
+
+    branch, gate = _find_open_gate_branch(proto_data, want)
+    if not branch:
+        lib.post_pr_comment(pr, "No open question gate to answer right now.")
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": "answer: no open gate"}))
+        return
+
+    gsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=gate)
+    gdata = lib.load_yaml(gsf)
+    questions = gdata.get("gates", {}).get("questions", []) or []
+
+    # Merge new answers into the persisted answers artifact.
+    apath = lib.output_artifact_path(DIR, PID, INSTANCE, branch=branch,
+                                     substate=gate, kind="answers")
+    existing = {}
+    if os.path.isfile(apath):
+        try:
+            existing = json.load(open(apath)).get("answers", {}) or {}
+        except (json.JSONDecodeError, ValueError):
+            existing = {}
+    existing.update(_parse_answers(body))
+    doc = {"questions": questions, "answers": existing}
+    os.makedirs(os.path.dirname(apath), exist_ok=True)
+    with open(apath, "w") as fh:
+        json.dump(doc, fh)
+
+    # Run the gate's answers-coverage check over the synthesized doc.
+    # The check receives FILE PATHS, not answer content — no injection risk.
+    gate_cfg = next(s for s in lib.branch_substates(proto_data, branch) if s["id"] == gate)
+    check_run = (gate_cfg.get("checks", [{}])[0]).get("run", "answers-coverage")
+    pdir = os.path.dirname(os.path.abspath(PROTO))
+    res = lib.resolve_executable(f"{pdir}/checks", check_run, pdir, "")
+    kind, path = res.split("\t", 1)
+    empty = os.path.join(DIR, "_empty.txt")
+    open(empty, "w").close()
+    cov = _sp.run([path, apath, empty, empty], text=True, capture_output=True)
+    verdict = json.loads(cov.stdout) if cov.stdout.strip() else {"pass": False, "feedback": "no verdict"}
+
+    gdata["gates"].setdefault("history", []).append(
+        {"actor": actor, "answers": list(_parse_answers(body).keys())})
+    if not verdict.get("pass"):
+        lib.dump_yaml(gsf, gdata)
+        lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} partial answers")
+        lib.post_pr_comment(pr, f"Recorded. Still needed: {verdict.get('feedback', '')}.")
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": "answer: partial"}))
+        return
+
+    # Full coverage → close the gate, advance the branch cursor to the next sub-state.
+    gdata["gates"]["state"] = "answered"
+    lib.dump_yaml(gsf, gdata)
+    nxt_sub = lib.next_substate_id(proto_data, branch, gate)
+    cf = lib.state_file(DIR, PID, INSTANCE, branch=branch)
+    cur = lib.load_yaml(cf)
+    sha = gdata.get("head_sha", "") or HEAD_SHA
+    if nxt_sub:
+        cur["sub_state"] = nxt_sub
+        cur["state"] = "review"
+        lib.dump_yaml(cf, cur)
+        nsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=nxt_sub)
+        lib.dump_yaml(nsf, {"protocol": PID, "instance": INSTANCE, "state": "review",
+                            "iteration": 1, "gates": {}, "head_sha": sha, "history": []})
+        lib.set_check_run(f"{PID}/{branch}/{gate}", sha, "completed", "success",
+                          "Answered", f"Answered by @{actor}.")
+        lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered -> {nxt_sub}")
+        lib.post_pr_comment(pr, f"{gate} answered by @{actor}; continuing to {nxt_sub}.")
+        lib.dispatch_continue(PID, INSTANCE, branch, nxt_sub)
+    else:
+        cur["state"] = "done"
+        lib.dump_yaml(cf, cur)
+        lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered -> leg done")
+        lib.fire_join_dispatch(PID, INSTANCE)
+    print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                      "reason": "answer: complete"}))
+
+
 # Unbranched start/reset on a fan-out protocol routes to the planner BEFORE the
 # single-agent agent-unit discovery (which has no kind:"agent" state to read and
 # would error). The branched fan-out path (continue with BRANCH set) and the
 # single-agent path both fall through this guard unchanged.
+if COMMAND == "answer":
+    do_answer()
+    sys.exit(0)
+
 if COMMAND == "override":
     do_override()
     sys.exit(0)
