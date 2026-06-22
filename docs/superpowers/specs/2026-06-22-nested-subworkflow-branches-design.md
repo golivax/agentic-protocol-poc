@@ -2,6 +2,11 @@
 
 **Date:** 2026-06-22
 **Status:** Design approved; ready for implementation planning.
+**Target protocol:** `recover-mental-model-stub` — the real two-workflow protocol
+this engine capability unlocks (one automated leg ∥ one human-gated leg → join →
+combine). It lives in `.github/agent-factory/protocols/recover-mental-model-stub/`
+and is built as a follow-on once Plans 1-4 land; the engine work itself is
+protocol-agnostic and exercised by the `subpipeline-mini` test fixture.
 
 ## Motivation
 
