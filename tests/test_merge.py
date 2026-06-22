@@ -73,6 +73,37 @@ def test_join_runs_merge_then_finalizes(tmp_path, engine_env):
     assert inst.get("phase") == "combine"
 
 
+def test_full_pipeline_with_merge(tmp_path, engine_env):
+    """End-to-end: start → A(flat) ∥ B(draft→gate→finalize) → join → combine → done."""
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    run_engine("next.py", tmp_path / "dir-next", "pr-1", proto, "start", "abc123", env=engine_env)
+    passv = tmp_path / "v.json"; passv.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+
+    def adv(branch, substate, summary, questions=None):
+        ev = tmp_path / f"{branch}-{substate or 'flat'}.json"
+        ev.write_text(json.dumps({"summary": summary, "questions": questions or []}))
+        e = dict(engine_env); e.update(BRANCH=branch, PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+        if substate:
+            e["SUBSTATE"] = substate
+        run_engine("advance.py", tmp_path / f"dir-adv-{branch}-{substate or 'flat'}", "pr-1", proto, passv, ev, env=e)
+
+    adv("A", None, "ALPHA")
+    adv("B", "draft", "DRAFTOUT", questions=[{"id": "q1", "text": "Q?"}])
+    ea = dict(engine_env); ea["ANSWER_BODY"] = "/answer q1: yes"; ea["ANSWER_ACTOR"] = "al"; ea["PR_HEAD_SHA"] = "abc123"
+    run_engine("next.py", tmp_path / "dir-answer", "pr-1", proto, "answer", env=ea)
+    adv("B", "finalize", "BETA")
+
+    ej = dict(engine_env); ej["PR_HEAD_SHA"] = "abc123"
+    out, err, rc = run_engine("join.py", tmp_path / "dir-join", "pr-1", proto, env=ej)
+    assert rc == 0, err
+
+    work = tmp_path / "work"; subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(work)], check=True)
+    inst = read_state_yaml(work / "subpipeline-mini/pr-1/_instance.yaml")
+    assert inst.get("joined") is True
+    assert inst.get("phase") == "combine"
+
+
 def _make_flat_protocol(tmp_path: Path, join_next: str, extra_states=None) -> Path:
     """Build a minimal flat two-branch fanout protocol with no checks.
 
