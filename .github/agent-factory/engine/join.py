@@ -63,6 +63,9 @@ def main():
     all_terminal = True
     all_done = True
     for b in branches:
+        # NOTE: a sub-pipeline branch's terminal state lives in its CURSOR file
+        # (review.<b>.yaml), written by advance.py only when the LAST sub-state is
+        # done. We deliberately read the cursor here, never a sub-state file.
         sf = lib.state_file(dir_, pid, instance, b, phase=phase_for_path)
         st = ""
         if os.path.isfile(sf):

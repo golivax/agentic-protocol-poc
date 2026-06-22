@@ -81,9 +81,11 @@ def test_subpipeline_mini_loads():
     assert chk.stat().st_mode & 0o111  # executable
 
 
-def _state_dir(tmp_path, engine_env):
+def _state_dir(tmp_path, engine_env, suffix=""):
     """Clone the fake origin so we can read pushed state files back."""
-    work = tmp_path / "work"
+    work = tmp_path / f"work{suffix}"
+    if work.exists():
+        shutil.rmtree(work)
     subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(work)], check=True)
     return work
 
@@ -183,3 +185,40 @@ def test_continue_resumes_substate(tmp_path, engine_env):
     assert action["action"] == "run-agent"
     assert "phase" not in action
     assert action.get("substate") == "draft"
+
+
+_run_join_call_count = {}
+
+
+def _run_join(tmp_path, engine_env, instance, proto, sha="abc123"):
+    key = instance
+    _run_join_call_count[key] = _run_join_call_count.get(key, 0) + 1
+    e = dict(engine_env)
+    e["PR_HEAD_SHA"] = sha
+    workdir = tmp_path / f"join-{instance}-{_run_join_call_count[key]}"
+    return run_engine("join.py", workdir, instance, proto, env=e)
+
+
+def test_join_waits_for_subpipeline_then_joins(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    run_engine("next.py", tmp_path / "dir-start", "pr-1", proto, "start", "abc123", env=engine_env)
+    # Finish flat leg A.
+    va = tmp_path / "va.json"; va.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    ev = tmp_path / "ev.json"; ev.write_text("{}")
+    ea = dict(engine_env); ea.update(BRANCH="A", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    run_engine("advance.py", tmp_path / "dir-adv-a", "pr-1", proto, va, ev, env=ea)
+
+    # B: draft done, finalize NOT yet → join must wait.
+    _advance(tmp_path, engine_env, "pr-1", "B", "draft", proto)
+    _run_join(tmp_path, engine_env, "pr-1", proto)
+    work = _state_dir(tmp_path, engine_env, suffix="-1")
+    inst = read_state_yaml(work / "subpipeline-mini/pr-1/_instance.yaml")
+    assert not inst.get("joined")   # still waiting on B.finalize
+
+    # Finish B.
+    _advance(tmp_path, engine_env, "pr-1", "B", "finalize", proto)
+    _run_join(tmp_path, engine_env, "pr-1", proto)
+    work = _state_dir(tmp_path, engine_env, suffix="-2")
+    inst = read_state_yaml(work / "subpipeline-mini/pr-1/_instance.yaml")
+    assert inst.get("joined") is True
