@@ -11,12 +11,26 @@ Env: AGENT_RUN_ID, GITHUB_REPOSITORY, PUBLISH_TOKEN (reviews+comments),
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 
 # Import shared library from the same directory as this script.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib
+
+
+def persist_output(dir_, pid, instance, branch, phase, substate, evid, kind="evidence"):
+    """Copy the agent's artifact to its deterministic persisted path so
+    downstream `inputs` can resolve it. Best-effort: a missing/empty evid is a
+    no-op (the leg simply has no output to forward)."""
+    if not evid or not os.path.isfile(evid):
+        return
+    dst = lib.output_artifact_path(dir_, pid, instance,
+                                   branch=(branch or None), phase=(phase or None),
+                                   substate=(substate or None), kind=kind)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(evid, dst)
 
 
 def gh_api(*args):
@@ -326,6 +340,10 @@ def main():
         state_data = lib.load_yaml(sf)
         state_data["state"] = "done"
         lib.dump_yaml(sf, state_data)
+
+        # Persist the evidence artifact so downstream `inputs` can resolve it.
+        # Best-effort: a missing/empty evid file is silently skipped.
+        persist_output(dir_, pid, instance, branch, phase, substate, evid)
 
         # --- Sub-pipeline branch leg: advance the BRANCH CURSOR, not the phase. ---
         if branch and substate:
