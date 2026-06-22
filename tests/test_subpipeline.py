@@ -76,7 +76,7 @@ def test_subpipeline_mini_loads():
     proto = json.loads((FIXTURES / "subpipeline-mini/protocol.json").read_text())
     assert proto["name"] == "subpipeline-mini"
     b = next(x for x in proto["states"][0]["branches"] if x["id"] == "B")
-    assert [s["id"] for s in b["states"]] == ["draft", "finalize"]
+    assert [s["id"] for s in b["states"]] == ["draft", "clarify", "finalize"]
     chk = FIXTURES / "subpipeline-mini/checks/always-pass.py"
     assert chk.stat().st_mode & 0o111  # executable
 
@@ -117,18 +117,29 @@ def _advance(tmp_path, engine_env, instance, branch, substate, proto, sha="abc12
     return out, err, rc
 
 
-def test_advance_draft_moves_cursor_to_finalize(tmp_path, engine_env):
+def test_advance_draft_moves_cursor_to_clarify(tmp_path, engine_env):
+    """draft is an agent sub-state; the next sub-state is clarify (gate).
+    Advancing draft should open the gate and move the cursor to clarify —
+    no finalize seeded, no join fired."""
     proto = FIXTURES / "subpipeline-mini/protocol.json"
     run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
-    out, err, rc = _advance(tmp_path, engine_env, "pr-1", "B", "draft", proto)
+    v = tmp_path / "v.json"
+    v.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    ev = tmp_path / "ev.json"
+    ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "Which DB?"}]}))
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
+                                   PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    out, err, rc = run_engine("advance.py", tmp_path / "dir-adv", "pr-1", proto, v, ev, env=e)
     assert rc == 0, err
 
     work = _state_dir(tmp_path, engine_env)
     cursor = read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")
-    assert cursor["sub_state"] == "finalize"
+    assert cursor["sub_state"] == "clarify"
     assert cursor.get("state") == "review"   # leg still in flight
-    fin = read_state_yaml(work / "subpipeline-mini/pr-1/B.finalize.yaml")
-    assert fin["state"] == "review" and fin["iteration"] == 1
+    gate = read_state_yaml(work / "subpipeline-mini/pr-1/B.clarify.yaml")
+    assert gate["gates"]["state"] == "open"
+    assert gate["gates"]["questions"][0]["id"] == "q1"
 
 
 def test_advance_finalize_marks_leg_done(tmp_path, engine_env):

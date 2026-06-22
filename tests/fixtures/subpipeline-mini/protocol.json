@@ -29,12 +29,19 @@
               "checks": [{ "run": "always-pass", "on_fail": "iterate" }]
             },
             {
+              "id": "clarify",
+              "kind": "gate",
+              "questions_from": "draft",
+              "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }]
+            },
+            {
               "id": "finalize",
               "kind": "agent",
               "workflow": "finalize-agent",
               "evidence": "finalize.evidence.schema.json",
               "max_iterations": 2,
-              "inputs": [{ "from": "draft", "as": "draft" }],
+              "inputs": [{ "from": "clarify", "as": "answers" },
+                         { "from": "draft", "as": "draft" }],
               "checks": [{ "run": "always-pass", "on_fail": "iterate" }]
             }
           ]

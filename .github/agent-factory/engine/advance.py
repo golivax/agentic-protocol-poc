@@ -358,7 +358,27 @@ def main():
                 cur["sub_state"] = nxt_sub
                 cur["state"] = life_state         # leg stays in flight
                 lib.dump_yaml(cursor_sf, cur)
-                # Seed the next sub-state's per-step file.
+                nxt_state = lib.state_by_id(
+                    {"states": lib.branch_substates(proto, branch)}, nxt_sub)
+                if nxt_state and nxt_state.get("kind") == "gate":
+                    # Open the gate (scoped to this branch); read questions from
+                    # the source sub-state's persisted evidence.
+                    questions = []
+                    qfrom = nxt_state.get("questions_from")
+                    if qfrom:
+                        qpath = lib.output_artifact_path(dir_, pid, instance,
+                                                         branch=branch, phase=(phase or None),
+                                                         substate=qfrom, kind="evidence")
+                        if os.path.isfile(qpath):
+                            try:
+                                questions = json.load(open(qpath)).get("questions", []) or []
+                            except (json.JSONDecodeError, ValueError):
+                                questions = []
+                    lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
+                                  branch=branch, questions=questions)
+                    lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → gate {nxt_sub} open")
+                    return
+                # Otherwise: an agent sub-state → seed + dispatch (Plan 1 behaviour).
                 nsf = lib.state_file(dir_, pid, instance, branch=branch,
                                      phase=(phase if phase else None), substate=nxt_sub)
                 lib.dump_yaml(nsf, {
