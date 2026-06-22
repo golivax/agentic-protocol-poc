@@ -116,3 +116,30 @@ def test_run_agent_action_carries_inputs(tmp_path, engine_env):
     names = {i["as"]: i for i in action.get("inputs", [])}
     assert "draft" in names
     assert names["draft"]["path"].endswith("B.draft.evidence.json")
+
+
+def test_draft_output_flows_to_finalize_inputs(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
+
+    # draft → done, persisting evidence with a distinctive payload.
+    v = tmp_path / "v.json"
+    v.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    ev = tmp_path / "draft-evidence.json"
+    ev.write_text(json.dumps({"summary": "DRAFT-PAYLOAD"}))
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
+                                   PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    run_engine("advance.py", tmp_path / "dir-adv", "pr-1", proto, v, ev, env=e)
+
+    # Resolve finalize's inputs from the freshly pushed state, then materialize.
+    work = _clone(tmp_path, engine_env)
+    declared = lib.state_inputs(json.loads(proto.read_text()), "finalize")
+    resolved = lib.resolve_inputs(json.loads(proto.read_text()), str(work),
+                                  "subpipeline-mini", "pr-1",
+                                  consuming_branch="B", consuming_phase=None,
+                                  inputs=declared)
+    manifest = lib.materialize_inputs(resolved, tmp_path / "agentwork")
+    staged = (tmp_path / "agentwork/inputs/draft.json")
+    assert staged.exists()
+    assert json.loads(staged.read_text())["summary"] == "DRAFT-PAYLOAD"
