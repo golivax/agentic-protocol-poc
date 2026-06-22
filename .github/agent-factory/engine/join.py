@@ -110,9 +110,20 @@ def main():
             lib.cas_push(dir_, f"{instance}: join clear → gate {gate_next} open")
             return
 
-        # If a MERGE state follows the join, run its reduce hook before finalizing.
+        # If an AGENT state follows the join, advance + dispatch it (mode 2).
         merge_next = (join_state or {}).get("next")
         mns = lib.state_by_id(protocol, merge_next) if merge_next else None
+        if mns and mns.get("kind") == "agent":
+            instance_data["joined"] = True
+            instance_data["phase"] = merge_next
+            lib.dump_yaml(inf, instance_data)
+            lib.ensure_phase_label(dir_, pid, instance, protocol, pr, merge_next)
+            lib.cas_push(dir_, f"{instance}: join clear -> agent combine {merge_next}")
+            lib._gh_dispatch("protocol-advance",
+                             {"protocol": pid, "instance": instance, "phase": merge_next})
+            return
+
+        # If a MERGE state follows the join, run its reduce hook before finalizing.
         if mns and mns.get("kind") == "merge":
             result = lib.run_merge_hook(dir_, pid, instance, proto, mns)
             instance_data["joined"] = True
