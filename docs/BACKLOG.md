@@ -280,4 +280,33 @@ No per-protocol workflow YAML remains.
 
 ---
 
+## Non-agentic (plain `.yml`) workflows in a distributed protocol
+
+**What:** Let a protocol ship plain GitHub Actions workflows (not gh-aw agentic
+markdown) and have the distribution installer carry them. Three additions to the
+installer design (`docs/superpowers/specs/2026-06-22-protocol-distribution-design.md`):
+1. `protocol.json` gains an optional `aux_workflows: [...]` list — plain `.yml`
+   files copied **verbatim** into `.github/workflows/` (a third fetch bucket
+   alongside *common* and *protocol-specific*); **no** `gh aw add` / compile /
+   engine selection.
+2. `protocol.json` gains `required_secrets` / `required_vars` — the installer
+   prompts and runs `gh secret set` / `gh variable set` generically for each (so
+   `POC_DISPATCH_TOKEN` becomes just one declared secret).
+3. Optional placeholder injection for declared portability tokens (same mechanism
+   as the agents' base-URL injection), for aux workflows that must reference the
+   target repo.
+
+**Why:** Honors the original "my workflows should be distributed as gh-aw markdown
+**unless they are not agentic**" requirement. Reference shape: a plain analyzer
+workflow like `PGCodeLLM/code-health` `examples/github-actions/repo-health-pr-analysis.yml`
+(runs `python analyze.py` over base/head, pulls its own `AISLOP_LLM_*` secrets).
+
+**Status:** OUT OF SCOPE for the distribution PoC v1 — the `code-review`
+acceptance test has no non-agentic workflow. Classification rule and the
+secrets/portability caveat are recorded in the spec's "Out of scope" section.
+Distribution itself is the easy part (verbatim copy, same as the engine
+workflows); the real work is generic secret/var declaration + prompting.
+
+---
+
 ## (See also `STATUS.md` and the v1 deviation list for other candidate work: restore the agent egress firewall for the now-public endpoint. The correlation-id run resolver shipped as **v3** (DONE), above.)
