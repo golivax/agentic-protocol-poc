@@ -113,10 +113,10 @@ def next_substate_id(protocol, branch, substate):
     return None
 
 
-def resolve_agent_unit(protocol, phase="", branch=""):
+def resolve_agent_unit(protocol, phase="", branch="", substate=""):
     """Resolve the agent unit for a leg: its agent_state id, max_iterations, and
-    life_state (the .state value a live state file carries in flight). Mirrors the
-    PHASE-first → BRANCH → single-agent ladder. Raises ValueError if unresolved."""
+    life_state. Adds a SUBSTATE rung above BRANCH: a sub-pipeline branch resolves
+    to its current sub-state. Mirrors the PHASE → BRANCH → single-agent ladder."""
     if phase:
         st = state_by_id(protocol, phase)
         if not st:
@@ -126,25 +126,33 @@ def resolve_agent_unit(protocol, phase="", branch=""):
                 raise ValueError(f"PHASE='{phase}' is a fanout phase but BRANCH is empty")
             for b in st.get("branches", []):
                 if b["id"] == branch:
+                    if substate:
+                        for s in b.get("states", []):
+                            if s["id"] == substate:
+                                return {"agent_state": substate,
+                                        "max_iterations": s.get("max_iterations"),
+                                        "life_state": phase}
+                        raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
                     return {"agent_state": branch, "max_iterations": b.get("max_iterations"), "life_state": phase}
             raise ValueError(f"no branch '{branch}' in phase '{phase}'")
         return {"agent_state": phase, "max_iterations": st.get("max_iterations"), "life_state": phase}
     if branch:
-        agent_id = None
-        max_it = None
         fanout_id = None
         for st in protocol.get("states", []):
             if st.get("kind") == "fanout":
                 fanout_id = st["id"]
                 for b in st.get("branches", []):
                     if b["id"] == branch:
-                        agent_id = b["id"]
-                        max_it = b.get("max_iterations")
-                        break
+                        if substate:
+                            for s in b.get("states", []):
+                                if s["id"] == substate:
+                                    return {"agent_state": substate,
+                                            "max_iterations": s.get("max_iterations"),
+                                            "life_state": fanout_id}
+                            raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
+                        return {"agent_state": b["id"], "max_iterations": b.get("max_iterations"), "life_state": fanout_id}
                 break
-        if not agent_id:
-            raise ValueError(f"no branch '{branch}' in protocol")
-        return {"agent_state": agent_id, "max_iterations": max_it, "life_state": fanout_id}
+        raise ValueError(f"no branch '{branch}' in protocol")
     for st in protocol.get("states", []):
         if st.get("kind") == "agent":
             return {"agent_state": st["id"], "max_iterations": st.get("max_iterations"), "life_state": st["id"]}

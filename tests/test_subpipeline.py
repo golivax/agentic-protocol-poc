@@ -56,3 +56,16 @@ def test_branch_substates():
 def test_next_substate_id():
     assert lib.next_substate_id(SUBPIPE_PROTO, "B", "draft") == "finalize"
     assert lib.next_substate_id(SUBPIPE_PROTO, "B", "finalize") is None
+
+
+def test_resolve_agent_unit_substate():
+    u = lib.resolve_agent_unit(SUBPIPE_PROTO, phase="review", branch="B", substate="finalize")
+    assert u["agent_state"] == "finalize"
+    assert u["max_iterations"] == 2
+    assert u["life_state"] == "review"
+
+
+def test_resolve_agent_unit_flat_branch_unchanged():
+    u = lib.resolve_agent_unit(SUBPIPE_PROTO, phase="review", branch="A")
+    assert u["agent_state"] == "A"
+    assert u["life_state"] == "review"
