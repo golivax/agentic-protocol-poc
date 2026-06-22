@@ -233,3 +233,79 @@ def test_join_waits_for_subpipeline_then_joins(tmp_path, engine_env):
     work = _state_dir(tmp_path, engine_env, suffix="-2")
     inst = read_state_yaml(work / "subpipeline-mini/pr-1/_instance.yaml")
     assert inst.get("joined") is True
+
+
+def test_advance_agent_to_agent_seeds_next(tmp_path, engine_env):
+    """Advancing a non-last AGENT sub-state (draft) seeds the next agent sub-state
+    (finalize) and moves the branch cursor — no gate, no join, leg stays in flight.
+
+    This is the agent→agent advance path in advance.py (branch and substate set,
+    process==done, nxt_sub exists, next kind is 'agent').  It lost its only
+    integration coverage when subpipeline-mini's B changed to draft→clarify(gate)→finalize.
+    """
+    # Minimal single-phase fanout protocol with B having two consecutive agent sub-states.
+    proto_data = {
+        "name": "subpipe-agents",
+        "states": [
+            {
+                "id": "review",
+                "kind": "fanout",
+                "branches": [
+                    {
+                        "id": "A",
+                        "workflow": "a-agent",
+                        "evidence": "a.evidence.schema.json",
+                        "max_iterations": 2,
+                        "checks": [],
+                        "publish": "noop",
+                    },
+                    {
+                        "id": "B",
+                        "states": [
+                            {
+                                "id": "draft",
+                                "kind": "agent",
+                                "workflow": "draft-agent",
+                                "max_iterations": 2,
+                                "checks": [],
+                            },
+                            {
+                                "id": "finalize",
+                                "kind": "agent",
+                                "workflow": "final-agent",
+                                "max_iterations": 2,
+                                "checks": [],
+                            },
+                        ],
+                    },
+                ],
+            },
+            {"id": "join", "kind": "join", "of": "review", "next": "done"},
+        ],
+    }
+    pf = tmp_path / "proto.json"
+    pf.write_text(json.dumps(proto_data))
+
+    # Seed initial state (next.py start).
+    out, err, rc = run_engine("next.py", tmp_path / "dir", "pr-1", pf, "start", "abc123",
+                              env=engine_env)
+    assert rc == 0, err
+
+    # Advance the draft sub-state to done with an all-pass verdict.
+    out, err, rc = _advance(tmp_path, engine_env, "pr-1", "B", "draft", pf)
+    assert rc == 0, err
+
+    # Clone origin and verify the agent→agent advance happened.
+    work = _state_dir(tmp_path, engine_env, suffix="-aa")
+
+    # Branch cursor: sub_state moved to finalize, leg still in flight.
+    cursor = read_state_yaml(work / "subpipe-agents/pr-1/B.yaml")
+    assert cursor["sub_state"] == "finalize", f"cursor sub_state: {cursor}"
+    assert cursor.get("state") == "review", f"cursor state: {cursor}"
+
+    # Next sub-state file seeded at iteration 1.
+    nsf = work / "subpipe-agents/pr-1/B.finalize.yaml"
+    assert nsf.exists(), "B.finalize.yaml not seeded by advance"
+    fin_state = read_state_yaml(nsf)
+    assert fin_state.get("state") == "review", f"finalize state: {fin_state}"
+    assert fin_state.get("iteration") == 1, f"finalize iteration: {fin_state}"
