@@ -120,6 +120,63 @@ def next_substate_id(protocol, branch, substate):
     return None
 
 
+def branch_output_substate(protocol, branch):
+    """The last sub-state id of a sub-pipeline branch (its leg output), else None."""
+    subs = branch_substates(protocol, branch)
+    return subs[-1]["id"] if subs else None
+
+
+def state_inputs(protocol, state_id):
+    """The `inputs` list declared on a top-level state OR a branch sub-state."""
+    st = state_by_id(protocol, state_id)
+    if st is not None:
+        return list(st.get("inputs", []))
+    fo = _fanout_state(protocol)
+    if fo:
+        for b in fo.get("branches", []):
+            for s in b.get("states", []):
+                if s.get("id") == state_id:
+                    return list(s.get("inputs", []))
+    return []
+
+
+def _branch_ids(protocol):
+    """Extract branch IDs from the fanout state."""
+    fo = _fanout_state(protocol)
+    return [b["id"] for b in fo.get("branches", [])] if fo else []
+
+
+def resolve_inputs(protocol, d, pid, instance, consuming_branch, consuming_phase, inputs):
+    """Map each {from, as} to {as, path, kind}. Resolution order for `from`:
+      1) a sub-state of the consuming branch  → that sub-state's evidence
+      2) a fanout branch id                   → that branch's leg-output evidence
+                                                 (last sub-state, or the flat leg)
+      3) a phase id                           → that phase's evidence
+    `kind` is 'evidence' unless the source sub-state is a gate (then 'answers')."""
+    phase = consuming_phase or None
+    out = []
+    sub_ids = {s["id"]: s for s in branch_substates(protocol, consuming_branch)} if consuming_branch else {}
+    branch_ids = set(_branch_ids(protocol))
+    for ref in inputs:
+        frm, as_ = ref["from"], ref["as"]
+        if frm in sub_ids:
+            kind = "answers" if sub_ids[frm].get("kind") == "gate" else "evidence"
+            path = output_artifact_path(d, pid, instance, branch=consuming_branch,
+                                        phase=phase, substate=frm, kind=kind)
+        elif frm in branch_ids:
+            kind = "evidence"
+            last = branch_output_substate(protocol, frm)
+            path = output_artifact_path(d, pid, instance, branch=frm, phase=phase,
+                                        substate=last, kind="evidence")
+        else:
+            path = output_artifact_path(d, pid, instance, phase=frm, kind="evidence")
+            kind = "evidence"
+            out.append({"as": as_, "path": path, "kind": kind})
+            continue
+        out.append({"as": as_, "path": path, "kind": kind})
+    return out
+
+
 def resolve_agent_unit(protocol, phase="", branch="", substate=""):
     """Resolve the agent unit for a leg: its agent_state id, max_iterations, and
     life_state. Adds a SUBSTATE rung above BRANCH: a sub-pipeline branch resolves

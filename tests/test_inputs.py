@@ -4,6 +4,24 @@ sys.path.insert(0, str(ENGINE))
 lib = importlib.import_module("lib")
 
 
+SUBPIPE = {
+    "name": "rev",
+    "states": [
+        {"id": "review", "kind": "fanout", "branches": [
+            {"id": "A", "workflow": "a"},
+            {"id": "B", "states": [
+                {"id": "draft", "kind": "agent", "workflow": "d"},
+                {"id": "finalize", "kind": "agent", "workflow": "f",
+                 "inputs": [{"from": "draft", "as": "draft"}]},
+            ]},
+        ]},
+        {"id": "join", "kind": "join", "of": "review", "next": "combine"},
+        {"id": "combine", "kind": "merge", "inputs": [
+            {"from": "A", "as": "a"}, {"from": "B", "as": "b"}]},
+    ],
+}
+
+
 def test_output_artifact_path_substate():
     p = lib.output_artifact_path("/s", "rev", "pr-1", branch="B", substate="draft")
     assert p == "/s/rev/pr-1/B.draft.evidence.json"
@@ -41,3 +59,32 @@ def test_evidence_persisted_on_done(tmp_path, engine_env):
     persisted = work / "subpipeline-mini/pr-1/B.draft.evidence.json"
     assert persisted.exists()
     assert json.loads(persisted.read_text())["summary"] == "draft output"
+
+
+def test_branch_output_substate():
+    assert lib.branch_output_substate(SUBPIPE, "B") == "finalize"
+    assert lib.branch_output_substate(SUBPIPE, "A") is None
+
+
+def test_state_inputs():
+    assert lib.state_inputs(SUBPIPE, "finalize") == [{"from": "draft", "as": "draft"}]
+    assert lib.state_inputs(SUBPIPE, "combine")[0]["from"] == "A"
+    assert lib.state_inputs(SUBPIPE, "draft") == []
+
+
+def test_resolve_inputs_sibling_substate():
+    res = lib.resolve_inputs(SUBPIPE, "/s", "rev", "pr-1",
+                             consuming_branch="B", consuming_phase=None,
+                             inputs=[{"from": "draft", "as": "draft"}])
+    assert res == [{"as": "draft",
+                    "path": "/s/rev/pr-1/B.draft.evidence.json",
+                    "kind": "evidence"}]
+
+
+def test_resolve_inputs_branch_leg_outputs():
+    res = lib.resolve_inputs(SUBPIPE, "/s", "rev", "pr-1",
+                             consuming_branch=None, consuming_phase=None,
+                             inputs=[{"from": "A", "as": "a"}, {"from": "B", "as": "b"}])
+    paths = {r["as"]: r["path"] for r in res}
+    assert paths["a"] == "/s/rev/pr-1/A.evidence.json"
+    assert paths["b"] == "/s/rev/pr-1/B.finalize.evidence.json"
