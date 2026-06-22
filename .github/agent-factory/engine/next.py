@@ -476,6 +476,12 @@ def emit_run_agent(iteration, feedback, reason):
         action["phase"] = PHASE
     if SUBSTATE:
         action["substate"] = SUBSTATE
+    declared = lib.state_inputs(proto_data, AGENT_STATE)
+    if declared:
+        action["inputs"] = lib.resolve_inputs(
+            proto_data, DIR, PID, INSTANCE,
+            consuming_branch=(BRANCH or None), consuming_phase=(PHASE or None),
+            inputs=declared)
     print(json.dumps(action))
 
 

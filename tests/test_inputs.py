@@ -98,3 +98,21 @@ def test_materialize_inputs(tmp_path):
     staged = {m["as"]: m["staged_path"] for m in manifest}
     assert set(staged) == {"draft"}   # missing source skipped
     assert (tmp_path / "agentwork/inputs/draft.json").read_text() == '{"k": 1}'
+
+
+def test_run_agent_action_carries_inputs(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    # Start a fresh review in pr-1
+    dir1 = tmp_path / "dir1"
+    run_engine("next.py", dir1, "pr-1", proto, "start", "abc123", env=engine_env)
+    # Resume finalize → its action should carry resolved inputs.
+    # Needs a fresh directory to avoid state_checkout clone conflict
+    dir2 = tmp_path / "dir2"
+    out, err, rc = run_engine("next.py", dir2, "pr-1", proto, "continue",
+                              env=engine_env, branch="B", substate="finalize")
+    assert rc == 0, err
+    action = json.loads(out)
+    assert action["action"] == "run-agent"
+    names = {i["as"]: i for i in action.get("inputs", [])}
+    assert "draft" in names
+    assert names["draft"]["path"].endswith("B.draft.evidence.json")
