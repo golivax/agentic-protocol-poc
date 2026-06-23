@@ -1,0 +1,5 @@
+{"questions": [
+  {"id": "q1", "text": "Is this intended to remain a standalone example, or is there a plan to integrate it into the engine's rate-limiting path? The `examples/` placement and the deliberate omission of eviction suggest it is purely illustrative, but the docstring's careful design rationale hints at future promotion — which is it, and who decides when it graduates?"},
+  {"id": "q2", "text": "The `_state` dict grows unbounded because there is no eviction. What is the expected key cardinality and process lifetime in the target usage scenario? If keys are PR numbers or user IDs over a long-running process, what prevents this from becoming a memory leak?"},
+  {"id": "q3", "text": "The docstring flags 'single-process only', but the engine uses matrix fan-out legs that could share a process. Is there a concurrent-access scenario where two callers hit `allow()` for the same key simultaneously, producing a race on the check-then-update sequence in `_state`?"}
+]}
