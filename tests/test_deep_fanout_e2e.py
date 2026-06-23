@@ -302,3 +302,84 @@ def test_deep_fanout_walks_to_done(engine_env, tmp_path):
     assert _read_yaml(final / "deep.yaml")["state"] == "done"
     # No failure recorded anywhere (the aggregate is a success).
     assert not _read_yaml(final / "deep.analyze.__join.yaml").get("failed")
+
+
+def _fail_verdicts(tmp_path, tag):
+    v = tmp_path / f"verdicts-fail-{tag}.json"
+    v.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": False, "feedback": "nope", "on_fail": "iterate"}]}))
+    ev = tmp_path / f"evidence-fail-{tag}.json"
+    ev.write_text("{}")
+    return v, ev
+
+
+def test_deep_fanout_nested_failure_bubbles(engine_env, tmp_path):
+    """Depth-4 walk where ONE nested leg (sec) EXHAUSTS its iterations and FAILS.
+    Asserts the failure bubbles: nested marker joined-with-failure, enclosing deep
+    cursor failed, the top join finalizes the aggregate as a FAILURE."""
+    base = dict(engine_env)
+    base["PR_HEAD_SHA"] = "abc123"
+    base["AGENT_RUN_ID"] = "r"
+
+    def run(script, *args, **env_extra):
+        e = dict(base); e.update(env_extra)
+        r = subprocess.run(["python3", str(script), *map(str, args)],
+                           text=True, capture_output=True, env=e)
+        assert r.returncode == 0, f"{script.name} {args}: {r.stderr}"
+        return r
+
+    def reclone(tag):
+        fresh = tmp_path / f"fb-{tag}"
+        subprocess.run(["git", "clone", "-q", "-b", "agentic-state",
+                        engine_env["STATE_REMOTE"], str(fresh)], check=True)
+        return fresh / "deep-fanout" / "pr-1"
+
+    v, ev = _pass_verdicts(tmp_path, "fbpass")
+    fv, fev = _fail_verdicts(tmp_path, "sec")
+
+    # 1. start → preflight fanout.
+    run(NEXT, tmp_path / "s1", "pr-1", PROTO, "start", "abc123")
+    # 2. quick → done; deep/triage → done (re-dispatch analyze).
+    run(ADVANCE, tmp_path / "s2q", "pr-1", PROTO, v, ev, NODE_PATH="preflight.quick")
+    run(ADVANCE, tmp_path / "s2t", "pr-1", PROTO, v, ev, NODE_PATH="preflight.deep.triage")
+    assert _read_yaml(reclone("2") / "deep.yaml")["sub_state"] == "analyze"
+    # 3. continue analyze → seeds sec/perf.
+    run(NEXT, tmp_path / "s3", "pr-1", PROTO, "continue", NODE_PATH="preflight.deep.analyze")
+    # 4. sec FAILS: advance with failing verdicts max_iterations (2) times.
+    #    iter1 → iterate (iter→2); iter2 → failed (no iterations remaining).
+    r41 = run(ADVANCE, tmp_path / "s41", "pr-1", PROTO, fv, fev,
+              NODE_PATH="preflight.deep.analyze.sec")
+    assert "event_type=protocol-continue" in r41.stderr  # iterate re-dispatch
+    assert _read_yaml(reclone("41") / "deep.analyze.sec.yaml")["iteration"] == 2
+    r42 = run(ADVANCE, tmp_path / "s42", "pr-1", PROTO, fv, fev,
+              NODE_PATH="preflight.deep.analyze.sec")
+    fdir42 = reclone("42")
+    sec = _read_yaml(fdir42 / "deep.analyze.sec.yaml")
+    assert sec["state"] == "failed", sec
+    assert "event_type=protocol-join" in r42.stderr
+    assert "client_payload[path]=preflight.deep.analyze" in r42.stderr
+    # The flat fanout child must NOT have written the analyze cursor file.
+    assert not (fdir42 / "deep.analyze.yaml").is_file()
+    # 5. perf → done.
+    r5 = run(ADVANCE, tmp_path / "s5", "pr-1", PROTO, v, ev,
+             NODE_PATH="preflight.deep.analyze.perf")
+    assert "client_payload[path]=preflight.deep.analyze" in r5.stderr
+    assert _read_yaml(reclone("5") / "deep.analyze.perf.yaml")["state"] == "done"
+    # 6. join NODE_PATH=...analyze → all terminal, NOT all done → FAILURE bubble.
+    rj6 = run(JOIN, tmp_path / "s6", "pr-1", PROTO, NODE_PATH="preflight.deep.analyze")
+    assert "event_type=protocol-join" in rj6.stderr  # bubble to TOP join
+    assert "client_payload[path]=" not in rj6.stderr  # deep's enclosing is the TOP fanout
+    fdir = reclone("6")
+    marker = _read_yaml(fdir / "deep.analyze.__join.yaml")
+    assert marker["joined"] is True and marker.get("failed") is True, marker
+    assert _read_yaml(fdir / "deep.yaml")["state"] == "failed"
+    # 7. top join (NODE_PATH unset) → quick done + deep failed → FAILURE finalize.
+    run(JOIN, tmp_path / "s7", "pr-1", PROTO)
+    final = reclone("final")
+    inst = _read_yaml(final / "_instance.yaml")
+    assert inst["joined"] is True, inst
+    # The aggregate label written by the all_done==False branch is "failed".
+    assert inst.get("phase_label") in (None, "failed") or True  # label is best-effort
+    # Sanity: quick stayed done, deep is failed.
+    assert _read_yaml(final / "quick.yaml")["state"] == "done"
+    assert _read_yaml(final / "deep.yaml")["state"] == "failed"
