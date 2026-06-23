@@ -63,6 +63,17 @@ def state_file(d, pid, instance, branch=None, phase=None, substate=None, path=No
     return f"{base}/{'.'.join(p)}.yaml"
 
 
+def state_path(proto, tree_path):
+    """Tree-navigation path -> file-naming path. Drop the leading top-level
+    fanout/phase id when single-phase (it is omitted from historical filenames);
+    keep the full path when multi-phase. The recursive walker passes its tree
+    path through this before every state_file/output_artifact_path/join_marker_file
+    call, so depth-<=3 files stay byte-identical to the legacy layout."""
+    if not tree_path:
+        return []
+    return list(tree_path) if is_multiphase(proto) else list(tree_path[1:])
+
+
 def output_artifact_path(d, pid, instance, branch=None, phase=None, substate=None,
                          kind="evidence", path=None):
     """Persisted-output path for a state, parallel to state_file but with a

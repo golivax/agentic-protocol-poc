@@ -61,3 +61,18 @@ def test_output_artifact_path_deep():
     got = lib.output_artifact_path("/s", "p", "pr-1",
                                    path=["pre", "deep", "analyze", "sec"], kind="evidence")
     assert got == "/s/p/pr-1/pre.deep.analyze.sec.evidence.json"
+
+
+def test_state_path_single_phase_drops_top():
+    p = _proto("subpipeline-mini")
+    assert lib.state_path(p, ["review", "B", "draft"]) == ["B", "draft"]
+
+
+def test_state_path_multiphase_keeps_full():
+    p = _proto("multiphase-subpipeline")
+    assert lib.state_path(p, ["review", "B", "draft"]) == ["review", "B", "draft"]
+
+
+def test_state_path_empty():
+    p = _proto("subpipeline-mini")
+    assert lib.state_path(p, []) == []

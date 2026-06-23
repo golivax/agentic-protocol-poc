@@ -16,6 +16,7 @@ import sys
 
 # The script's directory is sys.path[0], so `import lib` finds lib.py alongside.
 import lib
+import paths
 
 DIR = sys.argv[1]
 INSTANCE = sys.argv[2]
@@ -37,37 +38,106 @@ PID = proto_data["name"]  # equivalent to lib.protocol_id(PROTO); proto_data alr
 lib.state_checkout(DIR)
 
 
-def emit_run_fanout(branches):
-    print(json.dumps({"action": "run-fanout", "iteration": 1, "feedback": "", "reason": "fanout", "branches": branches}))
+def _fanout_action(proto, path, branches):
+    """Build the run-fanout action dict for the fanout at `path`. Single-phase
+    keeps reason='fanout' with NO phase key; multi-phase uses reason='phase:<id>'
+    and adds the phase key — byte-identical to the legacy start_fanout /
+    seed_and_dispatch_phase emits. `branches` stays the authoritative key the GHA
+    layer reads (a `legs` key is added alongside in Stage 4, not here)."""
+    multi = lib.is_multiphase(proto)
+    act = {"action": "run-fanout", "iteration": 1, "feedback": "",
+           "reason": (f"phase:{path[-1]}" if multi else "fanout")}
+    if multi:
+        act["phase"] = path[-1]
+    act["branches"] = branches
+    return act
 
 
-def seed_branch(b, fanout_id, phase=None):
-    """Seed one fan-out branch's state file(s) and return its run-fanout emit dict.
-    Used by BOTH the single-phase (start_fanout, phase=None) and multi-phase
-    (seed_and_dispatch_phase, phase set) paths — one seeding logic, two callers.
-    `phase` qualifies the state-file path; head_sha is included on the flat file
-    only when `phase` is set (preserving the pre-existing single/multi divergence)."""
-    bid = b["id"]
-    if lib.is_subpipeline_branch(b):
-        first = b["states"][0]
-        cf = lib.state_file(DIR, PID, INSTANCE, bid, phase=phase)
+def enter_node(proto, path, command, emit=True):
+    """Recursive sequencer: seed the node at the tree-navigation `path` and, when
+    `emit`, print its action JSON (run-agent / run-fanout / gate-open noop).
+
+    Generalizes start_fanout + seed_and_dispatch_phase + seed_branch into one
+    walk. INSTANCE-file / phase-label / cas_push side-effects stay with the
+    callers (start_fanout, seed_and_dispatch_phase) — this function only seeds the
+    node's own state file(s) and emits. Every file call routes the tree path
+    through lib.state_path (single-phase drops the leading top fanout id), so
+    depth-<=3 files stay byte-identical to the legacy seed_branch layout.
+
+    `path` is rooted at the top phase/fanout id; e.g. the top fanout enters as
+    [fanout_id]. `command` is carried for parity with the recursive callers."""
+    kind = paths.node_kind(proto, path)
+    node = paths.node_at_path(proto, path)
+    life = paths.enclosing_fanout_id(proto, path)
+    fpath = lib.state_path(proto, path)
+    if kind == "sequence":
+        first = paths.first_child_id(node)
+        cf = lib.state_file(DIR, PID, INSTANCE, path=fpath)
         os.makedirs(os.path.dirname(cf), exist_ok=True)
-        cur = {"protocol": PID, "instance": INSTANCE, "state": fanout_id,
-               "sub_state": first["id"], "iteration": 1, "gates": {}, "history": []}
-        lib.dump_yaml(cf, cur)
-        sf = lib.state_file(DIR, PID, INSTANCE, bid, phase=phase, substate=first["id"])
-        lib.dump_yaml(sf, {"protocol": PID, "instance": INSTANCE, "state": fanout_id,
+        lib.dump_yaml(cf, {"protocol": PID, "instance": INSTANCE, "state": life,
+                           "sub_state": first, "iteration": 1, "gates": {}, "history": []})
+        return enter_node(proto, path + [first], command, emit=emit)
+    if kind == "fanout":
+        # Top fanout (len 1) keeps the legacy _instance.yaml `joined` mechanism the
+        # callers own. Only NESTED fanouts (len > 1) get a path-keyed marker.
+        # nested-fanout join marker handled in Task 7
+        branches = [_seed_child(proto, path + [b["id"]], b) for b in node.get("branches", [])]
+        if emit:
+            print(json.dumps(_fanout_action(proto, path, branches)))
+            return None
+        # emit=False → return the branch emit-dicts so the caller can print the
+        # run-fanout AFTER its own instance-file / label / cas_push side-effects
+        # (preserving the legacy seed→side-effects→cas_push→emit ordering).
+        return branches
+    if kind == "agent":
+        sf = lib.state_file(DIR, PID, INSTANCE, path=fpath)
+        os.makedirs(os.path.dirname(sf), exist_ok=True)
+        lib.dump_yaml(sf, {"protocol": PID, "instance": INSTANCE, "state": life or path[-1],
                            "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []})
-        return {"id": bid, "workflow": first["workflow"],
-                "substate": first["id"], "iteration": 1, "feedback": ""}
-    sf = lib.state_file(DIR, PID, INSTANCE, bid, phase=phase)
+        if emit:
+            act = {"action": "run-agent", "iteration": 1, "feedback": "",
+                   "reason": f"phase:{path[-1]}"}
+            if lib.is_multiphase(proto):
+                act["phase"] = path[-1]
+            print(json.dumps(act))
+        return {"id": path[-1], "workflow": node.get("workflow"), "iteration": 1, "feedback": ""}
+    if kind == "gate":
+        pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+        lib.open_gate(DIR, PID, INSTANCE, PROTO, path[-1], HEAD_SHA, pr,
+                      phase=(path[-1] if lib.is_multiphase(proto) else None))
+        if emit:
+            print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                              "reason": f"gate-open:{path[-1]}"}))
+        return None
+    return None
+
+
+def _seed_child(proto, path, cfg):
+    """Seed one fan-out child (flat agent OR sub-pipeline) WITHOUT emitting; return
+    its run-fanout branch dict (carrying `substate` for a sub-pipeline). The dict
+    field-orderings and the per-file head_sha rule reproduce the legacy seed_branch
+    output byte-for-byte for depth-<=3. All file paths route through lib.state_path."""
+    life = paths.enclosing_fanout_id(proto, path)
+    if paths.is_sequence(proto, path):
+        first = paths.first_child_id(cfg)
+        cf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto, path))
+        os.makedirs(os.path.dirname(cf), exist_ok=True)
+        lib.dump_yaml(cf, {"protocol": PID, "instance": INSTANCE, "state": life,
+                           "sub_state": first, "iteration": 1, "gates": {}, "history": []})
+        sf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto, path + [first]))
+        lib.dump_yaml(sf, {"protocol": PID, "instance": INSTANCE, "state": life,
+                           "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []})
+        fc = paths.node_at_path(proto, path + [first])
+        return {"id": path[-1], "workflow": fc.get("workflow"),
+                "substate": first, "iteration": 1, "feedback": ""}
+    sf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto, path))
     os.makedirs(os.path.dirname(sf), exist_ok=True)
-    flat = {"protocol": PID, "instance": INSTANCE, "state": fanout_id,
+    flat = {"protocol": PID, "instance": INSTANCE, "state": life,
             "iteration": 1, "gates": {}, "history": []}
-    if phase:
+    if lib.is_multiphase(proto):
         flat["head_sha"] = HEAD_SHA
     lib.dump_yaml(sf, flat)
-    return {"id": bid, "workflow": b["workflow"], "iteration": 1, "feedback": ""}
+    return {"id": path[-1], "workflow": cfg.get("workflow"), "iteration": 1, "feedback": ""}
 
 
 def is_fanout():
@@ -79,14 +149,15 @@ def is_fanout():
 
 def start_fanout():
     fstate = None
-    branches_config = []
     for s in proto_data.get("states", []):
         if s.get("kind") == "fanout":
             fstate = s["id"]
-            branches_config = s.get("branches", [])
             break
 
-    branches = [seed_branch(b, fstate) for b in branches_config]
+    # Delegate seeding to the recursive sequencer (top fanout → tree path
+    # [fstate]); emit=False so we keep the legacy seed→instance→label→cas_push→emit
+    # ordering. enter_node returns the branch emit-dicts for the deferred emit.
+    branches = enter_node(proto_data, [fstate], COMMAND, emit=False)
 
     inf = lib.instance_file(DIR, PID, INSTANCE)
     os.makedirs(os.path.dirname(inf), exist_ok=True)
@@ -97,7 +168,7 @@ def start_fanout():
     pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
     lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, fstate)
     lib.cas_push(DIR, f"{PID}/{INSTANCE}: fan-out review ({COMMAND})")
-    emit_run_fanout(branches)
+    print(json.dumps(_fanout_action(proto_data, [fstate], branches)))
 
 
 def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
@@ -169,28 +240,25 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
     # Sync the PR's phase label to this phase (removes setup / prior label).
     lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, phase_id)
 
+    # All three arms delegate seeding to enter_node (emit=False), keep the
+    # phase-specific cas_push message here, then emit — preserving the legacy
+    # seed→cas_push→emit ordering exactly. The tree path of a top-level phase is
+    # simply [phase_id].
     if kind == "fanout":
-        branches_config = phase_state.get("branches", [])
-        # Seed each branch (flat OR sub-pipeline) under the phase-qualified path
-        # via the shared helper — same logic the single-phase start_fanout uses.
-        branches = [seed_branch(b, phase_id, phase=phase_id) for b in branches_config]
+        # enter_node returns the branch emit-dicts (emit deferred to after cas_push).
+        branches = enter_node(proto_data, [phase_id], command, emit=False)
         lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter fan-out phase {phase_id} ({command})")
-        print(json.dumps({"action": "run-fanout", "iteration": 1, "feedback": "",
-                          "reason": f"phase:{phase_id}", "phase": phase_id, "branches": branches}))
+        print(json.dumps(_fanout_action(proto_data, [phase_id], branches)))
     elif kind == "gate":
-        # cursor already written above; open_gate seeds the gate file + check-run
-        # + status comment. No agent dispatch — the run ends and waits for a human.
-        lib.open_gate(DIR, PID, INSTANCE, PROTO, phase_id, HEAD_SHA, pr)
+        # cursor already written above; enter_node's gate arm calls open_gate
+        # (seeds the gate file + check-run + status comment). No agent dispatch —
+        # the run ends and waits for a human.
+        enter_node(proto_data, [phase_id], command, emit=False)
         lib.cas_push(DIR, f"{PID}/{INSTANCE}: open gate {phase_id} ({command})")
         print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
                           "reason": f"gate-open:{phase_id}"}))
     else:
-        sf = lib.state_file(DIR, PID, INSTANCE, phase=phase_id)
-        os.makedirs(os.path.dirname(sf), exist_ok=True)
-        lib.dump_yaml(sf, {
-            "protocol": PID, "instance": INSTANCE, "state": phase_id,
-            "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": [],
-        })
+        enter_node(proto_data, [phase_id], command, emit=False)
         lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter agent phase {phase_id} ({command})")
         print(json.dumps({"action": "run-agent", "iteration": 1, "feedback": "",
                           "reason": f"phase:{phase_id}", "phase": phase_id}))
