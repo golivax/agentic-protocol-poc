@@ -480,30 +480,42 @@ def _gate_phase(proto):
 
 def _find_open_gate(proto, want=""):
     """Return the full tree-navigation path to the first open data-gate, or None.
-    `want` is an optional branch id to restrict the search. Walks the top-level
-    fanout's branches; for each sub-pipeline branch whose cursor sub_state is a
-    gate in state 'open', returns the path [fanout_id, branch_id, gate_substate_id].
-    For depth <=3 this is byte-identical to the old (branch_id, gate_id) pair."""
+    Follows LIVE cursors recursively: at each fanout branch, read its cursor
+    `sub_state`; if it is a gate in state 'open' return its path; if it is a
+    nested fanout, descend into that fanout's child-branch cursors. First open
+    gate wins (at most one gate per branch lineage is open at a time). `want`
+    restricts the TOP-level branch only. For a depth-3 gate the returned path is
+    byte-identical to the old (branch_id, gate_id) pair: [fanout_id, branch_id, gate_id]."""
     fo = lib._fanout_state(proto)
     if not fo:
         return None
-    fo_id = fo["id"]
-    for b in fo.get("branches", []):
+    return _scan_fanout_for_open_gate(proto, [fo["id"]], fo, want, top=True)
+
+
+def _scan_fanout_for_open_gate(proto, fanout_path, fo_node, want, top):
+    for b in fo_node.get("branches", []):
         bid = b["id"]
-        if want and bid != want:
+        if top and want and bid != want:
             continue
-        branch_path = [fo_id, bid]
+        branch_path = fanout_path + [bid]
         cf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto, branch_path))
         if not os.path.isfile(cf):
             continue
-        cur = lib.load_yaml(cf)
-        sub = cur.get("sub_state", "")
-        for s in b.get("states", []):
-            if s["id"] == sub and s.get("kind") == "gate":
-                gate_path = branch_path + [sub]
-                gsf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto, gate_path))
-                if os.path.isfile(gsf) and lib.load_yaml(gsf).get("gates", {}).get("state") == "open":
-                    return gate_path
+        sub = lib.load_yaml(cf).get("sub_state", "")
+        if not sub:
+            continue  # flat leg (no sub_state) or not yet started
+        sub_path = branch_path + [sub]
+        kind = paths.node_kind(proto, sub_path)
+        if kind == "gate":
+            gsf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto, sub_path))
+            if os.path.isfile(gsf) and \
+                    lib.load_yaml(gsf).get("gates", {}).get("state") == "open":
+                return sub_path
+        elif kind == "fanout":
+            res = _scan_fanout_for_open_gate(
+                proto, sub_path, paths.node_at_path(proto, sub_path), want, top=False)
+            if res:
+                return res
     return None
 
 
@@ -581,7 +593,9 @@ def do_answer():
 
     # Run the gate's answers-coverage check over the synthesized doc.
     # The check receives FILE PATHS, not answer content — no injection risk.
-    gate_cfg = next(s for s in lib.branch_substates(proto_data, branch) if s["id"] == gate)
+    # Path-aware (works at any depth): node_at_path resolves the gate node
+    # directly. For a depth-3 gate this is the same dict branch_substates returned.
+    gate_cfg = paths.node_at_path(proto_data, gate_path) or {}
     check_run = (gate_cfg.get("checks", [{}])[0]).get("run", "answers-coverage")
     pdir = os.path.dirname(os.path.abspath(PROTO))
     res = lib.resolve_executable(f"{pdir}/checks", check_run, pdir, "")
@@ -605,6 +619,37 @@ def do_answer():
     # Full coverage → close the gate, advance the branch cursor to the next sub-state.
     gdata["gates"]["state"] = "answered"
     lib.dump_yaml(gsf, gdata)
+
+    # A NESTED gate (enclosing fanout is not the top one) advances the enclosing
+    # sub-pipeline cursor and re-dispatches protocol-continue carrying the path —
+    # next.py's continue-at-NODE_PATH guard then seeds/opens/dispatches the next
+    # sibling by kind. The TOP-gate path below stays byte-identical (depth-3).
+    fanout_path = paths.enclosing_fanout_path(proto_data, gate_path) or []
+    if len(fanout_path) > 1:
+        seq_path = paths.parent_path(gate_path)         # enclosing sequence cursor
+        nxt = paths.next_sibling(proto_data, gate_path)
+        sha = gdata.get("head_sha", "") or HEAD_SHA
+        cf = lib.state_file(DIR, PID, INSTANCE,
+                            path=lib.state_path(proto_data, seq_path))
+        cur = lib.load_yaml(cf)
+        lib.set_check_run(f"{PID}/{branch}/{gate}", sha, "completed", "success",
+                          "Answered", f"Answered by @{actor}.")
+        if nxt:
+            cur["sub_state"] = nxt
+            cur["state"] = life                          # leg stays in flight
+            lib.dump_yaml(cf, cur)
+            lib.cas_push(DIR, f"{INSTANCE}: gate {'.'.join(gate_path)} answered -> {nxt}")
+            lib.post_pr_comment(pr, f"{gate} answered by @{actor}; continuing to {nxt}.")
+            lib.dispatch_continue(PID, INSTANCE, path=".".join(seq_path + [nxt]))
+        else:
+            cur["state"] = "done"                        # gate was the last sub-state
+            lib.dump_yaml(cf, cur)
+            lib.cas_push(DIR, f"{INSTANCE}: gate {'.'.join(gate_path)} answered -> leg done")
+            lib.fire_join_dispatch(PID, INSTANCE, fanout_path=".".join(fanout_path))
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": "answer: complete (nested)"}))
+        return
+
     nxt_sub = lib.next_substate_id(proto_data, branch, gate)
     cf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, branch_path))
     cur = lib.load_yaml(cf)
