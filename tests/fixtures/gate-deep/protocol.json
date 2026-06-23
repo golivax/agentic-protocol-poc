@@ -1,0 +1,60 @@
+{
+  "name": "gate-deep",
+  "version": "0.1.0",
+  "triggers": [{ "on": "issue_comment", "actions": ["created"], "command": "answer", "match": "^/answer" }],
+  "states": [
+    {
+      "id": "outer",
+      "kind": "fanout",
+      "branches": [
+        { "id": "A", "workflow": "a-agent", "evidence": "leaf.evidence.schema.json",
+          "max_iterations": 2, "checks": [{ "run": "always-pass", "on_fail": "iterate" }],
+          "publish": "noop" },
+        {
+          "id": "B",
+          "states": [
+            {
+              "id": "inner",
+              "kind": "fanout",
+              "branches": [
+                { "id": "D", "workflow": "d-agent", "evidence": "leaf.evidence.schema.json",
+                  "max_iterations": 2, "checks": [{ "run": "always-pass", "on_fail": "iterate" }],
+                  "publish": "noop" },
+                {
+                  "id": "C",
+                  "states": [
+                    { "id": "probe", "kind": "agent", "workflow": "probe-agent",
+                      "evidence": "leaf.evidence.schema.json", "max_iterations": 2,
+                      "checks": [{ "run": "always-pass", "on_fail": "iterate" }] },
+                    { "id": "clarify", "kind": "gate", "questions_from": "probe",
+                      "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }] },
+                    { "id": "wrap", "kind": "agent", "workflow": "wrap-agent",
+                      "evidence": "leaf.evidence.schema.json", "max_iterations": 2,
+                      "checks": [{ "run": "always-pass", "on_fail": "iterate" }] }
+                  ]
+                },
+                {
+                  "id": "E",
+                  "states": [
+                    { "id": "probe_e", "kind": "agent", "workflow": "probe-e-agent",
+                      "evidence": "leaf.evidence.schema.json", "max_iterations": 2,
+                      "checks": [{ "run": "always-pass", "on_fail": "iterate" }] },
+                    { "id": "ask", "kind": "gate", "questions_from": "probe_e",
+                      "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }] }
+                  ]
+                }
+              ],
+              "next": "join-inner"
+            },
+            { "id": "join-inner", "kind": "join", "of": "inner", "next": "report" },
+            { "id": "report", "kind": "agent", "workflow": "report-agent",
+              "evidence": "leaf.evidence.schema.json", "max_iterations": 2,
+              "checks": [{ "run": "always-pass", "on_fail": "iterate" }] }
+          ]
+        }
+      ],
+      "next": "join-outer"
+    },
+    { "id": "join-outer", "kind": "join", "of": "outer", "next": "done" }
+  ]
+}
