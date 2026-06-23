@@ -74,3 +74,19 @@ def test_unknown_branch_in_fanout_phase_raises():
 def test_unknown_branch_raises():
     with pytest.raises(ValueError, match="no branch 'nope' in protocol"):
         lib.resolve_agent_unit(MULTI, branch="nope")
+
+
+def test_resolve_unit_by_path_subpipeline():
+    import json, pathlib
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+    p = json.load(open(ROOT / "tests/fixtures/subpipeline-mini/protocol.json"))
+    u = lib.resolve_agent_unit_path(p, ["review", "B", "finalize"])
+    assert u == {"agent_state": "finalize", "max_iterations": 2, "life_state": "review"}
+
+
+def test_resolve_unit_by_path_top_level_agent():
+    import json, pathlib
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+    p = json.load(open(ROOT / "tests/fixtures/multiphase-subpipeline/protocol.json"))
+    u = lib.resolve_agent_unit_path(p, ["setup"])
+    assert u == {"agent_state": "setup", "max_iterations": 2, "life_state": "setup"}

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import yaml
+import paths as _paths
 
 STATE_REMOTE = os.environ.get("STATE_REMOTE", "")
 STATE_BRANCH = os.environ.get("STATE_BRANCH", "agentic-state")
@@ -38,38 +39,70 @@ def protocol_id(proto_path):
         return json.load(f)["name"]
 
 
-def state_file(d, pid, instance, branch=None, phase=None, substate=None):
-    """
-    state_file <dir> <protocol-id> <instance-key> [branch] [phase] [substate]
-      no branch, no phase            → single-agent     <dir>/<pid>/<instance>.yaml
-      branch, no phase               → fan-out leg       <dir>/<pid>/<instance>/<branch>.yaml
-      phase, no branch               → multi-phase agent <dir>/<pid>/<instance>/<phase>.yaml
-      phase + branch                 → fan-out leg       <dir>/<pid>/<instance>/<phase>.<branch>.yaml
-      branch + substate              → sub-pipeline step <dir>/<pid>/<instance>/<branch>.<substate>.yaml
-      phase + branch + substate      → sub-pipeline step <dir>/<pid>/<instance>/<phase>.<branch>.<substate>.yaml
-    The branch CURSOR file is the (phase+)branch path WITHOUT substate; a
-    sub-pipeline branch stores `sub_state` there and the per-step state in the
-    substate path.
-    """
-    base = f"{d}/{pid}/{instance}"
-    if phase and branch and substate:
-        return f"{base}/{phase}.{branch}.{substate}.yaml"
-    if phase and branch:
-        return f"{base}/{phase}.{branch}.yaml"
+def _coord_to_path(branch=None, phase=None, substate=None):
+    """Back-compat: collapse the legacy 3 kwargs to a node-path list."""
+    p = []
     if phase:
-        return f"{base}/{phase}.yaml"
-    if branch and substate:
-        return f"{base}/{branch}.{substate}.yaml"
+        p.append(phase)
     if branch:
-        return f"{base}/{branch}.yaml"
-    return f"{base}.yaml"
+        p.append(branch)
+    if substate:
+        p.append(substate)
+    return p
 
 
-def output_artifact_path(d, pid, instance, branch=None, phase=None, substate=None, kind="evidence"):
+def state_file(d, pid, instance, branch=None, phase=None, substate=None, path=None):
+    """<dir>/<pid>/<instance>/<dot-joined-path>.yaml (or <instance>.yaml for the
+    empty path). `path` is the canonical node-path; the branch/phase/substate
+    kwargs are a back-compat shim that builds the equivalent 3-element path.
+    Depth-<=3 paths are byte-identical to the historical layout."""
+    base = f"{d}/{pid}/{instance}"
+    p = list(path) if path is not None else _coord_to_path(branch, phase, substate)
+    if not p:
+        return f"{base}.yaml"
+    return f"{base}/{'.'.join(p)}.yaml"
+
+
+def state_path(proto, tree_path):
+    """Tree-navigation path -> file-naming path. Drop the leading top-level
+    fanout/phase id when single-phase (it is omitted from historical filenames);
+    keep the full path when multi-phase. The recursive walker passes its tree
+    path through this before every state_file/output_artifact_path/join_marker_file
+    call, so depth-<=3 files stay byte-identical to the legacy layout."""
+    if not tree_path:
+        return []
+    return list(tree_path) if is_multiphase(proto) else list(tree_path[1:])
+
+
+def output_artifact_path(d, pid, instance, branch=None, phase=None, substate=None,
+                         kind="evidence", path=None):
     """Persisted-output path for a state, parallel to state_file but with a
     .<kind>.json suffix. kind is 'evidence' (agent) or 'answers' (gate)."""
-    sf = state_file(d, pid, instance, branch=branch, phase=phase, substate=substate)
+    sf = state_file(d, pid, instance, branch=branch, phase=phase, substate=substate, path=path)
     return sf[:-len(".yaml")] + f".{kind}.json"
+
+
+def join_marker_file(d, pid, instance, fanout_path):
+    """Path to the path-keyed join marker for a nested fanout.
+    `fanout_path` is the FILE-NAMING path (already converted via state_path);
+    callers in Task 12 pass lib.state_path(proto, tree_path).
+    Only nested fanouts (len(tree_path) > 1) should call this — top-level
+    fanout join tracking stays on _instance.yaml (back-compat)."""
+    base = f"{d}/{pid}/{instance}"
+    return f"{base}/{'.'.join(fanout_path)}.__join.yaml"
+
+
+def read_join(d, pid, instance, fanout_path):
+    """Read the path-keyed join marker dict, or {} if it does not exist yet."""
+    f = join_marker_file(d, pid, instance, fanout_path)
+    return load_yaml(f) if os.path.isfile(f) else {}
+
+
+def write_join(d, pid, instance, fanout_path, data):
+    """Write (overwrite) the path-keyed join marker dict."""
+    f = join_marker_file(d, pid, instance, fanout_path)
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    dump_yaml(f, data)
 
 
 def state_by_id(protocol, state_id):
@@ -84,18 +117,7 @@ def _fanout_state(protocol):
     for s in protocol.get("states", []):
         if s.get("kind") == "fanout":
             return s
-    return None
-
-
-def branch_config(protocol, branch):
-    """The branch entry dict from the protocol's fanout state, or None."""
-    fo = _fanout_state(protocol)
-    if not fo:
-        return None
-    for b in fo.get("branches", []):
-        if b.get("id") == branch:
-            return b
-    return None
+    return None  # unchanged: still returns the FIRST top-level fanout
 
 
 def is_subpipeline_branch(branch_cfg):
@@ -103,23 +125,22 @@ def is_subpipeline_branch(branch_cfg):
     return bool(branch_cfg) and bool(branch_cfg.get("states"))
 
 
+def branch_config(protocol, branch):
+    """The branch entry dict from the protocol's fanout state, or None."""
+    fo = _fanout_state(protocol)
+    return _paths.child_by_id(fo.get("branches", []), branch) if fo else None
+
+
 def branch_substates(protocol, branch):
     """Ordered list of sub-state dicts for a sub-pipeline branch ([] if flat)."""
     cfg = branch_config(protocol, branch)
-    if not is_subpipeline_branch(cfg):
-        return []
-    return list(cfg.get("states", []))
+    return list(cfg.get("states", [])) if is_subpipeline_branch(cfg) else []
 
 
 def next_substate_id(protocol, branch, substate):
     """Id of the sub-state following `substate`, or None if it is the last."""
-    subs = branch_substates(protocol, branch)
-    ids = [s["id"] for s in subs]
-    if substate in ids:
-        i = ids.index(substate)
-        if i + 1 < len(ids):
-            return ids[i + 1]
-    return None
+    fo = _fanout_state(protocol)
+    return _paths.next_sibling(protocol, [fo["id"], branch, substate]) if fo else None
 
 
 def branch_output_substate(protocol, branch):
@@ -148,19 +169,82 @@ def _branch_ids(protocol):
     return [b["id"] for b in fo.get("branches", [])] if fo else []
 
 
-def resolve_inputs(protocol, d, pid, instance, consuming_branch, consuming_phase, inputs):
-    """Map each {from, as} to {as, path, kind}. Resolution order for `from`:
+def _resolve_input_ref_pathaware(protocol, d, pid, instance, consuming_path, frm):
+    """Path-aware (depth-4+) single-`from` resolution, nearest-scope-first
+    (innermost enclosing sequence outward) relative to the consuming node's tree
+    path. Walks UP the enclosing sequences; in each scope it scans the sequence's
+    child states for a direct sibling match, and scans any child fanout's branches
+    for a nested-leg match. Returns {path, kind} or None.
+
+      - direct sibling sub-state F → output_artifact_path(state_path(proto, scope+[F]))
+        kind = 'answers' if F is a gate, else 'evidence'.
+      - leg F of a child fanout (scope+[fanoutid]) → its leg-output:
+          flat leg          → state_path(proto, scope+[fanoutid, F])
+          sub-pipeline leg  → its branch_output_substate appended.
+        kind = 'evidence' (a leg output is always evidence).
+    """
+    scope = _paths.parent_path(consuming_path)
+    while True:
+        children = (_paths.children(protocol, scope) if scope
+                    else protocol.get("states", []))
+        for c in children:
+            cid = c.get("id")
+            if cid == frm:
+                cpath = scope + [frm]
+                kind = "answers" if _paths.node_kind(protocol, cpath) == "gate" else "evidence"
+                return {"path": output_artifact_path(d, pid, instance,
+                                                     path=state_path(protocol, cpath),
+                                                     kind=kind),
+                        "kind": kind}
+            if c.get("kind") == "fanout":
+                fo_path = scope + [cid]
+                for br in c.get("branches", []):
+                    if br.get("id") == frm:
+                        leg_path = fo_path + [frm]
+                        if is_subpipeline_branch(br):
+                            last = br.get("states", [])[-1]["id"]
+                            leg_path = leg_path + [last]
+                        return {"path": output_artifact_path(d, pid, instance,
+                                                             path=state_path(protocol, leg_path),
+                                                             kind="evidence"),
+                                "kind": "evidence"}
+        if not scope:
+            return None
+        scope = _paths.parent_path(scope)
+
+
+def resolve_inputs(protocol, d, pid, instance, consuming_branch, consuming_phase,
+                   inputs, consuming_path=None):
+    """Map each {from, as} to {as, path, kind}.
+
+    When `consuming_path` (a tree-navigation path list) is given, resolution is
+    PATH-AWARE: each `from` is resolved OUTERMOST-search relative to the consuming
+    node's enclosing scopes (direct sibling sub-state, then a leg of a sibling
+    nested fanout, walking up to the top). This is the depth-4+ path that lets a
+    nested agent's inputs reach an earlier nested-fanout leg's evidence. Anything
+    unresolved falls through to the legacy 3-case resolution below (so a top-level
+    branch/phase `from` still works from a deep consumer).
+
+    Legacy (consuming_path=None) resolution order for `from`:
       1) a sub-state of the consuming branch  → that sub-state's evidence
       2) a fanout branch id                   → that branch's leg-output evidence
                                                  (last sub-state, or the flat leg)
       3) a phase id                           → that phase's evidence
-    `kind` is 'evidence' unless the source sub-state is a gate (then 'answers')."""
+    `kind` is 'evidence' unless the source sub-state is a gate (then 'answers').
+
+    Depth-<=3 results (paths + kind) are BYTE-IDENTICAL to the legacy function:
+    when consuming_path is None the path-aware branch is never taken."""
     phase = consuming_phase or None
     out = []
     sub_ids = {s["id"]: s for s in branch_substates(protocol, consuming_branch)} if consuming_branch else {}
     branch_ids = set(_branch_ids(protocol))
     for ref in inputs:
         frm, as_ = ref["from"], ref["as"]
+        if consuming_path is not None:
+            r = _resolve_input_ref_pathaware(protocol, d, pid, instance, consuming_path, frm)
+            if r is not None:
+                out.append({"as": as_, "path": r["path"], "kind": r["kind"]})
+                continue
         if frm in sub_ids:
             kind = "answers" if sub_ids[frm].get("kind") == "gate" else "evidence"
             path = output_artifact_path(d, pid, instance, branch=consuming_branch,
@@ -179,50 +263,63 @@ def resolve_inputs(protocol, d, pid, instance, consuming_branch, consuming_phase
     return out
 
 
-def resolve_agent_unit(protocol, phase="", branch="", substate=""):
-    """Resolve the agent unit for a leg: its agent_state id, max_iterations, and
-    life_state. Adds a SUBSTATE rung above BRANCH: a sub-pipeline branch resolves
-    to its current sub-state. Mirrors the PHASE → BRANCH → single-agent ladder."""
+def resolve_agent_unit_path(protocol, path):
+    """Canonical: resolve the agent unit for the leaf at `path`."""
+    node = _paths.node_at_path(protocol, path)
+    if node is None:
+        raise ValueError(f"no node at path {'.'.join(path)}")
+    life = _paths.enclosing_fanout_id(protocol, path)
+    return {"agent_state": path[-1],
+            "max_iterations": node.get("max_iterations"),
+            "life_state": life if life is not None else path[-1]}
+
+
+def _resolve_path(protocol, phase, branch, substate):
+    """Build a tree-navigation path from the legacy (phase, branch, substate) coords.
+    When phase is empty but branch is given, the enclosing fanout id is looked up so
+    node_at_path can resolve it (the old code searched all fanout states directly)."""
     if phase:
-        st = state_by_id(protocol, phase)
-        if not st:
-            raise ValueError(f"no phase '{phase}' in protocol")
-        if st.get("kind") == "fanout":
-            if not branch:
-                raise ValueError(f"PHASE='{phase}' is a fanout phase but BRANCH is empty")
-            for b in st.get("branches", []):
-                if b["id"] == branch:
-                    if substate:
-                        for s in b.get("states", []):
-                            if s["id"] == substate:
-                                return {"agent_state": substate,
-                                        "max_iterations": s.get("max_iterations"),
-                                        "life_state": phase}
-                        raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
-                    return {"agent_state": branch, "max_iterations": b.get("max_iterations"), "life_state": phase}
-            raise ValueError(f"no branch '{branch}' in phase '{phase}'")
-        return {"agent_state": phase, "max_iterations": st.get("max_iterations"), "life_state": phase}
+        # Phase given: [phase] or [phase, branch] or [phase, branch, substate]
+        p = [phase]
+        if branch:
+            p.append(branch)
+        if substate:
+            p.append(substate)
+        return p
     if branch:
-        fanout_id = None
+        # No phase: find the fanout that owns this branch and prefix its id
+        fo = _fanout_state(protocol)
+        p = [fo["id"], branch] if fo else [branch]
+        if substate:
+            p.append(substate)
+        return p
+    return []
+
+
+def resolve_agent_unit(protocol, phase="", branch="", substate=""):
+    """Back-compat shim preserving the exact error texts next.py/advance.py map."""
+    if not phase and not branch:
         for st in protocol.get("states", []):
-            if st.get("kind") == "fanout":
-                fanout_id = st["id"]
-                for b in st.get("branches", []):
-                    if b["id"] == branch:
-                        if substate:
-                            for s in b.get("states", []):
-                                if s["id"] == substate:
-                                    return {"agent_state": substate,
-                                            "max_iterations": s.get("max_iterations"),
-                                            "life_state": fanout_id}
-                            raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
-                        return {"agent_state": b["id"], "max_iterations": b.get("max_iterations"), "life_state": fanout_id}
-                break
+            if st.get("kind") == "agent":
+                return {"agent_state": st["id"], "max_iterations": st.get("max_iterations"),
+                        "life_state": st["id"]}
+        raise ValueError("protocol has no agent state")
+    # Preserve the historical fanout-without-branch error.
+    if phase:
+        st = _paths.node_at_path(protocol, [phase])
+        if st is None:
+            raise ValueError(f"no phase '{phase}' in protocol")
+        if st.get("kind") == "fanout" and not branch:
+            raise ValueError(f"PHASE='{phase}' is a fanout phase but BRANCH is empty")
+    path = _resolve_path(protocol, phase, branch, substate)
+    node = _paths.node_at_path(protocol, path)
+    if node is None:
+        if substate:
+            raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
+        if phase and branch:
+            raise ValueError(f"no branch '{branch}' in phase '{phase}'")
         raise ValueError(f"no branch '{branch}' in protocol")
-    for st in protocol.get("states", []):
-        if st.get("kind") == "agent":
-            return {"agent_state": st["id"], "max_iterations": st.get("max_iterations"), "life_state": st["id"]}
-    raise ValueError("protocol has no agent state")
+    return resolve_agent_unit_path(protocol, path)
 
 
 def phase_states(protocol):
@@ -369,16 +466,24 @@ def instance_file(d, pid, instance):
 
 
 def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, questions=None,
-              phase=None):
+              phase=None, path=None):
     """Seed a gate state file (gates.state=open), emit the awaiting check-run, and
     refresh the status comment. `branch` scopes the gate to a sub-pipeline leg.
     `phase` qualifies the path for multi-phase fan-out legs (e.g. review.B.clarify.yaml).
-    `questions` (a list of {id,text}) turns this into a data-carrying gate whose
+    `path` is the canonical FILE-NAMING path (already converted via state_path); when
+    given it takes precedence over branch/phase/gate_id for the state file and check-run
+    name. `questions` (a list of {id,text}) turns this into a data-carrying gate whose
     comment lists them with the /answer syntax. Caller owns the cursor + cas_push."""
-    if branch:
+    if path is not None:
+        sf = state_file(dir_, pid, instance, path=path)
+        # Build check-run name from path segments: pid + path elements joined by "/"
+        cr_name = pid + "/" + "/".join(path)
+    elif branch:
         sf = state_file(dir_, pid, instance, branch=branch, substate=gate_id, phase=phase)
+        cr_name = f"{pid}/{branch}/{gate_id}"
     else:
         sf = state_file(dir_, pid, instance, phase=gate_id)
+        cr_name = f"{pid}/{gate_id}"
     os.makedirs(os.path.dirname(sf), exist_ok=True)
     gates = {"state": "open", "history": []}
     if questions:
@@ -387,7 +492,6 @@ def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, qu
         "protocol": pid, "instance": instance, "state": gate_id,
         "head_sha": sha, "gates": gates,
     })
-    cr_name = f"{pid}/{branch}/{gate_id}" if branch else f"{pid}/{gate_id}"
     if questions:
         listed = "\n".join(f"{i+1}. `{q['id']}` — {q['text']}" for i, q in enumerate(questions))
         summary = ("Answer with `/answer <id>: <value>` (one or more per comment), e.g. "
@@ -421,23 +525,27 @@ def state_checkout(dir_):
         git(dir_, "push", "-q", "origin", STATE_BRANCH)
 
 
-def cas_push(dir_, msg):
-    """
-    cas_push <dir> <message> — commit everything and push fast-forward-only.
-    One retry via rebase. NEVER force-push.
-    """
-    git(dir_, "add", "-A")
+def cas_push(dir_, msg, attempts=5):
+    """Commit everything and push fast-forward-only, retrying via rebase up to
+    `attempts` times. NEVER force-push. A genuinely empty commit is a bug → fail."""
+    import time
+    git(dir_, *GIT_ID, "add", "-A")
     # An empty commit here means the engine pushed without changing state — a bug; fail loudly.
-    git(dir_, *GIT_ID, "commit", "-qm", msg)
-    # check=False intentional: non-zero means the push was rejected; we rebase and retry below.
-    result = subprocess.run(
-        ["git", "-C", dir_, "push", "-q", "origin", STATE_BRANCH],
-        text=True, capture_output=True
-    )
-    if result.returncode != 0:
-        sys.stderr.write("[engine] CAS push rejected, rebasing once\n")
+    staged = subprocess.run(["git", "-C", dir_, "diff", "--cached", "--quiet"]).returncode
+    if staged == 0:
+        sys.stderr.write("[engine] cas_push: nothing staged — refusing empty commit\n")
+        sys.exit(1)
+    git(dir_, *GIT_ID, "commit", "-q", "-m", msg)
+    for i in range(attempts):
+        r = subprocess.run(["git", "-C", dir_, "push", "-q", "origin", STATE_BRANCH])
+        if r.returncode == 0:
+            return
+        sys.stderr.write(f"[engine] CAS push rejected (attempt {i+1}/{attempts}), rebasing\n")
         git(dir_, *GIT_ID, "pull", "-q", "--rebase", "origin", STATE_BRANCH)
-        git(dir_, "push", "-q", "origin", STATE_BRANCH)
+        if i + 1 < attempts:
+            time.sleep(0.1 * (i + 1))
+    sys.stderr.write("[engine] CAS push failed after retries\n")
+    sys.exit(1)
 
 
 def resolve_executable(sdir, name, pdir, ex=""):
@@ -826,6 +934,23 @@ def render_fanout_status_body(dir_, pid, instance, proto):
         headline = "✅ Review complete — published."
 
     return f"\U0001f50d **{pid} · {instance}**\n\n{sections}{headline}\n\n[Full state & audit trail]({link})\n"
+
+
+DEFAULT_MAX_DEPTH = 4
+
+
+def effective_max_depth(proto):
+    """Return the protocol's configured max_depth, or DEFAULT_MAX_DEPTH if unset."""
+    v = proto.get("max_depth")
+    return int(v) if isinstance(v, int) and not isinstance(v, bool) else DEFAULT_MAX_DEPTH
+
+
+def check_depth(proto):
+    """Raise ValueError if the protocol's static tree depth exceeds the cap."""
+    d = _paths.max_static_depth(proto)
+    cap = effective_max_depth(proto)
+    if d > cap:
+        raise ValueError(f"protocol depth {d} exceeds max_depth {cap}")
 
 
 def has_fanout(protocol):
