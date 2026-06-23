@@ -148,3 +148,12 @@ def test_advance_nested_leg_done_fires_join_with_path(engine_env, tmp_path):
     # (b) stderr shows protocol-join carrying path=preflight.deep.analyze.
     assert "event_type=protocol-join" in r.stderr, r.stderr
     assert "client_payload[path]=preflight.deep.analyze" in r.stderr, r.stderr
+    # (c) NO spurious cursor write at the analyze FANOUT: deep.analyze.yaml must
+    # NOT exist — sec is a flat fanout child (its own terminal), not a
+    # sub-pipeline leg with a cursor. Writing deep.analyze.yaml {state: done}
+    # would mark the whole analyze fanout done while perf is still in flight.
+    assert not (fdir / "deep.analyze.yaml").is_file(), \
+        "sec completing must NOT write the analyze fanout cursor file"
+    # perf is still in flight (its leg file stays non-terminal).
+    perf = _read_yaml(fdir / "deep.analyze.perf.yaml")
+    assert perf.get("state") != "done", f"perf should not be done yet: {perf}"

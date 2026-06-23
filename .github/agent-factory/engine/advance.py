@@ -544,6 +544,23 @@ def main():
         persist_output(dir_, pid, instance, branch, phase, substate, evid,
                        file_path=file_path)
 
+        # --- FLAT nested-fanout child leg (NODE_PATH, parent is a FANOUT). ---
+        # Its parent is a fanout, NOT a sub-pipeline sequence, so there is no
+        # leg-cursor to advance: the leg is its OWN terminal (tracked by the
+        # fanout's per-leg files + __join.yaml). Mark this leg's own sf done and
+        # fire the enclosing fanout's path-keyed join — DO NOT write a cursor
+        # file at the parent (that would prematurely mark the whole fanout done).
+        if tree_path is not None and _paths.is_fanout(proto, _paths.parent_path(tree_path)):
+            lib.set_check_run(cr_name, sha, "completed", "success",
+                              f"{substate} complete", "")
+            update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                                  "✅ done — published.", max_iter, github_repository)
+            lib.cas_push(dir_, f"{instance}: {'.'.join(tree_path)} done → leg done")
+            efp = _paths.enclosing_fanout_path(proto, tree_path)
+            fire_join(pid, instance, branch,
+                      ".".join(efp) if efp and len(efp) > 1 else "")
+            return
+
         # --- Sub-pipeline branch leg: advance the BRANCH CURSOR, not the phase. ---
         if branch and substate:
             if tree_path is not None:
@@ -688,7 +705,13 @@ def main():
         state_data["state"] = "failed"
         lib.dump_yaml(sf, state_data)
 
-        if branch and substate:
+        # A FLAT nested-fanout child leg (parent is a FANOUT) is its OWN terminal:
+        # sf is already marked failed above; there is no leg-cursor to advance, so
+        # we must NOT write the parent fanout file. Only a sub-pipeline SEQUENCE
+        # leg has a cursor (advance_node marks the branch file failed).
+        flat_fanout_child = (tree_path is not None
+                             and _paths.is_fanout(proto, _paths.parent_path(tree_path)))
+        if branch and substate and not flat_fanout_child:
             if tree_path is not None:
                 cursor_sf = lib.state_file(
                     dir_, pid, instance,
