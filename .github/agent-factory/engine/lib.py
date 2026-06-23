@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import yaml
+import paths as _paths
 
 STATE_REMOTE = os.environ.get("STATE_REMOTE", "")
 STATE_BRANCH = os.environ.get("STATE_BRANCH", "agentic-state")
@@ -82,18 +83,7 @@ def _fanout_state(protocol):
     for s in protocol.get("states", []):
         if s.get("kind") == "fanout":
             return s
-    return None
-
-
-def branch_config(protocol, branch):
-    """The branch entry dict from the protocol's fanout state, or None."""
-    fo = _fanout_state(protocol)
-    if not fo:
-        return None
-    for b in fo.get("branches", []):
-        if b.get("id") == branch:
-            return b
-    return None
+    return None  # unchanged: still returns the FIRST top-level fanout
 
 
 def is_subpipeline_branch(branch_cfg):
@@ -101,23 +91,22 @@ def is_subpipeline_branch(branch_cfg):
     return bool(branch_cfg) and bool(branch_cfg.get("states"))
 
 
+def branch_config(protocol, branch):
+    """The branch entry dict from the protocol's fanout state, or None."""
+    fo = _fanout_state(protocol)
+    return _paths._child_by_id(fo.get("branches", []), branch) if fo else None
+
+
 def branch_substates(protocol, branch):
     """Ordered list of sub-state dicts for a sub-pipeline branch ([] if flat)."""
     cfg = branch_config(protocol, branch)
-    if not is_subpipeline_branch(cfg):
-        return []
-    return list(cfg.get("states", []))
+    return list(cfg.get("states", [])) if is_subpipeline_branch(cfg) else []
 
 
 def next_substate_id(protocol, branch, substate):
     """Id of the sub-state following `substate`, or None if it is the last."""
-    subs = branch_substates(protocol, branch)
-    ids = [s["id"] for s in subs]
-    if substate in ids:
-        i = ids.index(substate)
-        if i + 1 < len(ids):
-            return ids[i + 1]
-    return None
+    fo = _fanout_state(protocol)
+    return _paths.next_sibling(protocol, [fo["id"], branch, substate]) if fo else None
 
 
 def branch_output_substate(protocol, branch):
@@ -177,50 +166,63 @@ def resolve_inputs(protocol, d, pid, instance, consuming_branch, consuming_phase
     return out
 
 
-def resolve_agent_unit(protocol, phase="", branch="", substate=""):
-    """Resolve the agent unit for a leg: its agent_state id, max_iterations, and
-    life_state. Adds a SUBSTATE rung above BRANCH: a sub-pipeline branch resolves
-    to its current sub-state. Mirrors the PHASE → BRANCH → single-agent ladder."""
+def resolve_agent_unit_path(protocol, path):
+    """Canonical: resolve the agent unit for the leaf at `path`."""
+    node = _paths.node_at_path(protocol, path)
+    if node is None:
+        raise ValueError(f"no node at path {'.'.join(path)}")
+    life = _paths.enclosing_fanout_id(protocol, path)
+    return {"agent_state": path[-1],
+            "max_iterations": node.get("max_iterations"),
+            "life_state": life if life is not None else path[-1]}
+
+
+def _resolve_path(protocol, phase, branch, substate):
+    """Build a tree-navigation path from the legacy (phase, branch, substate) coords.
+    When phase is empty but branch is given, the enclosing fanout id is looked up so
+    node_at_path can resolve it (the old code searched all fanout states directly)."""
     if phase:
-        st = state_by_id(protocol, phase)
-        if not st:
-            raise ValueError(f"no phase '{phase}' in protocol")
-        if st.get("kind") == "fanout":
-            if not branch:
-                raise ValueError(f"PHASE='{phase}' is a fanout phase but BRANCH is empty")
-            for b in st.get("branches", []):
-                if b["id"] == branch:
-                    if substate:
-                        for s in b.get("states", []):
-                            if s["id"] == substate:
-                                return {"agent_state": substate,
-                                        "max_iterations": s.get("max_iterations"),
-                                        "life_state": phase}
-                        raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
-                    return {"agent_state": branch, "max_iterations": b.get("max_iterations"), "life_state": phase}
-            raise ValueError(f"no branch '{branch}' in phase '{phase}'")
-        return {"agent_state": phase, "max_iterations": st.get("max_iterations"), "life_state": phase}
+        # Phase given: [phase] or [phase, branch] or [phase, branch, substate]
+        p = [phase]
+        if branch:
+            p.append(branch)
+        if substate:
+            p.append(substate)
+        return p
     if branch:
-        fanout_id = None
+        # No phase: find the fanout that owns this branch and prefix its id
+        fo = _fanout_state(protocol)
+        p = [fo["id"], branch] if fo else [branch]
+        if substate:
+            p.append(substate)
+        return p
+    return []
+
+
+def resolve_agent_unit(protocol, phase="", branch="", substate=""):
+    """Back-compat shim preserving the exact error texts next.py/advance.py map."""
+    if not phase and not branch:
         for st in protocol.get("states", []):
-            if st.get("kind") == "fanout":
-                fanout_id = st["id"]
-                for b in st.get("branches", []):
-                    if b["id"] == branch:
-                        if substate:
-                            for s in b.get("states", []):
-                                if s["id"] == substate:
-                                    return {"agent_state": substate,
-                                            "max_iterations": s.get("max_iterations"),
-                                            "life_state": fanout_id}
-                            raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
-                        return {"agent_state": b["id"], "max_iterations": b.get("max_iterations"), "life_state": fanout_id}
-                break
+            if st.get("kind") == "agent":
+                return {"agent_state": st["id"], "max_iterations": st.get("max_iterations"),
+                        "life_state": st["id"]}
+        raise ValueError("protocol has no agent state")
+    # Preserve the historical fanout-without-branch error.
+    if phase:
+        st = _paths.node_at_path(protocol, [phase])
+        if st is None:
+            raise ValueError(f"no phase '{phase}' in protocol")
+        if st.get("kind") == "fanout" and not branch:
+            raise ValueError(f"PHASE='{phase}' is a fanout phase but BRANCH is empty")
+    path = _resolve_path(protocol, phase, branch, substate)
+    node = _paths.node_at_path(protocol, path)
+    if node is None:
+        if substate:
+            raise ValueError(f"no sub-state '{substate}' in branch '{branch}'")
+        if phase and branch:
+            raise ValueError(f"no branch '{branch}' in phase '{phase}'")
         raise ValueError(f"no branch '{branch}' in protocol")
-    for st in protocol.get("states", []):
-        if st.get("kind") == "agent":
-            return {"agent_state": st["id"], "max_iterations": st.get("max_iterations"), "life_state": st["id"]}
-    raise ValueError("protocol has no agent state")
+    return resolve_agent_unit_path(protocol, path)
 
 
 def phase_states(protocol):
