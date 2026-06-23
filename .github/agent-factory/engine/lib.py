@@ -170,10 +170,11 @@ def _branch_ids(protocol):
 
 
 def _resolve_input_ref_pathaware(protocol, d, pid, instance, consuming_path, frm):
-    """Path-aware (depth-4+) single-`from` resolution, OUTERMOST-search relative to
-    the consuming node's tree path. Walks UP the enclosing sequences; in each scope
-    it scans the sequence's child states for a direct sibling match, and scans any
-    child fanout's branches for a nested-leg match. Returns {path, kind} or None.
+    """Path-aware (depth-4+) single-`from` resolution, nearest-scope-first
+    (innermost enclosing sequence outward) relative to the consuming node's tree
+    path. Walks UP the enclosing sequences; in each scope it scans the sequence's
+    child states for a direct sibling match, and scans any child fanout's branches
+    for a nested-leg match. Returns {path, kind} or None.
 
       - direct sibling sub-state F → output_artifact_path(state_path(proto, scope+[F]))
         kind = 'answers' if F is a gate, else 'evidence'.
@@ -535,15 +536,14 @@ def cas_push(dir_, msg, attempts=5):
         sys.stderr.write("[engine] cas_push: nothing staged — refusing empty commit\n")
         sys.exit(1)
     git(dir_, *GIT_ID, "commit", "-q", "-m", msg)
-    last = None
     for i in range(attempts):
         r = subprocess.run(["git", "-C", dir_, "push", "-q", "origin", STATE_BRANCH])
         if r.returncode == 0:
             return
-        last = r
         sys.stderr.write(f"[engine] CAS push rejected (attempt {i+1}/{attempts}), rebasing\n")
         git(dir_, *GIT_ID, "pull", "-q", "--rebase", "origin", STATE_BRANCH)
-        time.sleep(0.1 * (i + 1))
+        if i + 1 < attempts:
+            time.sleep(0.1 * (i + 1))
     sys.stderr.write("[engine] CAS push failed after retries\n")
     sys.exit(1)
 
@@ -942,7 +942,7 @@ DEFAULT_MAX_DEPTH = 4
 def effective_max_depth(proto):
     """Return the protocol's configured max_depth, or DEFAULT_MAX_DEPTH if unset."""
     v = proto.get("max_depth")
-    return int(v) if isinstance(v, int) else DEFAULT_MAX_DEPTH
+    return int(v) if isinstance(v, int) and not isinstance(v, bool) else DEFAULT_MAX_DEPTH
 
 
 def check_depth(proto):

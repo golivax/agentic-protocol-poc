@@ -54,7 +54,8 @@ def _fanout_action(proto, path, branches):
     keeps reason='fanout' with NO phase key; multi-phase uses reason='phase:<id>'
     and adds the phase key — byte-identical to the legacy start_fanout /
     seed_and_dispatch_phase emits. `branches` stays the authoritative key the GHA
-    layer reads (a `legs` key is added alongside in Stage 4, not here)."""
+    layer reads; `legs` is emitted alongside as the path-aware companion for
+    nested-fanout matrix wiring."""
     multi = lib.is_multiphase(proto)
     act = {"action": "run-fanout", "iteration": 1, "feedback": "",
            "reason": (f"phase:{path[-1]}" if multi else "fanout")}
@@ -505,14 +506,6 @@ def _find_open_gate(proto, want=""):
                     return gate_path
     return None
 
-
-def _find_open_gate_branch(proto, want_branch=""):
-    """Back-compat shim: returns (branch_id, gate_substate_id) or (None, None).
-    Delegates to _find_open_gate and unpacks the last two path segments."""
-    gate_path = _find_open_gate(proto, want_branch)
-    if gate_path is None:
-        return None, None
-    return gate_path[-2], gate_path[-1]
 
 
 def _parse_answers(body):

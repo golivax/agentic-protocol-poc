@@ -15,7 +15,7 @@ import lib
 import paths
 
 
-def _nested_join(dir_, instance, proto_path, pid, pr, sha):
+def _nested_join(dir_, instance, proto_path, pid):
     """Evaluate a NESTED fanout barrier addressed by NODE_PATH (tree path length
     > 1, e.g. ["preflight","deep","analyze"]). On all-done it bubbles: writes the
     path-keyed __join.yaml marker, advances the ENCLOSING sub-pipeline cursor to
@@ -146,7 +146,7 @@ def main():
     # which stays byte-identical.
     node_path = os.environ.get("NODE_PATH", "")
     if node_path and len(node_path.split(".")) > 1:
-        _nested_join(dir_, instance, proto, pid, pr, sha)
+        _nested_join(dir_, instance, proto, pid)
         return
 
     inf = lib.instance_file(dir_, pid, instance)

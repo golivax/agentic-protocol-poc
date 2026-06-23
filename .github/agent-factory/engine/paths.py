@@ -3,7 +3,7 @@
 No I/O, no git — addressing and structural relations only. The path is the
 arbitrary-depth generalization of the fixed (phase, branch, substate) tuple."""
 
-_LEAF_KINDS = ("agent", "gate", "merge", "join")
+_LEAF_KINDS = ("agent", "gate", "merge", "join", "deterministic")
 
 
 def _root_children(proto):
@@ -33,7 +33,7 @@ def node_at_path(proto, path):
     cur_children = _root_children(proto)
     cur = None
     for i, seg in enumerate(path):
-        if cur is None or _is_sequence_node(cur) or i == 0:
+        if cur is None or _is_sequence_node(cur):
             # selecting a child of a sequence (root or sub-pipeline)
             container = cur_children if cur is None else cur.get("states", [])
             cur = _child_by_id(container, seg)
