@@ -4,51 +4,49 @@
 
 **Goal:** Collapse the engine's two code paths (legacy phase machinery + recursive `NODE_PATH` sequencer) into one recursive walk where the protocol root is a sequence node, retiring `protocol-advance`; prove it with a capability test-suite driven entirely offline via `NODE_PATH`.
 
-**Architecture:** A top-level phase becomes a depth-1 tree path (`["review"]`). Entry, phase transitions, the top-level join, the approval gate, and merge/combine all route through the existing recursive `enter_node`/`advance_node`/`complete_sequence`/`_nested_join` sequencer. The root sequence's cursor stays in `_instance.yaml.phase`; nested cursors keep their `<seq>.yaml` files. A phase transition is "continue at the next sibling path" (`dispatch_continue(path=…)`), so the `protocol-advance` dispatch type is deleted.
+**Architecture:** A top-level phase becomes a depth-1 tree path (`["review"]`). Entry, phase transitions, the top-level join, the approval gate, and merge/combine all route through the existing recursive `enter_node`/`advance_node`/`complete_sequence`/`_nested_join` sequencer. The root sequence's cursor stays in `_instance.yaml.phase`; nested cursors keep their `<seq>.yaml` files. A phase transition becomes "continue at the next sibling path" (`dispatch_continue(path=…)`), so the `protocol-advance` dispatch type is deleted.
 
 **Tech Stack:** Python 3 + PyYAML (runtime); pytest (dev-only). No new dependencies. Engine lives in `.github/agent-factory/engine/`.
+
+**Execution discipline (IMPORTANT):** The refactor is INCREMENTAL — the full pytest suite stays green after every task. `protocol-advance` and the other legacy mechanisms are removed only in the final refactor task (Task 8), after the unified path is proven. Each behavior-changing task updates the existing tests that assert the old behavior IN THE SAME task. Tasks that are pure refactors (no observable change) keep the suite green and add a characterization test.
 
 **Scope:** This plan is **Stage 4a only** (engine + pytest). It produces working, fully pytest-verified software on its own. **Stage 4b** (GitHub Actions wiring to the `NODE_PATH` axis) and **Stage 4c** (live `deep-review-stub` protocol + live PR verification of deep/code-review/recover) are separate follow-on plans, authored after 4a lands and the emitted-action shapes (`legs[]`, `dispatch_continue` payloads) are stable. See `docs/superpowers/specs/2026-06-23-stage4-recursive-engine-unification-design.md` §8.
 
 ## Global Constraints
 
-- **Engine is generic.** No protocol-specific logic in `.github/agent-factory/engine/`. The protocol id, state path, checks, and publish hooks are derived from `protocol.json` / the protocol directory. (CLAUDE.md "engine vs protocol".)
-- **State advances only by fast-forward CAS push** (`lib.cas_push`). Never force-push `agentic-state`. The single writer of non-initial state is `advance.py` (+ `join.py` for the barrier).
-- **`NODE_PATH` is the OS-shadow-safe coordinate name** (never `PATH`). The dot-joined TREE path is rooted at the first top-level node id; node ids must not contain `.` (it is the path separator).
-- **TWO path notions** (`.superpowers/sdd/PATH-CONVENTIONS.md`): TREE-nav path (rooted at top node id) vs FILE-naming path (`lib.state_path(proto, tree)` drops the leading id when SINGLE-PHASE). The walker carries TREE paths and converts at every file call via `lib.state_path`.
-- **Security:** agent-derived strings (answer body, feedback, verdicts, filenames, `client_payload[path]`) never interpolated into a shell `run:` block — `env:`-passed only. (This matters in 4b; in 4a keep `NODE_PATH`/answer-body parsing strictly via env + argv-as-data.)
-- **No byte-identity goal.** Legacy byte-identity fixtures/tests are removed. The oracles are: `code-review`, `recover-mental-model-stub`, `deep-fanout`, `gate-deep`, plus re-added single-agent / simple-fanout capability fixtures.
-- **Release bar:** clear, actionable authoring-error messages (include the offending node path); robust handling of malformed `protocol.json`.
-- **Tests are pytest** under `tests/` using `tests/conftest.py` fixtures (`engine_env`, `run_engine`, `run_check`, `read_state_yaml`, a bare git origin for `agentic-state`, `ENGINE_LOCAL=1`). Run with `pytest tests/ -q`.
+- **Engine is generic.** No protocol-specific logic in `.github/agent-factory/engine/`. Protocol id, state path, checks, publish hooks derived from `protocol.json` / the protocol directory. (CLAUDE.md "engine vs protocol".)
+- **State advances only by fast-forward CAS push** (`lib.cas_push`). Never force-push `agentic-state`. Sole writer of non-initial state: `advance.py` (+ `join.py` for the barrier).
+- **`NODE_PATH` is the OS-shadow-safe coordinate name** (never `PATH`). The dot-joined TREE path is rooted at the first top-level node id; node ids must not contain `.`.
+- **TWO path notions** (`.superpowers/sdd/PATH-CONVENTIONS.md` — READ IT): TREE-nav path (rooted at top node id) vs FILE-naming path (`lib.state_path(proto, tree)` drops the leading id when SINGLE-PHASE). The walker carries TREE paths and converts at every file call via `lib.state_path`.
+- **Security:** agent-derived strings (answer body, feedback, verdicts, filenames, `client_payload[path]`) never interpolated into a shell `run:` block — `env:`/argv-as-data only.
+- **No byte-identity goal.** Legacy byte-identity fixtures/tests are removed (Task 16). Oracles: `code-review`, `recover-mental-model-stub`, `deep-fanout`, `gate-deep`, plus re-added single-agent / simple-fanout capability fixtures.
+- **Release bar:** clear, actionable authoring-error messages (include the offending node path/id); robust handling of malformed `protocol.json`.
+- **Tests are pytest** under `tests/` using `tests/conftest.py` fixtures (`engine_env`, `run_engine`, `run_check`, `read_state_yaml`; bare git origin for `agentic-state`; `ENGINE_LOCAL=1`). Run `pytest tests/ -q`. The suite must be GREEN at every task commit.
+- **Confirmed protocol shapes** (read each protocol.json; do not re-derive): code-review = `preflight`(agent) → `review`(fanout: `grumpy`,`security`) → `join`(`next: approval`) → `approval`(gate). recover = `recover`(fanout) → `join`(`next: combine`) → `combine`(merge). deep-fanout = `preflight`(fanout: `quick` ∥ `deep`[sub-pipeline]) → `join-preflight`(`next: done`), single-phase.
 
-## Key `lib.py` helpers tasks rely on (verified signatures)
+## Key `lib.py` helpers (verified signatures)
 
-- `state_file(d, pid, instance, branch=None, phase=None, substate=None, path=None)`
-- `state_path(proto, tree_path)` → FILE-naming path list
-- `instance_file(d, pid, instance)`, `output_artifact_path(...)`, `join_marker_file/read_join/write_join`
-- `state_by_id(proto, id)`, `_fanout_state(proto)`, `next_phase_id(proto, phase_id)`, `is_multiphase(proto)`, `phase_states(proto)`
+- `state_file(d, pid, instance, branch=None, phase=None, substate=None, path=None)`; `state_path(proto, tree_path)`; `instance_file(d, pid, instance)`; `output_artifact_path(...)`; `join_marker_file`/`read_join`/`write_join`
+- `state_by_id(proto, id)`; `_fanout_state(proto)`; `next_phase_id(proto, phase_id)`; `is_multiphase(proto)`; `phase_states(proto)`
 - `resolve_agent_unit_path(proto, tree_path)` → `{agent_state, max_iterations, life_state}`
 - `open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, questions=None, phase=None)`
-- `dispatch_continue(pid, instance, branch=None, substate=None, phase="", path=None)` → fires `protocol-continue`
-- `fire_join_dispatch(pid, instance, fanout_path="")` → fires `protocol-join`
-- `run_merge_hook(dir_, pid, instance, proto_path, merge_state)` → `{conclusion, summary}`
+- `dispatch_continue(pid, instance, branch=None, substate=None, phase="", path=None)`; `fire_join_dispatch(pid, instance, fanout_path="")`; `run_merge_hook(dir_, pid, instance, proto_path, merge_state)`
 - `ensure_phase_label`, `apply_setup_label`, `remove_pr_label`, `set_check_run`, `cas_push`
 - `render_pipeline_status_body`, `render_instance_status_body`, `upsert_status_comment`, `finalize_superseded_comment`, `ensure_status_comment`
-- `paths`: `node_at_path`, `node_kind`, `children`, `first_child_id`, `next_sibling`, `parent_path`, `enclosing_fanout_id`, `enclosing_fanout_path`, `path_depth`, `max_static_depth`
+- `paths`: `node_at_path`, `node_kind`, `children`, `first_child_id`, `next_sibling`, `parent_path`, `enclosing_fanout_id`, `enclosing_fanout_path`, `path_depth`, `max_static_depth`, `root_ids`, `is_root_child`
 
 ## File structure
 
 | File | Responsibility | Change |
 |---|---|---|
-| `engine/paths.py` | pure tree nav | + root-child predicate helper |
-| `engine/next.py` | planner: entry / continue / answer / override / resolve-gate | unify entry; route phase transitions + gates through recursive walk; delete `start_fanout`, `seed_and_dispatch_phase`, `advance-phase`, single-agent path; `workflow` on legs |
-| `engine/advance.py` | sole writer; iterate/done/failed | delete legacy coord block; agent-phase-clear → root cursor + `dispatch_continue(path)`; delete `protocol-advance` fire |
-| `engine/join.py` | barrier | top join → recursive sequence-advance to `.next`; fold mode-2/3/gate into recursive `continue` |
-| `engine/lib.py` | shared I/O + helpers | minor: confirm `dispatch_continue(path=…)`, merge arm support |
-| `tests/test_unified_*.py` | NEW capability e2e walks | the oracle suite |
-| `tests/fixtures/single-agent/`, `tests/fixtures/simple-fanout/` | re-added capability fixtures | recreate under new engine |
-| legacy fixtures/tests | removed | `fanout-mini`, `pipeline-mini`, `multiphase-subpipeline`, `subpipeline-mini` + byte-identity tests |
-| `docs/STATUS.md` | status | update at end |
+| `engine/paths.py` | pure tree nav | + `root_ids` / `is_root_child` |
+| `engine/next.py` | planner | unify entry (`enter_root`); depth-1 continue for gate/merge; gate/override tails → path-continue; delete `start_fanout`/`seed_and_dispatch_phase`/`advance-phase`/single-agent |
+| `engine/advance.py` | sole writer | agent-phase clear → root cursor + `dispatch_continue(path)`; delete `protocol-advance` fire + legacy coord block |
+| `engine/join.py` | barrier | top join → advance enclosing-seq cursor to `.next` via path-continue; fold mode-2/3/gate tails into recursive `continue` |
+| `tests/test_unified_*.py` | NEW oracle + capability tests | the release suite |
+| `tests/fixtures/{single-agent,simple-fanout}/` | re-added capability fixtures | recreated under new engine |
+| legacy fixtures/tests | removed (Task 16) | `fanout-mini`,`pipeline-mini`,`multiphase-subpipeline`,`subpipeline-mini` + byte-identity tests |
+| `docs/STATUS.md` | status | updated (Task 17) |
 
 ---
 
@@ -61,39 +59,34 @@
 - Test: `tests/test_paths.py` (append)
 
 **Interfaces:**
-- Produces: `paths.is_root_child(proto, path) -> bool` (True iff `path` names a top-level node, i.e. `len(path)==1` and the id is in `proto["states"]`); `paths.root_ids(proto) -> list[str]`.
+- Produces: `paths.root_ids(proto) -> list[str]`; `paths.is_root_child(proto, path) -> bool` (True iff `len(path)==1` and `path[0]` is a top-level node id).
 - Consumes: existing `paths._root_children`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_paths.py
-import json, pathlib, sys
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / ".github/agent-factory/engine"))
-import paths
-
-CR = json.load(open(ROOT / ".github/agent-factory/protocols/code-review/protocol.json"))
-
+# tests/test_paths.py (append)
 def test_root_ids_lists_top_level_phases():
+    import json, pathlib, sys
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(ROOT / ".github/agent-factory/engine"))
+    import paths
+    CR = json.load(open(ROOT / ".github/agent-factory/protocols/code-review/protocol.json"))
     assert paths.root_ids(CR) == [s["id"] for s in CR["states"]]
-
-def test_is_root_child_true_for_depth1_phase():
-    first = CR["states"][0]["id"]
-    assert paths.is_root_child(CR, [first]) is True
-    assert paths.is_root_child(CR, [first, "grumpy"]) is False
+    assert paths.is_root_child(CR, ["preflight"]) is True
+    assert paths.is_root_child(CR, ["review", "grumpy"]) is False
     assert paths.is_root_child(CR, ["nonesuch"]) is False
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run to verify it fails**
 
-Run: `pytest tests/test_paths.py -k root -v`
+Run: `pytest tests/test_paths.py -k root_ids -v`
 Expected: FAIL — `AttributeError: module 'paths' has no attribute 'root_ids'`
 
 - [ ] **Step 3: Implement**
 
 ```python
-# paths.py (append near node_at_path)
+# paths.py (append after node_at_path)
 def root_ids(proto):
     return [c["id"] for c in _root_children(proto)]
 
@@ -101,10 +94,9 @@ def is_root_child(proto, path):
     return len(path) == 1 and path[0] in root_ids(proto)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run to verify it passes**
 
-Run: `pytest tests/test_paths.py -k root -v`
-Expected: PASS
+Run: `pytest tests/test_paths.py -k root_ids -v` → PASS. Then `pytest tests/ -q` → all green.
 
 - [ ] **Step 5: Commit**
 
@@ -115,180 +107,93 @@ git commit -m "feat(paths): root-child predicate for root-as-sequence walk"
 
 ---
 
-## Phase B — Oracle e2e walks (write failing, then make pass)
+## Phase B — Incremental refactor (suite green every task; protocol-advance deleted in Task 8)
 
-These two tests are the **specification** for the refactor. Write them now; they fail against today's engine (which drives multi-phase via `protocol-advance`, not `NODE_PATH`). Tasks 3–10 make them pass. Model them on `tests/test_deep_fanout_e2e.py::test_deep_fanout_walks_to_done`: invoke `next.py`/`advance.py`/`join.py` as subprocesses, re-clone the bare origin between steps, assert state + dispatch stderr at each numbered step.
-
-### Task 2: Code-review unified NODE_PATH walk (oracle)
+### Task 2: Unified `enter_root` entry (behavior-preserving)
 
 **Files:**
-- Create: `tests/test_unified_codereview_e2e.py`
+- Modify: `.github/agent-factory/engine/next.py` (entry blocks ~700–776; `start_fanout` ~170–191; `seed_and_dispatch_phase` first-phase arm ~194–284 — leave the function in place for now, callers removed in Task 8)
+- Test: `tests/test_unified_entry.py` (new)
 
 **Interfaces:**
-- Consumes: the live `code-review` protocol.json; engine scripts via subprocess; `engine_env`, `STATE_REMOTE` from `conftest`.
-- Produces: the canonical multi-phase call sequence GHA (4b) will replicate: `start` (no NODE_PATH) → advance `preflight` (NODE_PATH=`preflight`) → continue `review` fanout → advance each leg → join → approval gate open → `resolve-gate` approve → done.
+- Produces: `enter_root(command, head_sha)` — seeds the first top-level node via `enter_node(proto, [first_id], command, emit=False)`, creates `_instance.yaml` with `phase=<first id>`, applies setup+phase labels, performs the reset wipe on a fresh `start`/`reset`, `cas_push`, then emits the node's action via a shared `_emit_for_node(path, branches)` helper. Routed by `if COMMAND in ("start","reset") and not NODE_PATH`.
+- Consumes: `paths.root_ids`, `enter_node`, `lib.ensure_phase_label`, `lib.apply_setup_label`, the existing reset-wipe body.
 
-- [ ] **Step 1: Write the failing oracle test**
-
-```python
-# tests/test_unified_codereview_e2e.py
-import json, subprocess, sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-ENG = ROOT / ".github/agent-factory/engine"
-PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
-NEXT, ADV, JOIN = ENG/"next.py", ENG/"advance.py", ENG/"join.py"
-
-def _yaml(p):
-    import yaml; return yaml.safe_load(open(p))
-
-def _pass(tmp):
-    v = tmp/"v.json"; v.write_text(json.dumps({"results":[
-        {"check":"x","pass":True,"feedback":"","on_fail":"iterate"}]}))
-    ev = tmp/"e.json"; ev.write_text("{}")
-    return v, ev
-
-def test_codereview_walks_via_node_path(engine_env, tmp_path):
-    base = dict(engine_env); base["PR_HEAD_SHA"]="sha1"; base["AGENT_RUN_ID"]="r"
-    def run(script,*a,**env):
-        e=dict(base); e.update(env)
-        r=subprocess.run(["python3",str(script),*map(str,a)],text=True,
-                         capture_output=True,env=e)
-        assert r.returncode==0, f"{script.name} {a}: {r.stderr}"
-        return r
-    def rc(tag):
-        d=tmp_path/f"rc-{tag}"
-        subprocess.run(["git","clone","-q","-b","agentic-state",
-                        engine_env["STATE_REMOTE"],str(d)],check=True)
-        return d/"code-review"/"pr-1"
-    v,ev=_pass(tmp_path)
-    # 1. start → first phase (preflight, an agent phase) seeded + run-agent emitted.
-    r1=run(NEXT, tmp_path/"s1","pr-1",PROTO,"start","sha1")
-    a1=json.loads(r1.stdout); assert a1["action"]=="run-agent"
-    assert _yaml(rc("1")/"_instance.yaml")["phase"]=="preflight"
-    # 2. advance preflight (clear) → cursor advances to review, continue dispatched.
-    r2=run(ADV, tmp_path/"s2","pr-1",PROTO,v,ev, NODE_PATH="preflight")
-    assert "event_type=protocol-continue" in r2.stderr
-    assert "client_payload[path]=review" in r2.stderr
-    assert "event_type=protocol-advance" not in r2.stderr  # RETIRED
-    assert _yaml(rc("2")/"_instance.yaml")["phase"]=="review"
-    # 3. continue review → fanout matrix (grumpy + security) seeded.
-    r3=run(NEXT, tmp_path/"s3","pr-1",PROTO,"continue", NODE_PATH="review")
-    a3=json.loads(r3.stdout); assert a3["action"]=="run-fanout"
-    assert {l["path"] for l in a3["legs"]}=={"review.grumpy","review.security"}
-    # 4. advance each leg done → fire_join.
-    for leg in ("grumpy","security"):
-        run(ADV, tmp_path/f"s4-{leg}","pr-1",PROTO,v,ev, NODE_PATH=f"review.{leg}")
-    # 5. join (top) → all done → approval gate opens.
-    rj=run(JOIN, tmp_path/"s5","pr-1",PROTO)
-    inst=_yaml(rc("5")/"_instance.yaml")
-    assert inst["phase"]=="approval"
-    # 6. resolve-gate approve → pipeline done.
-    run(NEXT, tmp_path/"s6","pr-1",PROTO,"resolve-gate",
-        GATE_DECISION="approve", GATE_ACTOR="alice", GATE_REASON="", GATE_PR_AUTHOR="bob")
-    # aggregate complete: phase label done; gate state approved.
-    final=rc("final")
-    assert _yaml(final/"approval.yaml")["gates"]["state"]=="approved"
-```
-
-> Adjust leg ids (`grumpy`/`security`) and phase ids to match `code-review/protocol.json` if they differ; read it first.
-
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `pytest tests/test_unified_codereview_e2e.py -v`
-Expected: FAIL (today `start` on a multi-phase protocol uses `seed_and_dispatch_phase`; advancing `preflight` fires `protocol-advance`, not a path-continue; `NODE_PATH=review` continue at a depth-1 fanout phase is not wired to `_instance.yaml`).
-
-- [ ] **Step 3: (no implementation yet)** — leave failing; Tasks 3–10 make it pass.
-
-- [ ] **Step 4: Commit the oracle**
-
-```bash
-git add tests/test_unified_codereview_e2e.py
-git commit -m "test(oracle): code-review unified NODE_PATH walk (failing; spec for 4a refactor)"
-```
-
-### Task 3: Recover unified NODE_PATH walk (oracle)
-
-**Files:**
-- Create: `tests/test_unified_recover_e2e.py`
-
-**Interfaces:**
-- Consumes: the live `recover-mental-model-stub` protocol.json.
-- Produces: the fanout(summary ∥ rationale sub-pipeline) → join → combine(merge/agent) walk via `NODE_PATH`, including the data-gate `/answer` in the rationale leg.
-
-- [ ] **Step 1: Write the failing oracle test**
-
-Model on Task 2 + `tests/test_gate_data.py` for the `/answer` step. Walk: `start` → fanout legs seeded → advance `summary` leg → drive `rationale` sub-pipeline (`draft` → gate → `/answer` → `finalize`) via `NODE_PATH=recover.rationale.<sub>` → join → combine. Assert `_instance.yaml.phase` lands on the combine state and `joined: true`. Read `recover-mental-model-stub/protocol.json` for exact ids first.
+- [ ] **Step 1: Write the characterization test (must pass before AND after)**
 
 ```python
-# tests/test_unified_recover_e2e.py  (skeleton — fill ids from the protocol)
+# tests/test_unified_entry.py
 import json, subprocess, pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROTO = ROOT/".github/agent-factory/protocols/recover-mental-model-stub/protocol.json"
-# ... same run()/rc() helpers as Task 2 ...
-def test_recover_walks_via_node_path(engine_env, tmp_path):
-    # 1. start → fanout(summary ∥ rationale) seeded
-    # 2. advance summary leg done
-    # 3. drive rationale: continue NODE_PATH=recover.rationale (if sub-pipeline entered via continue)
-    #    advance draft → gate opens; answer; advance finalize done
-    # 4. join → combine (merge/agent) → joined:true, phase=combine
-    ...  # assert at each step; mirrors test_gate_data + Task 2
+ENG = ROOT/".github/agent-factory/engine"
+def _yaml(p):
+    import yaml; return yaml.safe_load(open(p))
+def _rc(engine_env, tmp_path, pid, tag):
+    d = tmp_path/f"rc-{tag}"
+    subprocess.run(["git","clone","-q","-b","agentic-state",
+                    engine_env["STATE_REMOTE"],str(d)],check=True)
+    return d/pid/"pr-1"
+def _start(engine_env, tmp_path, proto, sha="s1"):
+    r = subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"s"),"pr-1",
+                        str(proto),"start",sha],text=True,capture_output=True,env=engine_env)
+    assert r.returncode==0, r.stderr
+    return json.loads(r.stdout)
+
+def test_start_codereview_seeds_first_phase(engine_env, tmp_path):
+    proto = ROOT/".github/agent-factory/protocols/code-review/protocol.json"
+    act = _start(engine_env, tmp_path, proto)
+    assert act["action"]=="run-agent"           # preflight is an agent phase
+    assert _yaml(_rc(engine_env,tmp_path,"code-review","cr")/"_instance.yaml")["phase"]=="preflight"
+
+def test_start_deepfanout_seeds_fanout(engine_env, tmp_path):
+    proto = ROOT/"tests/fixtures/deep-fanout/protocol.json"
+    act = _start(engine_env, tmp_path, proto)
+    assert act["action"]=="run-fanout"
+    assert {l["path"] for l in act["legs"]}=={"preflight.quick","preflight.deep"}
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `pytest tests/test_unified_recover_e2e.py -v` → FAIL.
+- [ ] **Step 2: Run to verify current behavior**
 
-- [ ] **Step 3: (no implementation)** — Tasks 7–9 make it pass.
+Run: `pytest tests/test_unified_entry.py -v`
+Expected: PASS today (current entry already seeds these). This is the safety net for the refactor.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Implement `enter_root` + `_emit_for_node`**
 
-```bash
-git add tests/test_unified_recover_e2e.py
-git commit -m "test(oracle): recover unified NODE_PATH walk (failing; spec for 4a refactor)"
-```
-
----
-
-## Phase C — The refactor (make oracles pass)
-
-### Task 4: Unified entry — route `start`/`reset` through `enter_node` at the root
-
-**Files:**
-- Modify: `.github/agent-factory/engine/next.py` (the `start`/`reset` entry: lines ~700–776; `start_fanout` ~170–191; `seed_and_dispatch_phase` ~194–284)
-
-**Interfaces:**
-- Produces: a single `enter_root(command, head_sha)` that seeds the first top-level node and emits its action (run-agent / run-fanout / gate-open), creating `_instance.yaml` with `phase=<first id>`, applying setup/phase labels, performing the `reset_instance` wipe on a fresh `start`/`reset`, and `cas_push`. Replaces both `start_fanout` and the first-phase arm of `seed_and_dispatch_phase`.
-- Consumes: `enter_node(proto, [first_id], command, emit=False)` (already exists), `lib.ensure_phase_label`, `lib.apply_setup_label`, the existing `reset_instance` body (superseded-comment + label removal + instance-dir wipe + head refresh).
-
-- [ ] **Step 1: Failing test already exists** — Task 2 step 1 (the `start` step). Confirm it fails at step 1 of the walk.
-
-Run: `pytest tests/test_unified_codereview_e2e.py -v`
-Expected: FAIL at the `start`/`_instance.yaml phase` assertion.
-
-- [ ] **Step 2: Implement `enter_root`**
-
-Extract the reset-wipe block from `seed_and_dispatch_phase` (the `reset_instance=True` body: `finalize_superseded_comment`, `remove_pr_label`, wipe `inst_dir`, `head_sha` refresh) into a helper `_reset_wipe(inf, inst_dir, prev, pr)`. Then:
+Extract the reset-wipe block from `seed_and_dispatch_phase`'s `reset_instance=True` body into `_reset_wipe(inf, inst_dir, prev, pr)` (superseded-comment via `finalize_superseded_comment`, `remove_pr_label`, wipe instance dir, refresh head). Then:
 
 ```python
 # next.py
+def _emit_for_node(path, branches):
+    kind = paths.node_kind(proto_data, path)
+    if kind == "fanout":
+        print(json.dumps(_fanout_action(proto_data, path, branches))); return
+    if kind == "gate":
+        print(json.dumps({"action":"noop","iteration":0,"feedback":"",
+                          "reason":f"gate-open:{path[-1]}"})); return
+    node = paths.node_at_path(proto_data, path)
+    act = {"action":"run-agent","iteration":1,"feedback":"","reason":f"phase:{path[-1]}",
+           "workflow": node.get("workflow")}
+    if lib.is_multiphase(proto_data):
+        act["phase"] = path[-1]
+    print(json.dumps(act))
+
 def enter_root(command, head_sha):
     first = paths.root_ids(proto_data)[0]
     pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
     inf = lib.instance_file(DIR, PID, INSTANCE)
-    inst_dir = os.path.dirname(inf)
-    os.makedirs(inst_dir, exist_ok=True)
+    inst_dir = os.path.dirname(inf); os.makedirs(inst_dir, exist_ok=True)
     prev = lib.load_yaml(inf) if os.path.isfile(inf) else {}
-    _reset_wipe(inf, inst_dir, prev, pr)           # fresh start/reset always wipes
+    _reset_wipe(inf, inst_dir, prev, pr)
     lib.apply_setup_label(proto_data, pr)
     lib.dump_yaml(inf, {"protocol": PID, "instance": INSTANCE,
                         "head_sha": head_sha, "phase": first, "joined": False})
     lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, first)
-    branches = enter_node(proto_data, [first], command, emit=False)  # seeds node
+    branches = enter_node(proto_data, [first], command, emit=False)
     lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter root phase {first} ({command})")
-    _emit_for_node([first], branches)              # see Step 3
+    _emit_for_node([first], branches)
 ```
 
-Add `_emit_for_node(path, branches)` that emits the right action by kind: fanout → `_fanout_action(proto_data, path, branches)`; agent → `run-agent` (+ `phase` if multiphase + `workflow`); gate → `noop` gate-open. (This is the deferred-emit tail the three old call sites shared.)
-
-Route entry: replace the `is_multiphase and not PHASE and not BRANCH` block AND the `not BRANCH and is_fanout and not PHASE` block with a single:
+Replace BOTH old entry guards (`is_multiphase and not PHASE and not BRANCH` block AND `not BRANCH and is_fanout and not PHASE` block) with:
 
 ```python
 if COMMAND in ("start", "reset") and not NODE_PATH:
@@ -296,56 +201,121 @@ if COMMAND in ("start", "reset") and not NODE_PATH:
     sys.exit(0)
 ```
 
-- [ ] **Step 3: Run the walk's start step** — `pytest tests/test_unified_codereview_e2e.py -v` should now pass step 1 (`_instance.yaml.phase == "preflight"`) and fail later. Also run `pytest tests/test_deep_fanout_e2e.py -v` (single-phase start still works — `enter_root` first id = the fanout). Fix `_emit_for_node` until deep-fanout's `start` step is green again.
+> Note: `enter_node`'s fanout arm writes `__join.yaml` only for `len(path)>1`; a depth-1 fanout phase relies on `_instance.yaml.joined` (set above) — correct, no change needed.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Run**
+
+Run: `pytest tests/test_unified_entry.py tests/test_deep_fanout_e2e.py tests/test_recover_mental_model.py tests/test_multiphase.py -v` then `pytest tests/ -q`
+Expected: ALL PASS (behavior preserved). Fix `_emit_for_node` until green.
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add .github/agent-factory/engine/next.py
+git add .github/agent-factory/engine/next.py tests/test_unified_entry.py
 git commit -m "feat(next): unified enter_root replaces start_fanout + seed_and_dispatch_phase first-phase"
 ```
 
-### Task 5: Continue at a depth-1 fanout phase uses `_instance.yaml`
+### Task 3: Depth-1 fanout-phase `continue`
 
 **Files:**
-- Modify: `.github/agent-factory/engine/next.py` (the `continue`-at-`NODE_PATH` fanout arm ~722–733; `enter_node` fanout arm ~97–111)
+- Modify: `.github/agent-factory/engine/next.py` (the `continue`-at-`NODE_PATH` fanout arm ~722–733)
+- Test: `tests/test_unified_entry.py` (append)
 
 **Interfaces:**
-- Produces: `continue` with `NODE_PATH=<depth-1 fanout phase>` seeds the phase's child legs against the `_instance.yaml` `joined` marker (NOT a `__join.yaml` file), emits run-fanout with `legs`.
-- Consumes: `paths.is_root_child`, existing `enter_node`.
+- Produces: `continue` with `NODE_PATH=<depth-1 fanout phase>` (e.g. `review`) seeds the phase's child legs and emits run-fanout with `legs`, using the `_instance.yaml` marker (no `__join.yaml`).
+- Consumes: existing `enter_node` fanout arm, `_fanout_action`.
 
-- [ ] **Step 1: Confirm failing** — Task 2 walk step 3 (continue `review`) fails today (depth-1 continue path enters but the marker handling differs).
-
-- [ ] **Step 2: Implement**
-
-In `enter_node`'s fanout arm, the `len(path) > 1` guard already writes a `__join.yaml` only for nested fanouts; a depth-1 phase fanout (`len==1`) writes nothing extra — correct, the `_instance.yaml.joined` set in `enter_root`/cursor is the top marker. Ensure the `continue`-at-NODE_PATH fanout arm calls `enter_node(... emit=False)` then `_fanout_action`, identical to deep-fanout. No new code if Task 4's `_emit_for_node` is reused; otherwise align.
-
-- [ ] **Step 3: Run** — `pytest tests/test_unified_codereview_e2e.py -v` passes through walk step 3 (`legs == {review.grumpy, review.security}`). `pytest tests/test_deep_fanout_e2e.py -v` still green.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add .github/agent-factory/engine/next.py
-git commit -m "feat(next): depth-1 fanout-phase continue uses _instance marker"
-```
-
-### Task 6: `advance.py` — agent-phase clear → root cursor + path-continue (retire `protocol-advance`)
-
-**Files:**
-- Modify: `.github/agent-factory/engine/advance.py` (agent-phase-clear block ~654–687; legacy coord block ~465–504; iterate re-dispatch ~720–735)
-
-**Interfaces:**
-- Produces: when a depth-1 AGENT phase clears, set `_instance.yaml.phase = next_root_sibling` and `dispatch_continue(path=<next sibling>)`; when no next sibling, finalize (aggregate check-run success). NO `protocol-advance` dispatch anywhere. `advance.py` always runs in `NODE_PATH` mode.
-- Consumes: `paths.next_sibling(proto, tree_path)`, `lib.dispatch_continue(path=…)`, `lib.next_phase_id` (may be removed if unused), existing pre-flight-gate block.
-
-- [ ] **Step 1: Confirm failing** — Task 2 walk step 2 asserts `client_payload[path]=review` and NO `protocol-advance`; fails today.
-
-- [ ] **Step 2: Implement**
-
-Delete the `else:` legacy coordinate-derivation block (~465–504); make `node_path_env` required (error with a clear message if unset). In the `is_agent_phase` clear branch, replace the `protocol-advance` `gh_api(...)` with:
+- [ ] **Step 1: Write the failing test**
 
 ```python
-nxt = _paths.next_sibling(proto, tree_path)   # tree_path is depth-1 here
+# tests/test_unified_entry.py (append)
+def test_continue_review_phase_emits_fanout_legs(engine_env, tmp_path):
+    proto = ROOT/".github/agent-factory/protocols/code-review/protocol.json"
+    _start(engine_env, tmp_path, proto)                       # seeds _instance(phase=preflight)
+    e = dict(engine_env); e["NODE_PATH"]="review"
+    r = subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"c"),"pr-1",
+                        str(proto),"continue"],text=True,capture_output=True,env=e)
+    assert r.returncode==0, r.stderr
+    act = json.loads(r.stdout)
+    assert act["action"]=="run-fanout"
+    assert {l["path"] for l in act["legs"]}=={"review.grumpy","review.security"}
+    fdir = _rc(engine_env,tmp_path,"code-review","rev")
+    assert (fdir/"review.grumpy.yaml").is_file() and (fdir/"review.security.yaml").is_file()
+    assert not (fdir/"review.__join.yaml").is_file()          # depth-1 uses _instance marker
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `pytest tests/test_unified_entry.py -k continue_review -v`
+Expected: FAIL (today a multi-phase fanout phase is entered via `protocol-advance`/`seed_and_dispatch_phase`, not a depth-1 `NODE_PATH` continue; the file/marker assertions fail).
+
+- [ ] **Step 3: Implement**
+
+The `continue`-at-`NODE_PATH` fanout arm already calls `enter_node(...emit=False)` → `cas_push` → `_fanout_action`. Ensure it also fires for a depth-1 path (it does — `node_kind=="fanout"`). The only requirement is that `enter_node`'s fanout arm not write `__join.yaml` at `len==1` (already gated). Reuse `_emit_for_node` if convenient. If the arm currently special-cases nested-only, generalize it to any fanout path.
+
+- [ ] **Step 4: Run** — `pytest tests/test_unified_entry.py -v` PASS; `pytest tests/test_deep_fanout_e2e.py -q` green; `pytest tests/ -q` green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add .github/agent-factory/engine/next.py tests/test_unified_entry.py
+git commit -m "feat(next): depth-1 fanout-phase continue (NODE_PATH) uses _instance marker"
+```
+
+### Task 4: `advance.py` agent-phase clear → root cursor + path-continue
+
+**Files:**
+- Modify: `.github/agent-factory/engine/advance.py` (agent-phase-clear block ~654–687; iterate re-dispatch keeps working)
+- Modify: `tests/test_phase_relay.py` and/or `tests/test_multiphase.py` (update assertions from `protocol-advance` to `protocol-continue`+path)
+- Test: `tests/test_unified_advance.py` (new)
+
+**Interfaces:**
+- Produces: when a depth-1 AGENT phase clears with a next sibling, set `_instance.yaml.phase = next` and `lib.dispatch_continue(pid, instance, path=next)` — NO `protocol-advance`. No-next → finalize aggregate (unchanged). Pre-flight-gate block (`on_blocked:halt` → `halted` marker) retained; only its clear-tail uses path-continue.
+- Consumes: `paths.next_sibling(proto, [phase])`, `paths.is_root_child`, `lib.dispatch_continue(path=…)`.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_unified_advance.py
+import json, subprocess, pathlib
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+ENG = ROOT/".github/agent-factory/engine"
+PROTO = ROOT/".github/agent-factory/protocols/code-review/protocol.json"
+def _yaml(p):
+    import yaml; return yaml.safe_load(open(p))
+def _rc(engine_env, tmp_path, tag):
+    d=tmp_path/f"rc-{tag}"
+    subprocess.run(["git","clone","-q","-b","agentic-state",
+                    engine_env["STATE_REMOTE"],str(d)],check=True)
+    return d/"code-review"/"pr-1"
+def test_preflight_clear_advances_via_path_continue(engine_env, tmp_path):
+    base=dict(engine_env); base["PR_HEAD_SHA"]="s1"; base["AGENT_RUN_ID"]="r"
+    subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"s"),"pr-1",str(PROTO),
+                    "start","s1"],text=True,capture_output=True,env=base,check=True)
+    v=tmp_path/"v.json"; v.write_text(json.dumps({"results":[
+        {"check":"x","pass":True,"feedback":"","on_fail":"iterate"}]}))
+    ev=tmp_path/"e.json"; ev.write_text("{}")
+    e=dict(base); e["NODE_PATH"]="preflight"
+    r=subprocess.run(["python3",str(ENG/"advance.py"),str(tmp_path/"a"),"pr-1",str(PROTO),
+                      str(v),str(ev)],text=True,capture_output=True,env=e)
+    assert r.returncode==0, r.stderr
+    assert "event_type=protocol-continue" in r.stderr
+    assert "client_payload[path]=review" in r.stderr
+    assert "protocol-advance" not in r.stderr
+    assert _yaml(_rc(engine_env,tmp_path,"pf")/"_instance.yaml")["phase"]=="review"
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `pytest tests/test_unified_advance.py -v`
+Expected: FAIL — today fires `protocol-advance`, not a path-continue.
+
+- [ ] **Step 3: Implement**
+
+Delete the legacy coordinate-derivation `else:` block (~465–504); make `node_path_env` required (clear error if unset). In the `is_agent_phase` clear branch, replace the `protocol-advance` `gh_api(...)` with:
+
+```python
+nxt = _paths.next_sibling(proto, tree_path)   # tree_path is depth-1 (a root phase)
 if nxt:
     inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
     inst["phase"] = nxt
@@ -360,81 +330,164 @@ else:
     ...
 ```
 
-Determine `is_agent_phase` from `paths.is_root_child(proto, tree_path) and node_kind==agent`. The pre-flight-gate block (`conclude`/`on_blocked:halt` → `halted` marker) stays; only its clear-tail uses the path-continue above.
+Derive `is_agent_phase = paths.is_root_child(proto, tree_path) and node_kind(proto, tree_path)=="agent"`. Update `tests/test_phase_relay.py` / `tests/test_multiphase.py`: any assertion of `event_type=protocol-advance` / `client_payload[phase]=` for a phase clear becomes `protocol-continue` / `client_payload[path]=<next>`.
 
-- [ ] **Step 3: Run** — Task 2 walk step 2 passes (`client_payload[path]=review`, no `protocol-advance`, `_instance.phase==review`). Run full suite for regressions: `pytest tests/test_deep_fanout_e2e.py tests/test_engine.py -v` (expect some legacy multi-phase tests to fail — they assert `protocol-advance`; those are rewritten/removed in Phase E).
+- [ ] **Step 4: Run** — `pytest tests/test_unified_advance.py tests/test_phase_relay.py tests/test_multiphase.py tests/test_conclude_preflight.py -v` PASS; then `pytest tests/ -q` green.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add .github/agent-factory/engine/advance.py
-git commit -m "feat(advance): agent-phase clear advances root cursor via path-continue; retire protocol-advance fire; NODE_PATH-only"
+git add .github/agent-factory/engine/advance.py tests/test_unified_advance.py tests/test_phase_relay.py tests/test_multiphase.py
+git commit -m "feat(advance): agent-phase clear advances root cursor via path-continue (NODE_PATH-only); drop protocol-advance fire"
 ```
 
-### Task 7: `join.py` — top join performs recursive sequence-advance to `.next`
+### Task 5: `join.py` top join → advance enclosing-seq cursor to `.next`
 
 **Files:**
-- Modify: `.github/agent-factory/engine/join.py` (top-level `main` body ~152–287; mode-2/3/gate tails ~211–261)
+- Modify: `.github/agent-factory/engine/join.py` (all-done branch ~211–264; keep `_nested_join` unchanged)
+- Modify: `tests/test_join.py` (update bespoke-tail assertions)
+- Test: `tests/test_unified_join.py` (new)
 
 **Interfaces:**
-- Produces: on all-done, the top join sets the **enclosing sequence cursor** to the join's `.next` and dispatches `protocol-continue` with `client_payload[path]=<.next>` (root sequence → `_instance.yaml.phase`). The gate/agent-combine/merge that follows is entered by the recursive `continue` (Task 8 adds the `merge` arm). On not-all-done, finalize as failure (unchanged).
-- Consumes: `paths.next_sibling`/the join state's `.next`, `lib.dispatch_continue(path=…)`.
+- Produces: on all-done, the top join sets `_instance.yaml.phase = join_state.next` and `lib.dispatch_continue(pid, instance, path=join_state.next)`; the gate/agent/merge that follows is entered by the recursive `continue` (Tasks 6). No-`.next` → finalize aggregate success (unchanged). Not-all-done → finalize failure (unchanged).
+- Consumes: the join state's `.next`, `lib.dispatch_continue(path=…)`.
 
-- [ ] **Step 1: Confirm failing** — Task 2 walk step 5 (`_instance.phase == approval` after join) fails today (join opens the gate inline via the bespoke gate tail).
-
-- [ ] **Step 2: Implement**
-
-Replace the bespoke gate-open / agent-combine / merge tails in the all-done branch with the uniform sequence-advance:
+- [ ] **Step 1: Write the failing test**
 
 ```python
-# all_done branch, after computing join_state and gate_next = join_state.next
+# tests/test_unified_join.py
+import json, subprocess, pathlib
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+ENG = ROOT/".github/agent-factory/engine"
+PROTO = ROOT/".github/agent-factory/protocols/code-review/protocol.json"
+def _yaml(p):
+    import yaml; return yaml.safe_load(open(p))
+def _rc(engine_env, tmp_path, tag):
+    d=tmp_path/f"rc-{tag}"
+    subprocess.run(["git","clone","-q","-b","agentic-state",
+                    engine_env["STATE_REMOTE"],str(d)],check=True)
+    return d/"code-review"/"pr-1"
+def test_top_join_advances_to_approval_via_continue(engine_env, tmp_path):
+    base=dict(engine_env); base["PR_HEAD_SHA"]="s1"; base["AGENT_RUN_ID"]="r"
+    def run(s,*a,**env):
+        e=dict(base); e.update(env)
+        r=subprocess.run(["python3",str(ENG/s),*map(str,a)],text=True,capture_output=True,env=e)
+        assert r.returncode==0, r.stderr; return r
+    v=tmp_path/"v.json"; v.write_text(json.dumps({"results":[
+        {"check":"x","pass":True,"feedback":"","on_fail":"iterate"}]}))
+    ev=tmp_path/"e.json"; ev.write_text("{}")
+    run("next.py",tmp_path/"s","pr-1",PROTO,"start","s1")
+    run("advance.py",tmp_path/"a0","pr-1",PROTO,v,ev, NODE_PATH="preflight")  # → review
+    run("next.py",tmp_path/"c","pr-1",PROTO,"continue", NODE_PATH="review")   # seed legs
+    for leg in ("grumpy","security"):
+        run("advance.py",tmp_path/f"a-{leg}","pr-1",PROTO,v,ev, NODE_PATH=f"review.{leg}")
+    rj=run("join.py",tmp_path/"j","pr-1",PROTO)
+    assert "event_type=protocol-continue" in rj.stderr
+    assert "client_payload[path]=approval" in rj.stderr
+    assert _yaml(_rc(engine_env,tmp_path,"j")/"_instance.yaml")["phase"]=="approval"
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `pytest tests/test_unified_join.py -v`
+Expected: FAIL — today join opens the approval gate inline (bespoke gate tail), does not dispatch a path-continue.
+
+- [ ] **Step 3: Implement**
+
+Replace the all-done bespoke tails (gate-open / agent-combine / merge — ~211–264) with:
+
+```python
+join_state = None
+fo_id = fanout_state.get("id") if fanout_state else None
+for st in protocol.get("states", []):
+    if st.get("kind") == "join" and st.get("of") == fo_id:
+        join_state = st; break
+if join_state is None:
+    for st in protocol.get("states", []):
+        if st.get("kind") == "join": join_state = st; break
 nxt = (join_state or {}).get("next")
-instance_data["joined"] = True
-if nxt:
-    instance_data["phase"] = nxt            # root cursor
+if all_done and nxt:
+    instance_data["joined"] = True
+    instance_data["phase"] = nxt
     lib.dump_yaml(inf, instance_data)
     lib.ensure_phase_label(dir_, pid, instance, protocol, pr, nxt)
     lib.cas_push(dir_, f"{instance}: join clear → continue {nxt}")
     lib.dispatch_continue(pid, instance, path=nxt)
     return
-# no .next → finalize aggregate success (unchanged tail)
+# else fall through to the existing finalize (success no-.next / failure) tail
 ```
 
-The `continue` at `path=nxt` then opens the gate (gate arm), seeds+dispatches an agent (agent arm), or runs the merge (Task 8). This deletes join.py's mode-2/mode-3/gate-open special cases. Keep the `_nested_join` path unchanged (it already advances the enclosing sub-pipeline cursor + continues).
+Keep the existing aggregate-check-run finalize for the no-`.next` and failure cases. Update `tests/test_join.py`: assertions that the join opens the gate / runs the merge inline become assertions of `protocol-continue` + `client_payload[path]=<next>` (the gate/merge now happen in the subsequent continue — Task 6).
 
-- [ ] **Step 3: Run** — Task 2 walk step 5 passes (`_instance.phase==approval`). `pytest tests/test_deep_fanout_e2e.py -v` green (deep-fanout top join `.next` is `done` → no-next finalize). `pytest tests/test_join.py -v` — failures expected for bespoke-tail assertions (rewritten in Phase E).
+- [ ] **Step 4: Run** — `pytest tests/test_unified_join.py tests/test_join.py tests/test_deep_fanout_e2e.py -v` PASS (deep-fanout join `.next`=done → no-`.next`-equivalent? NOTE: deep-fanout join-preflight `next: done` — `done` is not a real state, so treat a `.next` that is the literal `done`/absent as finalize. Add that guard: `if all_done and nxt and lib.state_by_id(proto, nxt):`). Then `pytest tests/ -q` green.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add .github/agent-factory/engine/join.py
-git commit -m "feat(join): top join advances enclosing-sequence cursor via path-continue (fold mode-2/3/gate into recursive continue)"
+git add .github/agent-factory/engine/join.py tests/test_unified_join.py tests/test_join.py
+git commit -m "feat(join): top join advances enclosing-seq cursor to .next via path-continue"
 ```
 
-### Task 8: Recursive `continue` learns the `merge` kind
+### Task 6: Recursive `continue` learns gate + merge at depth-1
 
 **Files:**
 - Modify: `.github/agent-factory/engine/next.py` (the `continue`-at-`NODE_PATH` arms ~722–763)
+- Test: `tests/test_unified_continue_kinds.py` (new)
 
 **Interfaces:**
-- Produces: `continue` with `NODE_PATH` at a `merge`-kind node runs `lib.run_merge_hook`, finalizes the instance (aggregate check-run + status comment + done label), `cas_push`, emits `noop`.
-- Consumes: `lib.run_merge_hook(dir_, pid, instance, proto_path, merge_state)`, `lib.render_instance_status_body`.
+- Produces: `continue` with `NODE_PATH` at a `gate` node opens the gate (depth-1: the approval gate); at a `merge` node runs `lib.run_merge_hook` + finalizes the instance (aggregate check-run + status comment + done label) and emits `noop`.
+- Consumes: `lib.open_gate`, `lib.run_merge_hook`, `lib.render_instance_status_body`, `paths.node_at_path`.
 
-- [ ] **Step 1: Failing test** — Task 3 (recover) walk's combine step asserts the merge runs via continue; fails until this arm exists. (If recover's combine is `agent`-kind not `merge`, the existing agent arm already handles it — verify against the protocol; add the `merge` arm regardless for the capability.)
-
-Add a focused unit test:
+- [ ] **Step 1: Write the failing tests**
 
 ```python
-# tests/test_unified_merge.py
+# tests/test_unified_continue_kinds.py
+import json, subprocess, pathlib
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+ENG = ROOT/".github/agent-factory/engine"
+def _yaml(p):
+    import yaml; return yaml.safe_load(open(p))
+def _rc(engine_env, tmp_path, pid, tag):
+    d=tmp_path/f"rc-{tag}"
+    subprocess.run(["git","clone","-q","-b","agentic-state",
+                    engine_env["STATE_REMOTE"],str(d)],check=True)
+    return d/pid/"pr-1"
+
+def test_continue_at_approval_gate_opens_it(engine_env, tmp_path):
+    proto = ROOT/".github/agent-factory/protocols/code-review/protocol.json"
+    base=dict(engine_env); base["PR_HEAD_SHA"]="s1"
+    # seed an _instance with phase=approval (simulate post-join cursor)
+    subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"s"),"pr-1",str(proto),
+                    "start","s1"],text=True,capture_output=True,env=base,check=True)
+    e=dict(base); e["NODE_PATH"]="approval"
+    r=subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"c"),"pr-1",str(proto),
+                      "continue"],text=True,capture_output=True,env=e)
+    assert r.returncode==0, r.stderr
+    assert json.loads(r.stdout)["reason"].startswith("gate-open")
+    g=_yaml(_rc(engine_env,tmp_path,"code-review","g")/"approval.yaml")
+    assert g.get("gates",{}).get("state")=="open"
+
 def test_continue_at_merge_runs_hook_and_finalizes(engine_env, tmp_path):
-    # use a small fixture with fanout → join → merge; seed cursor at merge via continue;
-    # assert ENGINE_LOCAL merge-hook ran and _instance.yaml phase==merge id.
-    ...
+    proto = ROOT/".github/agent-factory/protocols/recover-mental-model-stub/protocol.json"
+    base=dict(engine_env); base["PR_HEAD_SHA"]="s1"
+    subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"s"),"pr-1",str(proto),
+                    "start","s1"],text=True,capture_output=True,env=base,check=True)
+    e=dict(base); e["NODE_PATH"]="combine"
+    r=subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"c"),"pr-1",str(proto),
+                      "continue"],text=True,capture_output=True,env=e)
+    assert r.returncode==0, r.stderr
+    assert json.loads(r.stdout)["reason"].startswith("merge")
+    assert _yaml(_rc(engine_env,tmp_path,"recover-mental-model-stub","m")/"_instance.yaml").get("joined") is True
 ```
 
-- [ ] **Step 2: Run to verify fail** — `pytest tests/test_unified_merge.py -v` → FAIL.
+- [ ] **Step 2: Run to verify it fails**
 
-- [ ] **Step 3: Implement** — add to the `continue`-at-NODE_PATH dispatch:
+Run: `pytest tests/test_unified_continue_kinds.py -v`
+Expected: FAIL — the gate arm may not handle a depth-1 root gate cursor write to `_instance`; the `merge` kind is unhandled (falls through).
+
+- [ ] **Step 3: Implement**
+
+The gate arm already calls `enter_node`'s gate arm (which opens the gate); confirm it works for a depth-1 root gate (uses `_instance.yaml.phase` already set). Add the `merge` arm to the `continue`-at-`NODE_PATH` dispatch:
 
 ```python
 if _kind == "merge":
@@ -455,27 +508,63 @@ if _kind == "merge":
     sys.exit(0)
 ```
 
-- [ ] **Step 4: Run to verify pass** — `pytest tests/test_unified_merge.py -v` PASS.
+- [ ] **Step 4: Run** — `pytest tests/test_unified_continue_kinds.py tests/test_merge.py tests/test_gate.py -v` PASS; `pytest tests/ -q` green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .github/agent-factory/engine/next.py tests/test_unified_merge.py
-git commit -m "feat(next): continue handles merge kind (reduce hook + finalize)"
+git add .github/agent-factory/engine/next.py tests/test_unified_continue_kinds.py
+git commit -m "feat(next): continue handles depth-1 gate + merge kinds (reduce hook + finalize)"
 ```
 
-### Task 9: Gate resolution + override tails → path-continue
+### Task 7: Gate resolution + override tails → path-continue
 
 **Files:**
-- Modify: `.github/agent-factory/engine/next.py` (`do_resolve_gate` ~353–468, `do_override` ~287–351)
+- Modify: `.github/agent-factory/engine/next.py` (`do_resolve_gate` approve arm ~405–429; `do_override` advance arm ~310–335)
+- Modify: `tests/test_gate.py`, `tests/test_override.py` (update advance-tail assertions)
 
 **Interfaces:**
-- Produces: on `approve` (and on `/override` of a blocked gate), advance the root cursor to the next sibling and `dispatch_continue(path=<next>)` instead of calling `seed_and_dispatch_phase(nxt)`. `request-changes`/`reject` tails unchanged. Auth + refusal semantics unchanged.
-- Consumes: `paths.next_sibling`, `lib.dispatch_continue(path=…)`.
+- Produces: on `approve` (and `/override` of a blocked gate) with a next sibling, set `_instance.yaml.phase=next` and `lib.dispatch_continue(pid, instance, path=next)` instead of `seed_and_dispatch_phase(nxt, …)`. `request-changes`/`reject` and all refusal/auth semantics unchanged. No-next approve → existing finalize tail.
+- Consumes: `paths.next_sibling(proto, [cursor])`, `lib.dispatch_continue(path=…)`.
 
-- [ ] **Step 1: Confirm failing** — Task 2 walk step 6 (resolve-gate approve → done) fails (`seed_and_dispatch_phase` is being deleted).
+- [ ] **Step 1: Write the failing test**
 
-- [ ] **Step 2: Implement** — in `do_resolve_gate`'s approve arm, replace `seed_and_dispatch_phase(nxt, "approve")` with:
+```python
+# tests/test_unified_gate_resolve.py
+import json, subprocess, pathlib
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+ENG = ROOT/".github/agent-factory/engine"
+PROTO = ROOT/".github/agent-factory/protocols/code-review/protocol.json"
+def _drive_to_gate(engine_env, tmp_path):
+    base=dict(engine_env); base["PR_HEAD_SHA"]="s1"; base["AGENT_RUN_ID"]="r"
+    def run(s,*a,**env):
+        e=dict(base); e.update(env)
+        r=subprocess.run(["python3",str(ENG/s),*map(str,a)],text=True,capture_output=True,env=e)
+        assert r.returncode==0, r.stderr; return r
+    v=tmp_path/"v.json"; v.write_text(json.dumps({"results":[
+        {"check":"x","pass":True,"feedback":"","on_fail":"iterate"}]}))
+    ev=tmp_path/"e.json"; ev.write_text("{}")
+    run("next.py",tmp_path/"s","pr-1",PROTO,"start","s1")
+    run("advance.py",tmp_path/"a0","pr-1",PROTO,v,ev,NODE_PATH="preflight")
+    run("next.py",tmp_path/"c","pr-1",PROTO,"continue",NODE_PATH="review")
+    for leg in ("grumpy","security"):
+        run("advance.py",tmp_path/f"a-{leg}","pr-1",PROTO,v,ev,NODE_PATH=f"review.{leg}")
+    run("join.py",tmp_path/"j","pr-1",PROTO)
+    run("next.py",tmp_path/"cg","pr-1",PROTO,"continue",NODE_PATH="approval")  # opens gate
+    return base, run
+def test_approve_finalizes_pipeline(engine_env, tmp_path):
+    base, run = _drive_to_gate(engine_env, tmp_path)
+    r=run("next.py",tmp_path/"ap","pr-1",PROTO,"resolve-gate",
+          GATE_DECISION="approve",GATE_ACTOR="alice",GATE_REASON="",GATE_PR_AUTHOR="bob")
+    d=tmp_path/"rcz"
+    subprocess.run(["git","clone","-q","-b","agentic-state",engine_env["STATE_REMOTE"],str(d)],check=True)
+    import yaml
+    assert yaml.safe_load(open(d/"code-review"/"pr-1"/"approval.yaml"))["gates"]["state"]=="approved"
+```
+
+- [ ] **Step 2: Run to verify it fails** — `pytest tests/test_unified_gate_resolve.py -v` → FAIL (approval is the last phase, so this exercises the no-next finalize; but the drive-to-gate path relies on Tasks 3-6; the approve arm still calls `seed_and_dispatch_phase` which is being removed). Confirm the failure mode is the `seed_and_dispatch_phase` call.
+
+- [ ] **Step 3: Implement** — in `do_resolve_gate` approve arm replace `seed_and_dispatch_phase(nxt, "approve")` with:
 
 ```python
 inst = lib.load_yaml(inf); inst["phase"] = nxt; lib.dump_yaml(inf, inst)
@@ -484,149 +573,169 @@ lib.cas_push(DIR, f"{INSTANCE}: gate {cursor} approved by {actor} → continue {
 lib.dispatch_continue(PID, INSTANCE, path=nxt)
 ```
 
-Compute `nxt = paths.next_sibling(proto_data, [cursor])` (root sibling of the gate phase). The `else` (no next) finalize tail stays. Apply the same substitution in `do_override`'s advance arm.
+with `nxt = paths.next_sibling(proto_data, [cursor])`. Keep the no-next finalize tail. Apply the same substitution in `do_override`'s advance arm (`nxt = paths.next_sibling(proto_data, [blocked_phase])`). Update `tests/test_gate.py` / `tests/test_override.py` advance-tail assertions to `protocol-continue`+path.
 
-- [ ] **Step 3: Run** — Task 2 (`test_unified_codereview_e2e`) PASSES fully. Task 3 (`test_unified_recover_e2e`) PASSES fully. `pytest tests/test_override.py tests/test_gate*.py -v` — fix or mark for Phase E rewrite.
+- [ ] **Step 4: Run** — `pytest tests/test_unified_gate_resolve.py tests/test_gate.py tests/test_override.py -v` PASS; `pytest tests/ -q` green.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add .github/agent-factory/engine/next.py
+git add .github/agent-factory/engine/next.py tests/test_unified_gate_resolve.py tests/test_gate.py tests/test_override.py
 git commit -m "feat(next): gate approve + override advance root cursor via path-continue"
 ```
 
-### Task 10: Delete dead code paths
+### Task 8: Delete legacy machinery + add full e2e oracle walks
 
 **Files:**
 - Modify: `.github/agent-factory/engine/next.py`, `advance.py`, `join.py`
+- Test: `tests/test_unified_codereview_e2e.py`, `tests/test_unified_recover_e2e.py` (new — the integration oracles, GREEN)
 
 **Interfaces:**
-- Produces: removal of `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` command branch, the single-agent bespoke planner/advancer paths, and any now-unused `lib` helpers (`next_phase_id` if unreferenced). The `protocol-advance` string appears nowhere in the engine.
+- Produces: removal of `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` command branch, the single-agent bespoke planner/advancer paths, and any now-dead `lib` helper (`next_phase_id` if unreferenced). `protocol-advance` appears nowhere in the engine. Two full e2e walks prove the unified path end-to-end.
 
-- [ ] **Step 1: Implement deletions** — remove the functions/branches; run `grep -rn "protocol-advance\|seed_and_dispatch_phase\|start_fanout\|advance-phase" .github/agent-factory/engine/` and confirm zero hits.
+- [ ] **Step 1: Write the integration oracle walks (expected GREEN)**
 
-- [ ] **Step 2: Run the oracle suite** — `pytest tests/test_unified_codereview_e2e.py tests/test_unified_recover_e2e.py tests/test_deep_fanout_e2e.py tests/test_gate_data.py -v` all PASS.
+`tests/test_unified_codereview_e2e.py`: the full `_drive_to_gate` walk from Task 7 + approve → assert final `approval.yaml` gates `approved`, aggregate complete, `_instance.joined`. `tests/test_unified_recover_e2e.py`: `start` → advance `summary` leg + drive `rationale` sub-pipeline (`recover.rationale.draft` → gate `/answer` → `recover.rationale.finalize`) → `join` → continue `combine` (merge) → `_instance.joined:true, phase=combine`. Model the `/answer` step on `tests/test_gate_data.py`. Read both protocol.json files for exact sub-state ids.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Run to confirm they pass** — `pytest tests/test_unified_codereview_e2e.py tests/test_unified_recover_e2e.py -v` PASS (the unified path is complete after Tasks 2-7).
+
+- [ ] **Step 3: Delete dead code** — remove `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` branch, the single-agent bespoke paths in `next.py`/`advance.py`. Confirm:
+
+Run: `grep -rn "protocol-advance\|seed_and_dispatch_phase\|start_fanout\|advance-phase" .github/agent-factory/engine/`
+Expected: zero hits.
+
+- [ ] **Step 4: Run full suite** — `pytest tests/ -q` ALL PASS (failing legacy assertions, if any remain, are deleted in Task 16; but the suite must already be green here — if a non-legacy test breaks, fix it).
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add .github/agent-factory/engine/
-git commit -m "refactor(engine): delete legacy phase machinery (start_fanout, seed_and_dispatch_phase, advance-phase, single-agent path)"
+git add .github/agent-factory/engine/ tests/test_unified_codereview_e2e.py tests/test_unified_recover_e2e.py
+git commit -m "refactor(engine): delete legacy phase machinery; add full unified e2e oracle walks"
 ```
 
 ---
 
-## Phase D — Capability fixtures + tests (release bar)
+## Phase C — Capability suite (release bar)
 
-### Task 11: Single-agent capability fixture + walk
-
-**Files:**
-- Create: `tests/fixtures/single-agent/protocol.json` (+ schema/checks as the old one had, minimal), `tests/test_cap_single_agent.py`
-
-**Interfaces:**
-- Produces: proof the unified engine handles a one-`agent`-state protocol (root sequence, single child): `start` → run-agent at depth-1 path; advance done → aggregate complete; advance fail-loop → exhaust.
-
-- [ ] **Step 1: Write fixture + failing walk test** — a protocol with one `agent` state (`id: solo`, `max_iterations: 2`, one always-pass check). Test: `start` (no NODE_PATH) emits run-agent + seeds; `advance` NODE_PATH=`solo` pass → `_instance` done / aggregate success.
-- [ ] **Step 2: Run to verify fail** (fixture absent / behavior gap).
-- [ ] **Step 3: Implement** — fix any depth-1 single-child-sequence handling in `enter_root`/`advance` finalize (no-next root agent → finalize aggregate).
-- [ ] **Step 4: Run to verify pass.**
-- [ ] **Step 5: Commit** `test(cap): single-agent shape under unified engine`.
-
-### Task 12: Simple-fanout capability fixture + walk
+### Task 9: Single-agent capability fixture + walk
 
 **Files:**
-- Create: `tests/fixtures/simple-fanout/protocol.json`, `tests/test_cap_simple_fanout.py`
+- Create: `tests/fixtures/single-agent/protocol.json` (+ minimal leaf schema + an always-pass check), `tests/test_cap_single_agent.py`
 
 **Interfaces:**
-- Produces: proof of a single-phase fanout → join → done (two flat agent legs). Walk mirrors deep-fanout's top level without the nesting.
+- Produces: proof the unified engine handles a one-`agent`-state protocol (root sequence, single child): `start` → run-agent at depth-1; advance pass → aggregate complete; advance fail-loop → exhaust → failed.
 
-- [ ] **Step 1–5:** fixture (fanout `f` with legs `a`,`b`; join `of: f`, `next: done`); failing test; (should pass with no new code — confirms the degenerate case); commit `test(cap): simple fanout shape`.
+- [ ] **Step 1: Write fixture + failing walk test** — protocol `{name: single-agent, states:[{id: solo, kind: agent, workflow: solo-agent, evidence: leaf.evidence.schema.json, max_iterations: 2, checks:[{run: always-pass, on_fail: iterate}]}]}` + permissive `leaf.evidence.schema.json` + `checks/always-pass` (copy from deep-fanout). Test: `start` emits run-agent + seeds; `advance` NODE_PATH=`solo` pass → `_instance` finalized (aggregate success).
+- [ ] **Step 2: Run to verify fail** — `pytest tests/test_cap_single_agent.py -v` (fixture absent or no-next root-agent finalize gap).
+- [ ] **Step 3: Implement** — ensure `enter_root` + `advance` no-next root-agent finalize works for a single root child (the `else` finalize in Task 4 covers it; add only if a gap shows).
+- [ ] **Step 4: Run** — PASS; `pytest tests/ -q` green.
+- [ ] **Step 5: Commit** — `git add tests/fixtures/single-agent tests/test_cap_single_agent.py && git commit -m "test(cap): single-agent shape under unified engine"`
 
-### Task 13: Approval-gate decisions capability
+### Task 10: Simple-fanout capability fixture + walk
+
+**Files:**
+- Create: `tests/fixtures/simple-fanout/protocol.json` (+ reuse leaf schema/check), `tests/test_cap_simple_fanout.py`
+
+**Interfaces:**
+- Produces: proof of single-phase fanout(`a` ∥ `b`) → join(`of: f`, `next: done`) → done.
+
+- [ ] **Step 1:** fixture (fanout `f` two flat agent legs; join). **Failing test:** `start` → run-fanout legs {f.a, f.b}; advance both pass → join → aggregate success.
+- [ ] **Step 2:** run to verify (should pass with no new engine code — confirms degenerate case).
+- [ ] **Step 3:** implement only if a gap shows.
+- [ ] **Step 4:** `pytest tests/ -q` green.
+- [ ] **Step 5: Commit** — `test(cap): simple fanout shape`
+
+### Task 11: Approval-gate decisions capability
 
 **Files:**
 - Create: `tests/test_cap_approval_gate.py`
 
 **Interfaces:**
-- Produces: coverage of `approve` (→ next/done), `request-changes` (→ halt, re-runnable), `reject` (→ failed), self-approve refusal, on the `code-review` approval gate.
+- Produces: coverage of `approve` (→ done), `request-changes` (→ halt, re-runnable), `reject` (→ failed), self-approve refusal, using the code-review approval gate via the Task 7 `_drive_to_gate` helper (import or duplicate minimally).
 
-- [ ] **Step 1–5:** drive code-review to the approval gate (reuse Task 2 helper), then exercise each decision in isolation; assert gate state + labels + check-runs. Commit `test(cap): approval-gate decisions`.
+- [ ] **Step 1:** drive to the approval gate; exercise each decision in isolation; assert gate `gates.state` + phase label + check-run conclusion + (self-approve) refusal comment.
+- [ ] **Step 2:** run to verify fail (where behavior gaps exist).
+- [ ] **Step 3:** implement fixes if any.
+- [ ] **Step 4:** `pytest tests/ -q` green.
+- [ ] **Step 5: Commit** — `test(cap): approval-gate decisions`
 
-### Task 14: Override capability
+### Task 12: Override capability
 
 **Files:**
-- Create: `tests/test_cap_override.py`
+- Create: `tests/test_cap_override.py` (+ if needed a fixture with an agent phase `on_blocked: halt`)
 
 **Interfaces:**
-- Produces: a blocked pre-flight gate (`poc:sabotage`-style or a fixture with `on_blocked: halt`) → `/override` advances one phase via path-continue; refusal messages for not-halted / exhausted.
+- Produces: a blocked agent-gate phase → `halted:{reason:blocked}` marker; `/override` (authorized) advances one phase via path-continue; refusal messages for not-halted / exhausted.
 
-- [ ] **Step 1–5:** fixture or code-review preflight block path; assert `halted` marker, override clears it + dispatches continue at next phase. Commit `test(cap): /override blocked gate`.
+- [ ] **Step 1–5:** induce a blocked gate (reuse `tests/test_conclude_preflight.py` setup or a small fixture), assert `halted` marker then `/override` clears it + `dispatch_continue(path=<next>)`; refusal arms. Commit `test(cap): /override blocked gate`.
 
-### Task 15: Restart/reset capability
+### Task 13: Restart/reset capability
 
 **Files:**
 - Create: `tests/test_cap_restart.py`
 
 **Interfaces:**
-- Produces: a second `start`/`reset` mid-pipeline wipes the instance dir, abandons the old status comment (superseded banner via `finalize_superseded_comment`, then drops `status_comment_id`), removes the old phase label, refreshes `head_sha`, re-seeds phase one.
+- Produces: a second `start`/`reset` mid-pipeline wipes the instance dir, abandons the old status comment (superseded banner via `finalize_superseded_comment`, drops `status_comment_id`), removes the old phase label, refreshes `head_sha`, re-seeds phase one.
 
-- [ ] **Step 1–5:** run to mid-pipeline, re-`start`, assert wipe + fresh `_instance.yaml` + superseded call recorded (ENGINE_LOCAL stderr). Commit `test(cap): restart/reset wipe`.
+- [ ] **Step 1–5:** run to mid-pipeline (e.g. after preflight), re-`start` with a new sha; assert wipe (old leg files gone), fresh `_instance.yaml` (`phase`=first, new head), and the `finalize_superseded_comment` ENGINE_LOCAL call recorded. Commit `test(cap): restart/reset wipe`.
 
-### Task 16: Authoring-error UX + max_depth guard
+### Task 14: Authoring-error UX + max_depth guard
 
 **Files:**
-- Create: `tests/test_cap_authoring_errors.py`, `tests/fixtures/too-deep/` (exists — reuse), small malformed fixtures inline (tmp_path-written protocol.json)
+- Create: `tests/test_cap_authoring_errors.py` (writes tiny malformed protocols to `tmp_path`)
+- Modify: `.github/agent-factory/engine/next.py` / `lib.py` (add `lib.validate_protocol(proto)` called at load)
 
 **Interfaces:**
-- Produces: clear, actionable errors (exit 2, message names the offending node path) for: `max_depth` exceeded; join with unknown `of`; agent node missing `workflow`; gate missing source; sequence node missing `next` where required.
+- Produces: exit-2 + actionable messages naming the offending node for: `max_depth` exceeded (reuse `tests/fixtures/too-deep`); join with unknown `of`; agent node missing `workflow`; gate missing source (`questions_from` referencing nothing) — keep the rule set to what the oracles + spec imply, don't over-validate.
 
-- [ ] **Step 1: Write failing tests** — each writes a tiny bad protocol to `tmp_path`, runs `next.py start`, asserts non-zero exit + a message containing the node id/path and a fix hint.
-- [ ] **Step 2: Run to verify fail** (today: opaque stack trace or silent).
-- [ ] **Step 3: Implement** — add validation in `next.py`/`lib` (e.g. a `lib.validate_protocol(proto)` called at load) producing messages like `"[next] join 'jx' references unknown fanout of='zzz'"`. Reuse `lib.check_depth` for depth.
-- [ ] **Step 4: Run to verify pass.**
-- [ ] **Step 5: Commit** `feat(engine): actionable protocol-authoring error messages + validation`.
+- [ ] **Step 1: Write failing tests** — each writes a minimal bad protocol, runs `next.py start`, asserts non-zero exit + message contains the node id + a fix hint.
+- [ ] **Step 2: Run to verify fail** (today: opaque traceback / silent).
+- [ ] **Step 3: Implement** `lib.validate_protocol` raising `ValueError(f"join '{jid}' references unknown fanout of='{of}'")` etc.; `next.py` calls it right after load (after `check_depth`), maps `ValueError`→stderr+exit 2.
+- [ ] **Step 4: Run** PASS; `pytest tests/ -q` green.
+- [ ] **Step 5: Commit** — `feat(engine): actionable protocol-authoring validation + error messages`
 
-### Task 17: Security regression
+### Task 15: Security regression
 
 **Files:**
 - Create: `tests/test_cap_security.py`
 
 **Interfaces:**
-- Produces: assertions that a malicious answer body / feedback / leg id containing shell metacharacters is treated as data — `_parse_answers` never executes it; `NODE_PATH` segments are validated (`node_at_path` → None → clean error, no path traversal in `state_path`).
+- Produces: assertions that a malicious `ANSWER_BODY` / feedback / `NODE_PATH` is treated as data — `_parse_answers` never executes it; a bogus `NODE_PATH` segment yields a clean error (`node_at_path`→None), no path traversal in `state_path`.
 
-- [ ] **Step 1–5:** feed `"; rm -rf / #"` style strings through `do_answer` (ANSWER_BODY env) + a bogus `NODE_PATH` to `advance.py`; assert no execution + clean handling. Commit `test(cap): security regressions for agent-derived strings`.
+- [ ] **Step 1–5:** feed `"; rm -rf / #"`-style strings through `do_answer` (ANSWER_BODY env) and a `../../etc` `NODE_PATH` to `advance.py`; assert no execution + clean non-zero handling + no file written outside the instance dir. Commit `test(cap): security regressions for agent-derived strings`.
 
 ---
 
-## Phase E — Cleanup + status
+## Phase D — Cleanup + status
 
-### Task 18: Remove legacy byte-identity fixtures + tests
+### Task 16: Remove legacy byte-identity fixtures + tests
 
 **Files:**
-- Delete: `tests/fixtures/{fanout-mini,pipeline-mini,multiphase-subpipeline,subpipeline-mini}/`; legacy assertions in `tests/test_engine.py`, `tests/test_join.py`, status-comment tests that assert `protocol-advance` / `seed_and_dispatch_phase` behavior.
+- Delete: `tests/fixtures/{fanout-mini,pipeline-mini,multiphase-subpipeline,subpipeline-mini}/`; legacy assertions/modules superseded by the unified suite.
 
 **Interfaces:**
-- Produces: a green suite with NO references to retired mechanisms.
+- Produces: a green suite with NO references to retired mechanisms or deleted fixtures.
 
-- [ ] **Step 1:** `grep -rn "protocol-advance\|fanout-mini\|pipeline-mini\|multiphase-subpipeline\|subpipeline-mini" tests/` → delete/rewrite each hit. Where a deleted fixture covered a real capability, ensure Tasks 11–17 cover it (they do: single-agent, simple-fanout, gates, merge, inputs via deep-fanout).
-- [ ] **Step 2: Run full suite** — `pytest tests/ -q` → ALL PASS, no skips for retired behavior.
-- [ ] **Step 3: Commit** `test: remove legacy byte-identity fixtures + tests (superseded by capability suite)`.
+- [ ] **Step 1:** `grep -rln "fanout-mini\|pipeline-mini\|multiphase-subpipeline\|subpipeline-mini\|protocol-advance" tests/` → for each, delete the fixture/test or rewrite onto a capability fixture (Tasks 9-15 cover the real capabilities). Keep `deep-fanout`, `gate-deep`, `too-deep`.
+- [ ] **Step 2: Run full suite** — `pytest tests/ -q` ALL PASS, no skips for retired behavior.
+- [ ] **Step 3: Commit** — `test: remove legacy byte-identity fixtures + tests (superseded by capability suite)`
 
-### Task 19: Update `docs/STATUS.md`
+### Task 17: Update `docs/STATUS.md`
 
 **Files:**
 - Modify: `docs/STATUS.md`
 
-- [ ] **Step 1:** document the unified recursive engine (root-as-sequence), the retirement of `protocol-advance`, the single `NODE_PATH` coordinate, and that Stage 4b (GHA) / 4c (live) follow. Note the no-in-flight-migration deploy requirement.
-- [ ] **Step 2: Commit** `docs(status): recursive engine unification (Stage 4a) — protocol-advance retired`.
+- [ ] **Step 1:** document the unified recursive engine (root-as-sequence), `protocol-advance` retirement, the single `NODE_PATH` coordinate, the no-in-flight-migration deploy requirement, and that Stage 4b (GHA) / 4c (live) follow.
+- [ ] **Step 2: Commit** — `docs(status): recursive engine unification (Stage 4a) — protocol-advance retired`
 
 ---
 
-## Self-review checklist (run before handing off to execution)
+## Self-review checklist (run before the final whole-branch review)
 
-- [ ] Full suite green: `pytest tests/ -q`.
+- [ ] `pytest tests/ -q` fully green.
 - [ ] `grep -rn "protocol-advance\|start_fanout\|seed_and_dispatch_phase\|advance-phase" .github/agent-factory/engine/` → zero hits.
-- [ ] Both oracles (`test_unified_codereview_e2e`, `test_unified_recover_e2e`) pass.
+- [ ] Both e2e oracles (`test_unified_codereview_e2e`, `test_unified_recover_e2e`) pass.
 - [ ] `deep-fanout` (depth-4) + `gate-deep` (depth-5) keystones still pass.
 - [ ] Capability suite covers: single-agent, simple-fanout, multi-phase, sub-pipeline, depth-4/5, gates (data + approval), override, restart, inputs, merge, max_depth, authoring errors, security.
 - [ ] No `NODE_PATH`/answer-body/feedback string reaches an injection point.
+- [ ] Suite was green at every task commit (incremental refactor, not a big-bang).
