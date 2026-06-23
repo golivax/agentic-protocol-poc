@@ -364,6 +364,18 @@ def match_trigger(protocol, event_name, action="", comment_body=""):
     return ""
 
 
+def command_prefix(protocol, command, default=""):
+    """Return the `comment_prefix` of the first trigger that maps to `command`,
+    or `default` if no such trigger declares one. Lets the engine strip the
+    protocol-configured prefix (e.g. /answer, /clarify) from a command's comment
+    body instead of a hardcoded literal — so the answer-comment syntax stays
+    per-protocol, not coupled to any one protocol's chosen verb."""
+    for t in protocol.get("triggers", []):
+        if t.get("command") == command and t.get("comment_prefix"):
+            return t["comment_prefix"]
+    return default
+
+
 def agent_workflow(protocol, phase="", branch="", substate=""):
     """Resolve the gh-aw agent workflow basename for a leg.
     phase set + fanout phase -> that branch's workflow;

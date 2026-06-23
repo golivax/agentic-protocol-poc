@@ -520,15 +520,17 @@ def _scan_fanout_for_open_gate(proto, fanout_path, fo_node, want, top):
 
 
 
-def _parse_answers(body):
-    """Parse `/answer qID: value` pairs (one or many lines). Returns {id: value}.
-    The body is UNTRUSTED input: it is parsed and stored in a JSON file whose
-    path (never its content) is passed to the coverage check — safe."""
+def _parse_answers(body, prefix="/answer"):
+    """Parse `<prefix> qID: value` pairs (one or many lines). Returns {id: value}.
+    `prefix` is the protocol-configured comment prefix for the answer command
+    (defaults to /answer). The body is UNTRUSTED input: it is parsed and stored
+    in a JSON file whose path (never its content) is passed to the coverage
+    check — safe."""
     out = {}
     for line in body.splitlines():
         line = line.strip()
-        if line.startswith("/answer"):
-            line = line[len("/answer"):].strip()
+        if line.startswith(prefix):
+            line = line[len(prefix):].strip()
         m = re.match(r"^([A-Za-z0-9_.-]+)\s*[:=]\s*(.+)$", line)
         if m:
             out[m.group(1)] = m.group(2).strip()
@@ -536,14 +538,17 @@ def _parse_answers(body):
 
 
 def do_answer():
-    """Parse /answer comments, accumulate answers, run coverage check, advance gate."""
+    """Parse answer comments, accumulate answers, run coverage check, advance gate.
+    The comment prefix is the one the triggering protocol declared for the
+    `answer` command (falls back to /answer) — never a protocol-coupled literal."""
     import subprocess as _sp
     pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
     body = os.environ.get("ANSWER_BODY", "")
     actor = os.environ.get("ANSWER_ACTOR", "")
-    # Optional explicit branch: `/answer <branch> qID: val` — first bare token.
+    prefix = lib.command_prefix(proto_data, "answer", "/answer")
+    # Optional explicit branch: `<prefix> <branch> qID: val` — first bare token.
     want = ""
-    head = body[len("/answer"):].strip() if body.startswith("/answer") else body
+    head = body[len(prefix):].strip() if body.startswith(prefix) else body
     first = head.split()[0] if head.split() else ""
     if first and ":" not in first and "=" not in first:
         want = first
@@ -585,7 +590,7 @@ def do_answer():
             existing = json.load(open(apath)).get("answers", {}) or {}
         except (json.JSONDecodeError, ValueError):
             existing = {}
-    existing.update(_parse_answers(body))
+    existing.update(_parse_answers(body, prefix))
     doc = {"questions": questions, "answers": existing}
     os.makedirs(os.path.dirname(apath), exist_ok=True)
     with open(apath, "w") as fh:
@@ -607,7 +612,7 @@ def do_answer():
     verdict = json.loads(cov.stdout) if cov.stdout.strip() else {"pass": False, "feedback": "no verdict"}
 
     gdata["gates"].setdefault("history", []).append(
-        {"actor": actor, "answers": list(_parse_answers(body).keys())})
+        {"actor": actor, "answers": list(_parse_answers(body, prefix).keys())})
     if not verdict.get("pass"):
         lib.dump_yaml(gsf, gdata)
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} partial answers")
