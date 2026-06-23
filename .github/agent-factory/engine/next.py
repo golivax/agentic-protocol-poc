@@ -41,6 +41,35 @@ def emit_run_fanout(branches):
     print(json.dumps({"action": "run-fanout", "iteration": 1, "feedback": "", "reason": "fanout", "branches": branches}))
 
 
+def seed_branch(b, fanout_id, phase=None):
+    """Seed one fan-out branch's state file(s) and return its run-fanout emit dict.
+    Used by BOTH the single-phase (start_fanout, phase=None) and multi-phase
+    (seed_and_dispatch_phase, phase set) paths — one seeding logic, two callers.
+    `phase` qualifies the state-file path; head_sha is included on the flat file
+    only when `phase` is set (preserving the pre-existing single/multi divergence)."""
+    bid = b["id"]
+    if lib.is_subpipeline_branch(b):
+        first = b["states"][0]
+        cf = lib.state_file(DIR, PID, INSTANCE, bid, phase=phase)
+        os.makedirs(os.path.dirname(cf), exist_ok=True)
+        cur = {"protocol": PID, "instance": INSTANCE, "state": fanout_id,
+               "sub_state": first["id"], "iteration": 1, "gates": {}, "history": []}
+        lib.dump_yaml(cf, cur)
+        sf = lib.state_file(DIR, PID, INSTANCE, bid, phase=phase, substate=first["id"])
+        lib.dump_yaml(sf, {"protocol": PID, "instance": INSTANCE, "state": fanout_id,
+                           "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []})
+        return {"id": bid, "workflow": first["workflow"],
+                "substate": first["id"], "iteration": 1, "feedback": ""}
+    sf = lib.state_file(DIR, PID, INSTANCE, bid, phase=phase)
+    os.makedirs(os.path.dirname(sf), exist_ok=True)
+    flat = {"protocol": PID, "instance": INSTANCE, "state": fanout_id,
+            "iteration": 1, "gates": {}, "history": []}
+    if phase:
+        flat["head_sha"] = HEAD_SHA
+    lib.dump_yaml(sf, flat)
+    return {"id": bid, "workflow": b["workflow"], "iteration": 1, "feedback": ""}
+
+
 def is_fanout():
     for s in proto_data.get("states", []):
         if s.get("kind") == "fanout":
@@ -57,35 +86,7 @@ def start_fanout():
             branches_config = s.get("branches", [])
             break
 
-    branches = []
-    for b in branches_config:
-        bid = b["id"]
-        if lib.is_subpipeline_branch(b):
-            first = b["states"][0]
-            # Branch CURSOR: sub_state + leg life-state (the fanout id).
-            cf = lib.state_file(DIR, PID, INSTANCE, bid)
-            os.makedirs(os.path.dirname(cf), exist_ok=True)
-            lib.dump_yaml(cf, {
-                "protocol": PID, "instance": INSTANCE, "state": fstate,
-                "sub_state": first["id"], "iteration": 1, "gates": {}, "history": [],
-            })
-            # First SUB-STATE file (the per-step iterate state).
-            sf = lib.state_file(DIR, PID, INSTANCE, bid, substate=first["id"])
-            lib.dump_yaml(sf, {
-                "protocol": PID, "instance": INSTANCE, "state": fstate,
-                "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": [],
-            })
-            branches.append({"id": bid, "workflow": first["workflow"],
-                             "substate": first["id"], "iteration": 1, "feedback": ""})
-        else:
-            sf = lib.state_file(DIR, PID, INSTANCE, bid)
-            os.makedirs(os.path.dirname(sf), exist_ok=True)
-            lib.dump_yaml(sf, {
-                "protocol": PID, "instance": INSTANCE, "state": fstate,
-                "iteration": 1, "gates": {}, "history": [],
-            })
-            branches.append({"id": bid, "workflow": b["workflow"],
-                             "iteration": 1, "feedback": ""})
+    branches = [seed_branch(b, fstate) for b in branches_config]
 
     inf = lib.instance_file(DIR, PID, INSTANCE)
     os.makedirs(os.path.dirname(inf), exist_ok=True)

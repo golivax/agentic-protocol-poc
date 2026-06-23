@@ -36,3 +36,24 @@ def test_fixture_is_multiphase_with_subpipeline_branch():
     assert [s["id"] for s in lib.branch_substates(proto, "B")] == ["draft", "clarify", "finalize"]
     # The fanout phase id is what _gate_phase will derive.
     assert lib._fanout_state(proto)["id"] == "review"
+
+
+def test_start_fanout_single_phase_unchanged(tmp_path, engine_env):
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    out, err, rc = run_engine("next.py", tmp_path / "d", "pr-1", proto, "start", "abc123",
+                              env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out)
+    assert action["action"] == "run-fanout"
+    b = next(x for x in action["branches"] if x["id"] == "B")
+    assert b["substate"] == "draft" and b["workflow"] == "draft-agent"
+    a = next(x for x in action["branches"] if x["id"] == "A")
+    assert "substate" not in a
+    work = _state_dir(tmp_path, engine_env)
+    cursor = read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")
+    assert cursor["sub_state"] == "draft" and cursor["state"] == "review"
+    assert "head_sha" not in cursor                      # single-phase cursor omits head_sha
+    sub = read_state_yaml(work / "subpipeline-mini/pr-1/B.draft.yaml")
+    assert sub["state"] == "review" and sub["iteration"] == 1
+    flat = read_state_yaml(work / "subpipeline-mini/pr-1/A.yaml")
+    assert "head_sha" not in flat                        # single-phase flat omits head_sha
