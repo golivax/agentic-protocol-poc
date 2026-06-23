@@ -421,23 +421,28 @@ def state_checkout(dir_):
         git(dir_, "push", "-q", "origin", STATE_BRANCH)
 
 
-def cas_push(dir_, msg):
-    """
-    cas_push <dir> <message> — commit everything and push fast-forward-only.
-    One retry via rebase. NEVER force-push.
-    """
-    git(dir_, "add", "-A")
+def cas_push(dir_, msg, attempts=5):
+    """Commit everything and push fast-forward-only, retrying via rebase up to
+    `attempts` times. NEVER force-push. A genuinely empty commit is a bug → fail."""
+    import time
+    git(dir_, *GIT_ID, "add", "-A")
     # An empty commit here means the engine pushed without changing state — a bug; fail loudly.
-    git(dir_, *GIT_ID, "commit", "-qm", msg)
-    # check=False intentional: non-zero means the push was rejected; we rebase and retry below.
-    result = subprocess.run(
-        ["git", "-C", dir_, "push", "-q", "origin", STATE_BRANCH],
-        text=True, capture_output=True
-    )
-    if result.returncode != 0:
-        sys.stderr.write("[engine] CAS push rejected, rebasing once\n")
+    staged = subprocess.run(["git", "-C", dir_, "diff", "--cached", "--quiet"]).returncode
+    if staged == 0:
+        sys.stderr.write("[engine] cas_push: nothing staged — refusing empty commit\n")
+        sys.exit(1)
+    git(dir_, *GIT_ID, "commit", "-q", "-m", msg)
+    last = None
+    for i in range(attempts):
+        r = subprocess.run(["git", "-C", dir_, "push", "-q", "origin", STATE_BRANCH])
+        if r.returncode == 0:
+            return
+        last = r
+        sys.stderr.write(f"[engine] CAS push rejected (attempt {i+1}/{attempts}), rebasing\n")
         git(dir_, *GIT_ID, "pull", "-q", "--rebase", "origin", STATE_BRANCH)
-        git(dir_, "push", "-q", "origin", STATE_BRANCH)
+        time.sleep(0.1 * (i + 1))
+    sys.stderr.write("[engine] CAS push failed after retries\n")
+    sys.exit(1)
 
 
 def resolve_executable(sdir, name, pdir, ex=""):
