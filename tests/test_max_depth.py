@@ -10,15 +10,21 @@ sys.path.insert(0, str(ROOT / ".github/agent-factory/engine"))
 import lib
 
 
-def test_default_cap_rejects_depth5():
+def test_default_cap_allows_depth5():
+    # gate-deep is depth-5 with NO max_depth field → allowed by the new default (5).
+    p = json.load(open(ROOT / "tests/fixtures/gate-deep/protocol.json"))
+    lib.check_depth(p)  # no raise
+
+
+def test_default_cap_rejects_depth6():
     p = json.load(open(ROOT / "tests/fixtures/too-deep/protocol.json"))
     with pytest.raises(ValueError, match="max_depth"):
         lib.check_depth(p)
 
 
-def test_explicit_max_depth_allows_depth5():
+def test_explicit_max_depth_allows_depth6():
     p = json.load(open(ROOT / "tests/fixtures/too-deep/protocol.json"))
-    p["max_depth"] = 5
+    p["max_depth"] = 6
     lib.check_depth(p)  # no raise
 
 

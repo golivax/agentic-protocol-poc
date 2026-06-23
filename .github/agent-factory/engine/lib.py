@@ -936,7 +936,7 @@ def render_fanout_status_body(dir_, pid, instance, proto):
     return f"\U0001f50d **{pid} · {instance}**\n\n{sections}{headline}\n\n[Full state & audit trail]({link})\n"
 
 
-DEFAULT_MAX_DEPTH = 4
+DEFAULT_MAX_DEPTH = 5
 
 
 def effective_max_depth(proto):
