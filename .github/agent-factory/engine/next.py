@@ -26,6 +26,11 @@ HEAD_SHA = sys.argv[5] if len(sys.argv) > 5 else ""
 BRANCH = os.environ.get("BRANCH", "")
 PHASE = os.environ.get("PHASE", "")
 SUBSTATE = os.environ.get("SUBSTATE", "")
+# NODE_PATH (NOT PATH — that is the OS executable search path) is the dot-joined
+# tree-navigation path of a `continue` dispatch. When it resolves to a fanout
+# node, the planner emits that fanout's children matrix (a nested fanout is
+# dispatched as its own engine invocation). Empty → legacy flat/leaf resolution.
+NODE_PATH = os.environ.get("NODE_PATH", "")
 
 with open(PROTO) as f:
     proto_data = json.load(f)
@@ -50,6 +55,11 @@ def _fanout_action(proto, path, branches):
     if multi:
         act["phase"] = path[-1]
     act["branches"] = branches
+    # `legs` is the path-aware companion to `branches` (Stage 3): one entry per
+    # child carrying its full tree path. Additive — `branches` stays authoritative
+    # for the depth-<=3 GHA layer; `legs` carries the tree path the nested-fanout
+    # matrix needs. child_tree_path = fanout_tree_path + [branch_id].
+    act["legs"] = [{"path": ".".join(path + [b["id"]])} for b in branches]
     return act
 
 
@@ -79,8 +89,11 @@ def enter_node(proto, path, command, emit=True):
         return enter_node(proto, path + [first], command, emit=emit)
     if kind == "fanout":
         # Top fanout (len 1) keeps the legacy _instance.yaml `joined` mechanism the
-        # callers own. Only NESTED fanouts (len > 1) get a path-keyed marker.
-        # nested-fanout join marker handled in Task 7
+        # callers own. Only NESTED fanouts (len > 1) get a path-keyed __join.yaml
+        # marker (a top fanout marker would be a new file under the instance dir →
+        # breaks byte-identity). The file path routes through state_path.
+        if len(path) > 1:
+            lib.write_join(DIR, PID, INSTANCE, lib.state_path(proto, path), {"joined": False})
         branches = [_seed_child(proto, path + [b["id"]], b) for b in node.get("branches", [])]
         if emit:
             print(json.dumps(_fanout_action(proto, path, branches)))
@@ -652,6 +665,16 @@ if lib.is_multiphase(proto_data) and PHASE and COMMAND == "advance-phase":
     # Phase transition (advance.py already set the cursor to PHASE) → seed+dispatch it.
     seed_and_dispatch_phase(PHASE, COMMAND)
     sys.exit(0)
+
+# A `continue` whose tree path resolves to a fanout node dispatches that fanout's
+# children matrix (nested fanouts are entered as their own engine invocation).
+# Sits before the legacy BRANCH/PHASE/SUBSTATE single-agent resolution so the
+# flat/leaf continue path stays untouched.
+if COMMAND == "continue" and NODE_PATH:
+    _p = NODE_PATH.split(".")
+    if paths.is_fanout(proto_data, _p):
+        enter_node(proto_data, _p, "continue")
+        sys.exit(0)
 
 if not BRANCH and is_fanout() and not PHASE:
     if COMMAND in ("start", "reset"):
