@@ -672,7 +672,8 @@ if lib.is_multiphase(proto_data) and PHASE and COMMAND == "advance-phase":
 # flat/leaf continue path stays untouched.
 if COMMAND == "continue" and NODE_PATH:
     _p = NODE_PATH.split(".")
-    if paths.is_fanout(proto_data, _p):
+    _kind = paths.node_kind(proto_data, _p)
+    if _kind == "fanout":
         # Match the established seed(emit=False)→cas_push→emit ordering of
         # start_fanout / seed_and_dispatch_phase: enter_node seeds the leg files +
         # nested __join.yaml marker locally, cas_push publishes them to origin so
@@ -680,6 +681,33 @@ if COMMAND == "continue" and NODE_PATH:
         branches = enter_node(proto_data, _p, "continue", emit=False)
         lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter nested fanout {NODE_PATH} (continue)")
         print(json.dumps(_fanout_action(proto_data, _p, branches)))
+        sys.exit(0)
+    if _kind == "agent":
+        # A `continue` onto an AGENT sub-state of a sub-pipeline leg (e.g. the
+        # `report` sub-state after a nested join bubbled the cursor forward).
+        # Seed its state file, cas_push so the dispatched agent finds it, then
+        # emit a path-qualified run-agent action. Same seed→cas_push→emit order.
+        node = paths.node_at_path(proto_data, _p)
+        enter_node(proto_data, _p, "continue", emit=False)
+        lib.cas_push(DIR, f"{PID}/{INSTANCE}: continue agent {NODE_PATH}")
+        act = {"action": "run-agent", "iteration": 1, "feedback": "",
+               "reason": f"continue:{NODE_PATH}", "path": NODE_PATH,
+               "workflow": node.get("workflow")}
+        declared = lib.state_inputs(proto_data, _p[-1])
+        if declared:
+            act["inputs"] = lib.resolve_inputs(
+                proto_data, DIR, PID, INSTANCE,
+                consuming_branch=(_p[-2] if len(_p) >= 2 else None),
+                consuming_phase=None, inputs=declared)
+        print(json.dumps(act))
+        sys.exit(0)
+    if _kind == "gate":
+        # A `continue` onto a GATE sub-state: enter_node's gate arm opens the gate
+        # (seeds the gate file + check-run + status comment); cas_push publishes.
+        enter_node(proto_data, _p, "continue", emit=False)
+        lib.cas_push(DIR, f"{PID}/{INSTANCE}: continue gate {NODE_PATH} open")
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": f"gate-open:{NODE_PATH}"}))
         sys.exit(0)
 
 if not BRANCH and is_fanout() and not PHASE:

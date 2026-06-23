@@ -157,3 +157,30 @@ def test_advance_nested_leg_done_fires_join_with_path(engine_env, tmp_path):
     # perf is still in flight (its leg file stays non-terminal).
     perf = _read_yaml(fdir / "deep.analyze.perf.yaml")
     assert perf.get("state") != "done", f"perf should not be done yet: {perf}"
+
+
+def test_continue_at_nested_agent_seeds_and_emits(engine_env, tmp_path):
+    """Step A: a `continue` with NODE_PATH at a non-fanout AGENT sub-state (the
+    `report` sub-state of the deep leg) must seed that sub-state's file and emit a
+    path-qualified run-agent action — mirroring the fanout-continue's
+    seed→cas_push→emit order, but for an agent leaf."""
+    # Seed the top fanout so the instance dir exists.
+    subprocess.run(["python3", str(NEXT), str(tmp_path / "start"), "pr-1",
+                    str(PROTO), "start", "abc123"],
+                   text=True, capture_output=True, env=engine_env, check=True)
+    e = dict(engine_env); e["NODE_PATH"] = "preflight.deep.report"
+    e["HEAD_SHA"] = "abc123"
+    r = subprocess.run(["python3", str(NEXT), str(tmp_path / "cont-report"), "pr-1",
+                        str(PROTO), "continue", "abc123"],
+                       text=True, capture_output=True, env=e)
+    assert r.returncode == 0, r.stderr
+    act = json.loads(r.stdout)
+    assert act["action"] == "run-agent", act
+    assert act["path"] == "preflight.deep.report", act
+    assert act["workflow"] == "report-agent", act
+    # Seeded file persisted to origin (single-phase drops leading "preflight").
+    fdir = _reclone(tmp_path, engine_env, "report")
+    assert (fdir / "deep.report.yaml").is_file()
+    seeded = _read_yaml(fdir / "deep.report.yaml")
+    assert seeded["state"] == "preflight"  # leg life-state
+    assert seeded["iteration"] == 1
