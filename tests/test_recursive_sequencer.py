@@ -41,6 +41,39 @@ def test_enter_top_fanout_seeds_branches(engine_env, tmp_path):
     assert (base / "B.yaml").exists() and (base / "B.draft.yaml").exists()
 
 
+def _seed_open_gate(tmp_path, engine_env, proto):
+    """Drive start → draft done so clarify gate is open with one question.
+    Lifted from test_gate_data.py._seed_open_gate for /answer regression test."""
+    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
+    v = tmp_path / "v.json"
+    v.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    ev = tmp_path / "draft.json"
+    ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "Which DB?"}]}))
+    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
+                                   PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    run_engine("advance.py", tmp_path / "dir-adv", "pr-1", proto, v, ev, env=e)
+
+
+def test_answer_via_path_advances_cursor_to_finalize(engine_env, tmp_path):
+    """Regression test for Task 8: _find_open_gate returns a node-path and
+    do_answer uses it. After a full /answer the branch B cursor sub_state
+    must advance to 'finalize' — byte-identical to the depth-<=3 behavior."""
+    proto = FIXTURES / "subpipeline-mini/protocol.json"
+    _seed_open_gate(tmp_path, engine_env, proto)
+
+    e = dict(engine_env)
+    e["ANSWER_BODY"] = "/answer q1: postgres"
+    e["ANSWER_ACTOR"] = "alice"
+    e["PR_HEAD_SHA"] = "abc123"
+    out, err, rc = run_engine("next.py", tmp_path / "dir2", "pr-1", proto, "answer", env=e)
+    assert rc == 0, err
+
+    work = _state_dir(tmp_path, engine_env)
+    cursor = read_state_yaml(work / "subpipeline-mini/pr-1/B.yaml")
+    assert cursor["sub_state"] == "finalize", f"cursor should advance to finalize: {cursor}"
+
+
 def test_advance_subpipeline_draft_to_gate(engine_env, tmp_path):
     """Advancing branch B / draft done → cursor sub_state==clarify + gate open.
 

@@ -450,33 +450,50 @@ def do_resolve_gate():
 
 def _gate_phase(proto):
     """Phase qualifier for sub-pipeline gate/cursor state files: the fanout phase
-    id in a multi-phase protocol, else None (single-phase → unqualified paths)."""
+    id in a multi-phase protocol, else None (single-phase → unqualified paths).
+    Kept for the do_resolve_gate / do_override paths that still use legacy coords."""
     if lib.is_multiphase(proto):
         fo = lib._fanout_state(proto)
         return fo["id"] if fo else None
     return None
 
 
-def _find_open_gate_branch(proto, want_branch=""):
-    """Return (branch_id, gate_substate_id) for the first open data-gate, or (None, None)."""
+def _find_open_gate(proto, want=""):
+    """Return the full tree-navigation path to the first open data-gate, or None.
+    `want` is an optional branch id to restrict the search. Walks the top-level
+    fanout's branches; for each sub-pipeline branch whose cursor sub_state is a
+    gate in state 'open', returns the path [fanout_id, branch_id, gate_substate_id].
+    For depth <=3 this is byte-identical to the old (branch_id, gate_id) pair."""
     fo = lib._fanout_state(proto)
     if not fo:
-        return None, None
-    ph = _gate_phase(proto)
+        return None
+    fo_id = fo["id"]
     for b in fo.get("branches", []):
-        if want_branch and b["id"] != want_branch:
+        bid = b["id"]
+        if want and bid != want:
             continue
-        cf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"], phase=ph)
+        branch_path = [fo_id, bid]
+        cf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto, branch_path))
         if not os.path.isfile(cf):
             continue
         cur = lib.load_yaml(cf)
         sub = cur.get("sub_state", "")
         for s in b.get("states", []):
             if s["id"] == sub and s.get("kind") == "gate":
-                gsf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"], substate=sub, phase=ph)
+                gate_path = branch_path + [sub]
+                gsf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto, gate_path))
                 if os.path.isfile(gsf) and lib.load_yaml(gsf).get("gates", {}).get("state") == "open":
-                    return b["id"], sub
-    return None, None
+                    return gate_path
+    return None
+
+
+def _find_open_gate_branch(proto, want_branch=""):
+    """Back-compat shim: returns (branch_id, gate_substate_id) or (None, None).
+    Delegates to _find_open_gate and unpacks the last two path segments."""
+    gate_path = _find_open_gate(proto, want_branch)
+    if gate_path is None:
+        return None, None
+    return gate_path[-2], gate_path[-1]
 
 
 def _parse_answers(body):
@@ -507,21 +524,37 @@ def do_answer():
     if first and ":" not in first and "=" not in first:
         want = first
 
-    branch, gate = _find_open_gate_branch(proto_data, want)
-    if not branch:
+    gate_path = _find_open_gate(proto_data, want)
+    if gate_path is None:
         lib.post_pr_comment(pr, "No open question gate to answer right now.")
         print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
                           "reason": "answer: no open gate"}))
         return
 
-    ph = _gate_phase(proto_data)
-    gsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=gate, phase=ph)
+    # Derive coords from the gate tree path via path helpers.
+    # branch_path is the cursor file's tree path (parent of the gate leaf).
+    branch = gate_path[-2]
+    gate = gate_path[-1]
+    branch_path = gate_path[:-1]
+    # ph is the phase qualifier for dispatch_continue (None in single-phase, fanout
+    # id in multi-phase) — derived from enclosing_fanout_id filtered by is_multiphase.
+    ph = (paths.enclosing_fanout_id(proto_data, gate_path)
+          if lib.is_multiphase(proto_data) else None)
+    # life is the leg's in-flight state value: the enclosing fanout id. This replaces
+    # the old hardcoded `lib._fanout_state(proto_data)["id"]` (which was already fixed
+    # in the prior task) and the old "_gate_phase"-based approach. For depth <=3 the
+    # value is identical: enclosing_fanout_id(["review","B","clarify"]) == "review".
+    life = paths.enclosing_fanout_id(proto_data, gate_path)
+
+    # File paths all derived from the gate/branch tree paths via lib.state_path so
+    # depth-<=3 filenames stay byte-identical (single-phase drops the leading fanout id).
+    gsf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, gate_path))
     gdata = lib.load_yaml(gsf)
     questions = gdata.get("gates", {}).get("questions", []) or []
 
     # Merge new answers into the persisted answers artifact.
-    apath = lib.output_artifact_path(DIR, PID, INSTANCE, branch=branch,
-                                     substate=gate, kind="answers", phase=ph)
+    apath = lib.output_artifact_path(DIR, PID, INSTANCE,
+                                     path=lib.state_path(proto_data, gate_path), kind="answers")
     existing = {}
     if os.path.isfile(apath):
         try:
@@ -561,21 +594,15 @@ def do_answer():
     gdata["gates"]["state"] = "answered"
     lib.dump_yaml(gsf, gdata)
     nxt_sub = lib.next_substate_id(proto_data, branch, gate)
-    cf = lib.state_file(DIR, PID, INSTANCE, branch=branch, phase=ph)
+    cf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, branch_path))
     cur = lib.load_yaml(cf)
     sha = gdata.get("head_sha", "") or HEAD_SHA
     if nxt_sub:
-        # The leg's in-flight life-state is the fanout state id — NOT a hardcoded
-        # "review" (that only matched the subpipeline-mini fixture whose fanout is
-        # named "review"). next.py's `continue` compares the seeded sub-state's
-        # `state` to this life_state; a mismatch makes it treat the leg as terminal
-        # and halt, so a differently-named fanout (e.g. "recover") would never
-        # dispatch the next sub-state.
-        life = lib._fanout_state(proto_data)["id"]
+        nxt_path = branch_path + [nxt_sub]
         cur["sub_state"] = nxt_sub
         cur["state"] = life
         lib.dump_yaml(cf, cur)
-        nsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=nxt_sub, phase=ph)
+        nsf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, nxt_path))
         lib.dump_yaml(nsf, {"protocol": PID, "instance": INSTANCE, "state": life,
                             "iteration": 1, "gates": {}, "head_sha": sha, "history": []})
         lib.set_check_run(f"{PID}/{branch}/{gate}", sha, "completed", "success",

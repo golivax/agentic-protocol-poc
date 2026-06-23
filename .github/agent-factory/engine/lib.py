@@ -403,16 +403,24 @@ def instance_file(d, pid, instance):
 
 
 def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, questions=None,
-              phase=None):
+              phase=None, path=None):
     """Seed a gate state file (gates.state=open), emit the awaiting check-run, and
     refresh the status comment. `branch` scopes the gate to a sub-pipeline leg.
     `phase` qualifies the path for multi-phase fan-out legs (e.g. review.B.clarify.yaml).
-    `questions` (a list of {id,text}) turns this into a data-carrying gate whose
+    `path` is the canonical FILE-NAMING path (already converted via state_path); when
+    given it takes precedence over branch/phase/gate_id for the state file and check-run
+    name. `questions` (a list of {id,text}) turns this into a data-carrying gate whose
     comment lists them with the /answer syntax. Caller owns the cursor + cas_push."""
-    if branch:
+    if path is not None:
+        sf = state_file(dir_, pid, instance, path=path)
+        # Build check-run name from path segments: pid + path elements joined by "/"
+        cr_name = pid + "/" + "/".join(path)
+    elif branch:
         sf = state_file(dir_, pid, instance, branch=branch, substate=gate_id, phase=phase)
+        cr_name = f"{pid}/{branch}/{gate_id}"
     else:
         sf = state_file(dir_, pid, instance, phase=gate_id)
+        cr_name = f"{pid}/{gate_id}"
     os.makedirs(os.path.dirname(sf), exist_ok=True)
     gates = {"state": "open", "history": []}
     if questions:
@@ -421,7 +429,6 @@ def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, qu
         "protocol": pid, "instance": instance, "state": gate_id,
         "head_sha": sha, "gates": gates,
     })
-    cr_name = f"{pid}/{branch}/{gate_id}" if branch else f"{pid}/{gate_id}"
     if questions:
         listed = "\n".join(f"{i+1}. `{q['id']}` — {q['text']}" for i, q in enumerate(questions))
         summary = ("Answer with `/answer <id>: <value>` (one or more per comment), e.g. "
