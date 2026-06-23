@@ -1,18 +1,70 @@
-# Deferred: workflow-YAML integration for nested sub-workflow branches
+# Workflow-YAML integration for nested sub-workflow branches
 
-**Status:** the engine + pytest layer for nested sub-workflow branches (Plans 1–4)
-is implemented and green on branch `feat/nested-subworkflow-branches`. The
-**GitHub-Actions workflow wiring** that makes it run live is deliberately
-**deferred** to a separate integration pass on `main`, for two reasons:
+**Status:** ✅ **IMPLEMENTED** on branch `feat/recover-mental-model-stub` (the
+real `recover-mental-model-stub` protocol + all the workflow wiring described
+below). The engine + pytest layer (Plans 1–4) is on `main`. The wiring lands on
+`main` per the rule that `agentic-orchestrator.yml`, `agentic-engine.yml`, and the
+compiled agent `*.lock.yml` run from the default branch. **It is verified
+statically (YAML parse, expression review, a reproduced+fixed CLI bug) but has NOT
+yet had a live PR run** — see the live-verification checklist below.
 
-1. `CLAUDE.md` mandates that `agentic-orchestrator.yml`, `agentic-engine.yml`, and
-   the compiled agent `*.lock.yml` live on the default branch (`main`) and are
-   never committed onto a feature/demo branch (it pollutes the reviewed diff and
-   those events run from `main`).
-2. These steps cannot be validated without a live PR run; TDD does not cover them.
+What shipped on this branch:
+- `recover-mental-model-stub` protocol (`protocol.json` + schemas + checks +
+  publish-summary + append-rationale merge hook) — engine behavior pytest-covered.
+- 3 gh-aw agents (`rmm-summary-agent`, `rmm-draft-agent`, `rmm-finalize-agent`)
+  `.md` + compiled `.lock.yml` (`gh aw compile`, 0 errors).
+- Engine gaps closed for live: `lib.agent_workflow` + `run-checks.py` are now
+  substate-aware (and the `agent-workflow` CLI forwards the substate arg).
+- `agentic-engine.yml`: `SUBSTATE` threaded through the `plan→dispatch→checks→
+  advance` matrix (matrix axis is now `leg = {branch, substate}`); a new `/answer`
+  command (write-gated, body via heredoc env, never interpolated); resolved
+  `inputs` inlined into `aw_context.inputs` so `rmm-finalize-agent` reads
+  `.inputs.answers` / `.inputs.draft`; `NODE` resolution generalized off the
+  hardcoded `"review"` fallback to the protocol's first fanout/agent state.
 
-This file collects the exact wiring to apply during that integration pass. It is
-the deferred portion of plan tasks **P2 T7**, **P3 T6**, and **P4 T6**.
+## Live-verification checklist (the part only a real PR run can confirm)
+
+Prereq: this branch must be **merged to `main`** first (issue_comment/PR events
+run workflows from the default branch). Secrets already configured per CLAUDE.md
+(`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `POC_DISPATCH_TOKEN`).
+
+1. **Trigger:** on any open PR, comment `/recover`. Expect the orchestrator to
+   route to `recover-mental-model-stub` and the engine `plan` job to emit a
+   `run-fanout` with two legs: `summary` (flat) and `rationale` (substate `draft`).
+2. **Fanout dispatch:** expect two `dispatch` matrix legs —
+   `rmm-summary-agent` and `rmm-draft-agent` — both resolving a workflow (this is
+   exactly what the CLI-substate fix unblocks; if `rationale` dies with
+   "no agent workflow resolved … substate='draft'", the fix didn't land).
+3. **Summary leg:** `rmm-summary-agent` posts a change summary; its `summary`
+   leg reaches `done`.
+4. **Gate opens:** after `draft` passes `questions-present`, the engine advances
+   the `rationale` cursor to `clarify` and posts the agent's questions with the
+   `/answer` syntax. The leg is NOT terminal; the join waits.
+5. **Answer:** comment `/answer q1: … q2: …` (write access required). Expect the
+   engine to accept it, run `answers-coverage`, and — once every question is
+   answered — advance to `finalize` and dispatch `rmm-finalize-agent`.
+6. **Inputs reach finalize:** confirm `rmm-finalize-agent`'s rationale reflects
+   your answers (proves `aw_context.inputs.answers` was staged + read).
+7. **Join + combine:** once both legs are `done`, the join advances to `combine`
+   (`kind:"merge"`), `append-rationale` posts the combined summary + rationale,
+   and the aggregate check-run goes green.
+
+Known watch-points if a live run fails:
+- Matrix object access (`matrix.leg.branch/.substate`) — only confirmable live;
+  if GHA rejects the matrix, the `branches` output shape is wrong.
+- Artifact name match across dispatch-upload / checks+advance-download
+  (`runmeta-<branch>-<substate>`).
+- Latent (not exercised by this single-phase protocol): a sub-pipeline branch
+  nested under a *multi-phase* protocol — `next.py`'s multi-phase fanout emit
+  omits per-branch `substate` (`next.py:183-184`); fine for `recover` (single
+  fanout phase), but would need fixing before a multi-phase sub-pipeline.
+
+---
+
+## Original wiring spec (kept as the record; now implemented above)
+
+This file collected the exact wiring applied during the integration pass — the
+deferred portion of plan tasks **P2 T7**, **P3 T6**, and **P4 T6**.
 
 ## P2 T7 — stage resolved `inputs` into the agent job (`agentic-engine.yml`)
 
