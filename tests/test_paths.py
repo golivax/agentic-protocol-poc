@@ -43,3 +43,21 @@ def test_enclosing_fanout_id():
 def test_max_static_depth_depth3():
     assert paths.max_static_depth(_proto("subpipeline-mini")) == 3
     assert paths.max_static_depth(_proto("single-agent")) == 1
+
+
+import importlib
+lib = importlib.import_module("lib")  # same engine sys.path as paths
+
+def test_state_file_path_matches_kwargs():
+    a = lib.state_file("/s", "p", "pr-1", phase="review", branch="B", substate="draft")
+    b = lib.state_file("/s", "p", "pr-1", path=["review", "B", "draft"])
+    assert a == b == "/s/p/pr-1/review.B.draft.yaml"
+
+def test_state_file_path_deep():
+    got = lib.state_file("/s", "p", "pr-1", path=["pre", "deep", "analyze", "sec"])
+    assert got == "/s/p/pr-1/pre.deep.analyze.sec.yaml"
+
+def test_output_artifact_path_deep():
+    got = lib.output_artifact_path("/s", "p", "pr-1",
+                                   path=["pre", "deep", "analyze", "sec"], kind="evidence")
+    assert got == "/s/p/pr-1/pre.deep.analyze.sec.evidence.json"

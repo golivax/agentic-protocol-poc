@@ -38,37 +38,35 @@ def protocol_id(proto_path):
         return json.load(f)["name"]
 
 
-def state_file(d, pid, instance, branch=None, phase=None, substate=None):
-    """
-    state_file <dir> <protocol-id> <instance-key> [branch] [phase] [substate]
-      no branch, no phase            → single-agent     <dir>/<pid>/<instance>.yaml
-      branch, no phase               → fan-out leg       <dir>/<pid>/<instance>/<branch>.yaml
-      phase, no branch               → multi-phase agent <dir>/<pid>/<instance>/<phase>.yaml
-      phase + branch                 → fan-out leg       <dir>/<pid>/<instance>/<phase>.<branch>.yaml
-      branch + substate              → sub-pipeline step <dir>/<pid>/<instance>/<branch>.<substate>.yaml
-      phase + branch + substate      → sub-pipeline step <dir>/<pid>/<instance>/<phase>.<branch>.<substate>.yaml
-    The branch CURSOR file is the (phase+)branch path WITHOUT substate; a
-    sub-pipeline branch stores `sub_state` there and the per-step state in the
-    substate path.
-    """
-    base = f"{d}/{pid}/{instance}"
-    if phase and branch and substate:
-        return f"{base}/{phase}.{branch}.{substate}.yaml"
-    if phase and branch:
-        return f"{base}/{phase}.{branch}.yaml"
+def _coord_to_path(branch=None, phase=None, substate=None):
+    """Back-compat: collapse the legacy 3 kwargs to a node-path list."""
+    p = []
     if phase:
-        return f"{base}/{phase}.yaml"
-    if branch and substate:
-        return f"{base}/{branch}.{substate}.yaml"
+        p.append(phase)
     if branch:
-        return f"{base}/{branch}.yaml"
-    return f"{base}.yaml"
+        p.append(branch)
+    if substate:
+        p.append(substate)
+    return p
 
 
-def output_artifact_path(d, pid, instance, branch=None, phase=None, substate=None, kind="evidence"):
+def state_file(d, pid, instance, branch=None, phase=None, substate=None, path=None):
+    """<dir>/<pid>/<instance>/<dot-joined-path>.yaml (or <instance>.yaml for the
+    empty path). `path` is the canonical node-path; the branch/phase/substate
+    kwargs are a back-compat shim that builds the equivalent 3-element path.
+    Depth-<=3 paths are byte-identical to the historical layout."""
+    base = f"{d}/{pid}/{instance}"
+    p = list(path) if path is not None else _coord_to_path(branch, phase, substate)
+    if not p:
+        return f"{base}.yaml"
+    return f"{base}/{'.'.join(p)}.yaml"
+
+
+def output_artifact_path(d, pid, instance, branch=None, phase=None, substate=None,
+                         kind="evidence", path=None):
     """Persisted-output path for a state, parallel to state_file but with a
     .<kind>.json suffix. kind is 'evidence' (agent) or 'answers' (gate)."""
-    sf = state_file(d, pid, instance, branch=branch, phase=phase, substate=substate)
+    sf = state_file(d, pid, instance, branch=branch, phase=phase, substate=substate, path=path)
     return sf[:-len(".yaml")] + f".{kind}.json"
 
 
