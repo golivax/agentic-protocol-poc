@@ -82,3 +82,49 @@ def test_start_fanout_single_phase_unchanged(tmp_path, engine_env):
     assert sub["state"] == "review" and sub["iteration"] == 1
     flat = read_state_yaml(work / "subpipeline-mini/pr-1/A.yaml")
     assert "head_sha" not in flat                        # single-phase flat omits head_sha
+
+
+def _advance_substate(tmp_path, engine_env, instance, branch, substate, sha="abc123", n=0,
+                      evidence=None):
+    v = tmp_path / f"v-{branch}-{substate}-{n}.json"
+    v.write_text(json.dumps({"results": [
+        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    ev = tmp_path / f"ev-{branch}-{substate}-{n}.json"
+    ev.write_text(json.dumps(evidence) if evidence is not None else "{}")
+    e = dict(engine_env)
+    e.update(BRANCH=branch, SUBSTATE=substate, PHASE="review", PR_HEAD_SHA=sha, AGENT_RUN_ID="r")
+    return run_engine("advance.py", tmp_path / f"adv-{branch}-{substate}-{n}", instance,
+                      str(PROTO), v, ev, env=e)
+
+
+def test_answer_finds_nested_gate_in_multiphase(tmp_path, engine_env):
+    # Enter the fanout phase (seeds B.draft).
+    run_engine("next.py", tmp_path / "d0", "pr-1", str(PROTO), "advance-phase", "abc123",
+               env=engine_env, phase="review")
+    # Advance B.draft → opens the clarify gate at review.B.clarify.yaml.
+    # Provide a question in the draft evidence so the gate has questions to answer.
+    out, err, rc = _advance_substate(tmp_path, engine_env, "pr-1", "B", "draft",
+                                     evidence={"questions": [{"id": "q1", "text": "Which DB?"}]})
+    assert rc == 0, err
+    work = _state_dir(tmp_path, engine_env, suffix="-g")
+    gate = read_state_yaml(work / "multiphase-subpipeline/pr-1/review.B.clarify.yaml")
+    assert gate["gates"]["state"] == "open"
+    qid = gate["gates"]["questions"][0]["id"]
+
+    # /answer with NO phase env — do_answer must derive phase="review" itself.
+    e = dict(engine_env)
+    e["ANSWER_BODY"] = f"/answer {qid}: postgres"
+    e["ANSWER_ACTOR"] = "alice"
+    e["PR_HEAD_SHA"] = "abc123"
+    out, err, rc = run_engine("next.py", tmp_path / "d1", "pr-1", str(PROTO), "answer", env=e)
+    assert rc == 0, err
+
+    work = _state_dir(tmp_path, engine_env, suffix="-a")
+    gate = read_state_yaml(work / "multiphase-subpipeline/pr-1/review.B.clarify.yaml")
+    assert gate["gates"]["state"] == "answered"
+    cursor = read_state_yaml(work / "multiphase-subpipeline/pr-1/review.B.yaml")
+    assert cursor["sub_state"] == "finalize"          # advanced to the next sub-state
+    answers = json.loads((work / "multiphase-subpipeline/pr-1/review.B.clarify.answers.json").read_text())
+    assert answers["answers"][qid] == "postgres"
+    # The continue re-dispatch must carry the phase so the resumed leg uses qualified paths.
+    assert "client_payload[phase]=review" in err

@@ -380,22 +380,32 @@ def do_resolve_gate():
     refuse(f"Unknown gate decision '{decision}'.", "gate: unknown decision")
 
 
+def _gate_phase(proto):
+    """Phase qualifier for sub-pipeline gate/cursor state files: the fanout phase
+    id in a multi-phase protocol, else None (single-phase → unqualified paths)."""
+    if lib.is_multiphase(proto):
+        fo = lib._fanout_state(proto)
+        return fo["id"] if fo else None
+    return None
+
+
 def _find_open_gate_branch(proto, want_branch=""):
     """Return (branch_id, gate_substate_id) for the first open data-gate, or (None, None)."""
     fo = lib._fanout_state(proto)
     if not fo:
         return None, None
+    ph = _gate_phase(proto)
     for b in fo.get("branches", []):
         if want_branch and b["id"] != want_branch:
             continue
-        cf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"])
+        cf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"], phase=ph)
         if not os.path.isfile(cf):
             continue
         cur = lib.load_yaml(cf)
         sub = cur.get("sub_state", "")
         for s in b.get("states", []):
             if s["id"] == sub and s.get("kind") == "gate":
-                gsf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"], substate=sub)
+                gsf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"], substate=sub, phase=ph)
                 if os.path.isfile(gsf) and lib.load_yaml(gsf).get("gates", {}).get("state") == "open":
                     return b["id"], sub
     return None, None
@@ -436,13 +446,14 @@ def do_answer():
                           "reason": "answer: no open gate"}))
         return
 
-    gsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=gate)
+    ph = _gate_phase(proto_data)
+    gsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=gate, phase=ph)
     gdata = lib.load_yaml(gsf)
     questions = gdata.get("gates", {}).get("questions", []) or []
 
     # Merge new answers into the persisted answers artifact.
     apath = lib.output_artifact_path(DIR, PID, INSTANCE, branch=branch,
-                                     substate=gate, kind="answers")
+                                     substate=gate, kind="answers", phase=ph)
     existing = {}
     if os.path.isfile(apath):
         try:
@@ -482,7 +493,7 @@ def do_answer():
     gdata["gates"]["state"] = "answered"
     lib.dump_yaml(gsf, gdata)
     nxt_sub = lib.next_substate_id(proto_data, branch, gate)
-    cf = lib.state_file(DIR, PID, INSTANCE, branch=branch)
+    cf = lib.state_file(DIR, PID, INSTANCE, branch=branch, phase=ph)
     cur = lib.load_yaml(cf)
     sha = gdata.get("head_sha", "") or HEAD_SHA
     if nxt_sub:
@@ -496,14 +507,14 @@ def do_answer():
         cur["sub_state"] = nxt_sub
         cur["state"] = life
         lib.dump_yaml(cf, cur)
-        nsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=nxt_sub)
+        nsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=nxt_sub, phase=ph)
         lib.dump_yaml(nsf, {"protocol": PID, "instance": INSTANCE, "state": life,
                             "iteration": 1, "gates": {}, "head_sha": sha, "history": []})
         lib.set_check_run(f"{PID}/{branch}/{gate}", sha, "completed", "success",
                           "Answered", f"Answered by @{actor}.")
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered -> {nxt_sub}")
         lib.post_pr_comment(pr, f"{gate} answered by @{actor}; continuing to {nxt_sub}.")
-        lib.dispatch_continue(PID, INSTANCE, branch, nxt_sub)
+        lib.dispatch_continue(PID, INSTANCE, branch, nxt_sub, phase=ph or "")
     else:
         cur["state"] = "done"
         lib.dump_yaml(cf, cur)

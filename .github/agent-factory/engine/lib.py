@@ -368,13 +368,15 @@ def instance_file(d, pid, instance):
     return f"{d}/{pid}/{instance}/_instance.yaml"
 
 
-def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, questions=None):
+def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, questions=None,
+              phase=None):
     """Seed a gate state file (gates.state=open), emit the awaiting check-run, and
     refresh the status comment. `branch` scopes the gate to a sub-pipeline leg.
+    `phase` qualifies the path for multi-phase fan-out legs (e.g. review.B.clarify.yaml).
     `questions` (a list of {id,text}) turns this into a data-carrying gate whose
     comment lists them with the /answer syntax. Caller owns the cursor + cas_push."""
     if branch:
-        sf = state_file(dir_, pid, instance, branch=branch, substate=gate_id)
+        sf = state_file(dir_, pid, instance, branch=branch, substate=gate_id, phase=phase)
     else:
         sf = state_file(dir_, pid, instance, phase=gate_id)
     os.makedirs(os.path.dirname(sf), exist_ok=True)
@@ -995,15 +997,15 @@ def ensure_status_comment(state_dir, pid, instance, proto_path, pr):
 
 
 def _gh_dispatch(event_type, fields):
-    """Fire a repository_dispatch. ENGINE_LOCAL → no-op (logs to stderr)."""
-    if os.environ.get("ENGINE_LOCAL", "0") == "1":
-        sys.stderr.write(f"[ENGINE_LOCAL] dispatch {event_type} {fields}\n")
-        return
-    args = ["gh", "api", f"repos/{os.environ.get('GITHUB_REPOSITORY', '')}/dispatches",
+    """Fire a repository_dispatch. ENGINE_LOCAL → no-op (logs to stderr in gh-args format)."""
+    args = [f"repos/{os.environ.get('GITHUB_REPOSITORY', '')}/dispatches",
             "-f", f"event_type={event_type}"]
     for k, v in fields.items():
         args += ["-F", f"client_payload[{k}]={v}"]
-    subprocess.run(args, text=True, capture_output=True)
+    if os.environ.get("ENGINE_LOCAL", "0") == "1":
+        sys.stderr.write(f"[ENGINE_LOCAL] gh api {' '.join(args)}\n")
+        return
+    subprocess.run(["gh", "api"] + args, text=True, capture_output=True)
 
 
 def dispatch_continue(pid, instance, branch, substate, phase=""):
