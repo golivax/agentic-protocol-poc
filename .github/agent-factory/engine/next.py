@@ -493,11 +493,18 @@ def do_answer():
     cur = lib.load_yaml(cf)
     sha = gdata.get("head_sha", "") or HEAD_SHA
     if nxt_sub:
+        # The leg's in-flight life-state is the fanout state id — NOT a hardcoded
+        # "review" (that only matched the subpipeline-mini fixture whose fanout is
+        # named "review"). next.py's `continue` compares the seeded sub-state's
+        # `state` to this life_state; a mismatch makes it treat the leg as terminal
+        # and halt, so a differently-named fanout (e.g. "recover") would never
+        # dispatch the next sub-state.
+        life = lib._fanout_state(proto_data)["id"]
         cur["sub_state"] = nxt_sub
-        cur["state"] = "review"
+        cur["state"] = life
         lib.dump_yaml(cf, cur)
         nsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=nxt_sub)
-        lib.dump_yaml(nsf, {"protocol": PID, "instance": INSTANCE, "state": "review",
+        lib.dump_yaml(nsf, {"protocol": PID, "instance": INSTANCE, "state": life,
                             "iteration": 1, "gates": {}, "head_sha": sha, "history": []})
         lib.set_check_run(f"{PID}/{branch}/{gate}", sha, "completed", "success",
                           "Answered", f"Answered by @{actor}.")

@@ -215,3 +215,33 @@ def test_run_merge_hook(tmp_path, engine_env):
     )
     # The hook returns a fixed summary string on success — confirm it's non-empty.
     assert res.get("summary"), f"Expected non-empty summary, got {res!r}"
+
+def test_answer_then_continue_dispatches_finalize(tmp_path, engine_env):
+    """Regression (live-only bug): after /answer advances a gated sub-pipeline,
+    `next.py continue` for the next sub-state must emit run-agent, NOT halt.
+    do_answer hardcoded the leg life-state as "review" (which only matched the
+    subpipeline-mini fixture); this protocol's fanout is "recover", so the seeded
+    `state` mismatched the life_state and continue halted ("instance is terminal")
+    — finalize never dispatched live. Also asserts the resolved inputs ride along."""
+    passv = tmp_path / "v.json"
+    passv.write_text(json.dumps({"results": [
+        {"check": "synthetic-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    run_engine("next.py", tmp_path / "dir-next", "pr-1", PROTO, "start", "abc123", env=engine_env)
+    ev = tmp_path / "draft.json"
+    ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "Why?"}]}))
+    e = dict(engine_env)
+    e.update(BRANCH="rationale", SUBSTATE="draft", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    run_engine("advance.py", tmp_path / "dir-adv", "pr-1", PROTO, passv, ev, env=e)
+    ea = dict(engine_env)
+    ea.update(ANSWER_BODY="/answer q1: yes", ANSWER_ACTOR="al", PR_HEAD_SHA="abc123")
+    run_engine("next.py", tmp_path / "dir-answer", "pr-1", PROTO, "answer", env=ea)
+
+    ec = dict(engine_env)
+    ec.update(BRANCH="rationale", SUBSTATE="finalize")
+    out, err, rc = run_engine("next.py", tmp_path / "dir-cont", "pr-1", PROTO, "continue", env=ec)
+    assert rc == 0, err
+    action = json.loads(out)
+    assert action["action"] == "run-agent", f"expected run-agent, got {action}"
+    assert action.get("substate") == "finalize"
+    names = {i["as"] for i in action.get("inputs", [])}
+    assert {"answers", "draft"} <= names, f"inputs missing: {names}"
