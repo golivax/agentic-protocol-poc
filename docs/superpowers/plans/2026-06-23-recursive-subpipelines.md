@@ -576,7 +576,27 @@ git commit -m "feat(engine): cas_push bounded retry loop for deep-concurrency re
 
 Goal: collapse the four drifted "start the next thing" code paths into one recursive `enter_node`/`advance_node`/`complete_sequence`, and make `join.py` bubble — **without** yet allowing depth >3. Existing fixtures stay byte-identical and are the oracle.
 
+> **PATH CONVENTION (added 2026-06-23 after a Task-3 discovery — AUTHORITATIVE for every Stage 2/3 task; where a code block below calls `state_file`/`output_artifact_path`/`join_marker_file` with a raw tree path, apply this instead):**
+>
+> Two distinct path notions: a **tree-navigation path** (always rooted at the top phase/fanout id — what the walker carries and what `paths.*` operate on) and a **file-naming path** (what `lib.state_file`/`output_artifact_path`/`join_marker_file` expect via `path=`). The walker carries tree paths; **every** file/artifact/marker call converts first via a new helper:
+> ```python
+> # lib.py — introduced as Task 5 Step 1, used by all later tasks
+> def state_path(proto, tree_path):
+>     """Tree-navigation path -> file-naming path. Drop the leading top-level
+>     fanout/phase id when single-phase (omitted from historical filenames);
+>     keep the full path when multi-phase. Reproduces Task 2 _coord_to_path for
+>     every depth-<=3 fixture, so files stay BYTE-IDENTICAL."""
+>     if not tree_path:
+>         return []
+>     return list(tree_path) if is_multiphase(proto) else list(tree_path[1:])
+> ```
+> So in the walker: `lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto, tree_path))` — NEVER the raw tree path.
+>
+> **Top vs nested fanout join tracking:** the TOP fanout (tree-path length 1) keeps TODAY's `_instance.yaml` `joined` bool — `enter_node` MUST NOT write a `__join.yaml` for it (a new file would break byte-identical). Only NESTED fanouts (tree-path length > 1) get a path-keyed `<file-path>.__join.yaml` marker. So `enter_node` calls `write_join` only when `len(fanout_tree_path) > 1`.
+
 ## Task 5: `enter_node` in `next.py` (delegate the three seed paths to it)
+
+**Task 5 Step 0 (do this first): add `lib.state_path(proto, tree_path)`** exactly as in the PATH CONVENTION box above, with a unit test in `tests/test_paths.py` asserting: single-phase `subpipeline-mini` → `state_path(p, ["review","B","draft"]) == ["B","draft"]`; multi-phase `multiphase-subpipeline` → `state_path(p, ["review","B","draft"]) == ["review","B","draft"]`; and `state_path(p, []) == []`. Then proceed with `enter_node` below, applying the convention to every `state_file`/`write_join` call (use `lib.state_path` for files; gate `write_join` on `len > 1`).
 
 **Files:**
 - Modify: `.github/agent-factory/engine/next.py` — add `enter_node`; rewrite `seed_branch` (44-70), `start_fanout` (80-100), and the `kind=="fanout"`/`"gate"`/agent arms of `seed_and_dispatch_phase` (172-196) to delegate.
