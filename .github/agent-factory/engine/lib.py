@@ -1117,12 +1117,13 @@ def _cli(argv):
         body = args[3] if len(args) > 3 else ""
         print(match_trigger(proto, ev, act, body))
     elif cmd == "agent-workflow":
-        # agent-workflow <protocol.json> <phase> <branch>
+        # agent-workflow <protocol.json> <phase> <branch> [substate]
         with open(args[0]) as f:
             proto = json.load(f)
         ph = args[1] if len(args) > 1 else ""
         br = args[2] if len(args) > 2 else ""
-        print(agent_workflow(proto, ph, br))
+        sub = args[3] if len(args) > 3 else ""
+        print(agent_workflow(proto, ph, br, sub))
     elif cmd == "route":
         # route <protocols_dir> <event_name> <action> <comment_body> <dispatch_protocol> <is_pr_comment>
         pdir = args[0]

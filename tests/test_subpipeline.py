@@ -349,3 +349,24 @@ def test_agent_workflow_substate_via_branch_only_arm():
     """branch-only arm (no phase) with substate=draft on sub-pipeline branch B → 'draft-agent'."""
     result = lib.agent_workflow(SUBPIPE_FIXTURE_PROTO, branch="B", substate="draft")
     assert result == "draft-agent"
+
+
+def test_agent_workflow_cli_forwards_substate(tmp_path):
+    """Regression: the `agent-workflow` CLI must forward the 4th (substate) arg.
+    The function supported substate but the CLI dispatcher dropped it, so live
+    dispatch resolved "" for a sub-pipeline leg and failed. (subpipeline-mini:
+    branch B sub-pipeline draft->clarify->finalize.)"""
+    import subprocess
+    proto = str(FIXTURES / "subpipeline-mini/protocol.json")
+
+    def cli(*extra):
+        r = subprocess.run(["python3", str(ENGINE / "lib.py"), "agent-workflow", proto, *extra],
+                           text=True, capture_output=True)
+        return r.stdout.strip()
+
+    assert cli("review", "B", "draft") == "draft-agent"
+    assert cli("review", "B", "finalize") == "finalize-agent"
+    # gate sub-state has no workflow
+    assert cli("review", "B", "clarify") == ""
+    # flat branch unchanged (3-arg call still works)
+    assert cli("review", "A") == "a-agent"
