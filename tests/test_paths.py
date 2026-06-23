@@ -91,3 +91,11 @@ def test_gate_deep_fixture_shapes():
     # The enclosing fanout of both gates is the NESTED inner fanout (length 3).
     assert paths.enclosing_fanout_path(p, ["outer", "B", "inner", "C", "clarify"]) \
         == ["outer", "B", "inner"]
+
+
+def test_root_ids_lists_top_level_phases():
+    p = _proto("subpipeline-mini")
+    assert paths.root_ids(p) == [s["id"] for s in p["states"]]
+    assert paths.is_root_child(p, ["review"]) is True
+    assert paths.is_root_child(p, ["review", "A"]) is False
+    assert paths.is_root_child(p, ["nonesuch"]) is False
