@@ -3,8 +3,13 @@ instance: pr-82
 state: clarify
 head_sha: 4ceeafe4f82fb62bedc9c092225a53b83986bec6
 gates:
-  state: open
-  history: []
+  state: answered
+  history:
+  - actor: golivax
+    answers:
+    - q1
+    - q2
+    - q3
   questions:
   - id: q1
     text: "Is this intended to remain a standalone example, or is there a plan to\
