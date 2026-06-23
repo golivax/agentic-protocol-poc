@@ -1,11 +1,6 @@
 protocol: recover-mental-model-stub
 instance: pr-82
-state: done
+state: recover
 iteration: 1
 gates: {}
-history:
-- iteration: 1
-  agent_run_id: '28024012419'
-  checks:
-    summary-present: pass
-  feedback: ''
+history: []

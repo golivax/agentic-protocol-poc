@@ -1,7 +1,7 @@
 protocol: recover-mental-model-stub
 instance: pr-82
-state: review
-sub_state: finalize
+state: recover
+sub_state: draft
 iteration: 1
 gates: {}
 history: []
