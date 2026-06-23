@@ -171,18 +171,10 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
 
     if kind == "fanout":
         branches_config = phase_state.get("branches", [])
-        # Per-branch phase files carry head_sha (consistent with write_fresh_state;
-        # the legacy start_fanout omits it — deliberate divergence).
-        for b in branches_config:
-            sf = lib.state_file(DIR, PID, INSTANCE, b["id"], phase=phase_id)
-            os.makedirs(os.path.dirname(sf), exist_ok=True)
-            lib.dump_yaml(sf, {
-                "protocol": PID, "instance": INSTANCE, "state": phase_id,
-                "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": [],
-            })
+        # Seed each branch (flat OR sub-pipeline) under the phase-qualified path
+        # via the shared helper — same logic the single-phase start_fanout uses.
+        branches = [seed_branch(b, phase_id, phase=phase_id) for b in branches_config]
         lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter fan-out phase {phase_id} ({command})")
-        branches = [{"id": b["id"], "workflow": b["workflow"], "iteration": 1, "feedback": ""}
-                    for b in branches_config]
         print(json.dumps({"action": "run-fanout", "iteration": 1, "feedback": "",
                           "reason": f"phase:{phase_id}", "phase": phase_id, "branches": branches}))
     elif kind == "gate":

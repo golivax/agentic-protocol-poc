@@ -38,6 +38,31 @@ def test_fixture_is_multiphase_with_subpipeline_branch():
     assert lib._fanout_state(proto)["id"] == "review"
 
 
+def test_advance_phase_into_fanout_seeds_subpipeline(tmp_path, engine_env):
+    # Drive the multi-phase advance-phase entry directly into the fanout phase.
+    out, err, rc = run_engine("next.py", tmp_path / "d", "pr-1", str(PROTO),
+                              "advance-phase", "abc123", env=engine_env, phase="review")
+    assert rc == 0, err
+    action = json.loads(out)
+    assert action["action"] == "run-fanout"
+    assert action.get("phase") == "review"
+
+    b = next(x for x in action["branches"] if x["id"] == "B")
+    assert b["substate"] == "draft"          # sub-pipeline branch now dispatches its first sub-state
+    assert b["workflow"] == "draft-agent"
+    a = next(x for x in action["branches"] if x["id"] == "A")
+    assert "substate" not in a               # flat branch still flat
+
+    work = _state_dir(tmp_path, engine_env)
+    # Phase-qualified paths: <phase>.<branch>[.<substate>].yaml
+    cursor = read_state_yaml(work / "multiphase-subpipeline/pr-1/review.B.yaml")
+    assert cursor["sub_state"] == "draft" and cursor["state"] == "review"
+    sub = read_state_yaml(work / "multiphase-subpipeline/pr-1/review.B.draft.yaml")
+    assert sub["state"] == "review" and sub["iteration"] == 1
+    flat = read_state_yaml(work / "multiphase-subpipeline/pr-1/review.A.yaml")
+    assert flat["head_sha"] == "abc123"      # multi-phase flat carries head_sha
+
+
 def test_start_fanout_single_phase_unchanged(tmp_path, engine_env):
     proto = FIXTURES / "subpipeline-mini/protocol.json"
     out, err, rc = run_engine("next.py", tmp_path / "d", "pr-1", proto, "start", "abc123",
