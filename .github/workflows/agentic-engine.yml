@@ -168,6 +168,12 @@ jobs:
         if: steps.ctx.outputs.command != ''
         env:
           STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
+          # next.py's do_answer fires a repository_dispatch (protocol-continue) to
+          # advance a gated sub-pipeline to its next sub-state. That needs the
+          # dispatch-capable PAT (the default GITHUB_TOKEN cannot trigger
+          # workflows). The plan job already holds this PAT via STATE_REMOTE, so
+          # this grants no new privilege.
+          GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
           PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ steps.head.outputs.sha }}
