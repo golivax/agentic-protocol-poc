@@ -874,6 +874,23 @@ def render_fanout_status_body(dir_, pid, instance, proto):
     return f"\U0001f50d **{pid} · {instance}**\n\n{sections}{headline}\n\n[Full state & audit trail]({link})\n"
 
 
+DEFAULT_MAX_DEPTH = 4
+
+
+def effective_max_depth(proto):
+    """Return the protocol's configured max_depth, or DEFAULT_MAX_DEPTH if unset."""
+    v = proto.get("max_depth")
+    return int(v) if isinstance(v, int) else DEFAULT_MAX_DEPTH
+
+
+def check_depth(proto):
+    """Raise ValueError if the protocol's static tree depth exceeds the cap."""
+    d = _paths.max_static_depth(proto)
+    cap = effective_max_depth(proto)
+    if d > cap:
+        raise ValueError(f"protocol depth {d} exceeds max_depth {cap}")
+
+
 def has_fanout(protocol):
     """True iff the protocol has at least one fan-out state."""
     return any(s.get("kind") == "fanout" for s in protocol.get("states", []))

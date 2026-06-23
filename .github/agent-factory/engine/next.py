@@ -37,6 +37,12 @@ with open(PROTO) as f:
 
 PID = proto_data["name"]  # equivalent to lib.protocol_id(PROTO); proto_data already loaded
 
+try:
+    lib.check_depth(proto_data)
+except ValueError as _e:
+    sys.stderr.write(f"[next] {_e}\n")
+    sys.exit(2)
+
 # Check out the state branch first: both the fan-out planner (below) and the
 # single-agent path write into DIR, and state_checkout only depends on DIR,
 # so doing it here is behaviour-preserving for the single-agent path.
