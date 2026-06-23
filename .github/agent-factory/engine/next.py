@@ -761,8 +761,10 @@ if COMMAND in ("start", "reset") and not NODE_PATH and not BRANCH and not PHASE:
         enter_root(COMMAND, HEAD_SHA)
         sys.exit(0)
 
-if lib.is_multiphase(proto_data) and not PHASE and not BRANCH:
+if lib.is_multiphase(proto_data) and not PHASE and not BRANCH and not NODE_PATH:
     # Multi-phase protocol, unbranched/unphased entry for non-start/reset commands.
+    # NODE_PATH is excluded: a `continue` with NODE_PATH routes to the NODE_PATH
+    # fanout/agent/gate arm below and does not need PHASE.
     sys.stderr.write(f"[next] multi-phase '{COMMAND}' needs a PHASE\n")
     sys.exit(2)
 
