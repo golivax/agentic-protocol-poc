@@ -10,11 +10,15 @@ def _root_children(proto):
     return proto.get("states", [])
 
 
-def _child_by_id(node_children, cid):
+def child_by_id(node_children, cid):
     for c in node_children:
         if c.get("id") == cid:
             return c
     return None
+
+
+# Keep the private alias so any internal callers keep working unchanged.
+_child_by_id = child_by_id
 
 
 def _is_sequence_node(node):

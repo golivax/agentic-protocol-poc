@@ -77,10 +77,16 @@ def test_unknown_branch_raises():
 
 
 def test_resolve_unit_by_path_subpipeline():
-    import json, pathlib, sys
+    import json, pathlib
     ROOT = pathlib.Path(__file__).resolve().parent.parent
-    sys.path.insert(0, str(ROOT / ".github/agent-factory/engine"))
-    import lib
     p = json.load(open(ROOT / "tests/fixtures/subpipeline-mini/protocol.json"))
     u = lib.resolve_agent_unit_path(p, ["review", "B", "finalize"])
     assert u == {"agent_state": "finalize", "max_iterations": 2, "life_state": "review"}
+
+
+def test_resolve_unit_by_path_top_level_agent():
+    import json, pathlib
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+    p = json.load(open(ROOT / "tests/fixtures/multiphase-subpipeline/protocol.json"))
+    u = lib.resolve_agent_unit_path(p, ["setup"])
+    assert u == {"agent_state": "setup", "max_iterations": 2, "life_state": "setup"}

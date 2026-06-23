@@ -94,7 +94,7 @@ def is_subpipeline_branch(branch_cfg):
 def branch_config(protocol, branch):
     """The branch entry dict from the protocol's fanout state, or None."""
     fo = _fanout_state(protocol)
-    return _paths._child_by_id(fo.get("branches", []), branch) if fo else None
+    return _paths.child_by_id(fo.get("branches", []), branch) if fo else None
 
 
 def branch_substates(protocol, branch):
