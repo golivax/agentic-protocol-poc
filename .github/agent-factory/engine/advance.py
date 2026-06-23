@@ -610,6 +610,76 @@ def main():
             advance_node(ctx, process="done")
             return
 
+        # --- NODE_PATH-mode: depth-1 AGENT phase (root child) clear tail. ---
+        # When NODE_PATH is set and the node is a root-level agent phase (e.g.
+        # code-review's `preflight`), advance the root cursor via path-continue
+        # instead of protocol-advance. The legacy `is_agent_phase` block below is
+        # left UNTOUCHED (Task 8 handles its removal/migration). Only the
+        # NODE_PATH tail is changed here.
+        if (tree_path is not None
+                and _paths.is_root_child(proto, tree_path)
+                and _paths.node_kind(proto, tree_path) == "agent"):
+            _this_state = lib.state_by_id(proto, agent_state)
+            _conclude = run_conclude_hook(proto_path, proto, agent_state, evid, instance, blocking)
+            hook = run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid)
+            if _conclude is not None:
+                concl = _conclude.get("conclusion", "neutral")
+                csum = _conclude.get("summary", "")
+            else:
+                concl = hook.get("conclusion", "neutral")
+                csum = hook.get("summary", "")
+            _phase_id = tree_path[-1]
+            if (_conclude is not None and _conclude.get("blocked")
+                    and (_this_state or {}).get("on_blocked") == "halt"):
+                # GATE BLOCKED → terminate the pipeline before the next phase.
+                state_data = lib.load_yaml(sf)
+                state_data["state"] = "failed"
+                lib.dump_yaml(sf, state_data)
+                lib.set_check_run(pid, sha, "completed", "failure", "Gate blocked",
+                                  csum or "A required gate did not pass; pipeline halted.")
+                lib.set_check_run(cr_name, sha, "completed", "failure", "Gate blocked", csum)
+                inst_data = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+                inst_data["halted"] = {"phase": _phase_id, "reason": "blocked", "sha": sha}
+                lib.dump_yaml(inf, inst_data)
+                update_status_comment(
+                    sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                    "⛔ blocked", max_iter, github_repository
+                )
+                notice = (f"⛔ **{_phase_id}** gate blocked: "
+                          f"{csum or 'a required gate did not pass'}. "
+                          f"A write-access user can comment `/override <reason>` "
+                          f"to proceed past this gate.")
+                lib.post_pr_comment(pr, notice)
+                lib.ensure_phase_label(dir_, pid, instance, proto, pr, "blocked")
+                lib.cas_push(dir_, f"{instance}: phase {_phase_id} blocked → pipeline halted")
+            else:
+                # GATE CLEAR → advance root cursor via path-continue (not protocol-advance).
+                nxt = _paths.next_sibling(proto, tree_path)
+                lib.set_check_run(cr_name, sha, "completed",
+                                  "success" if concl != "blocked" else "failure",
+                                  "Gate complete", csum)
+                inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+                if nxt:
+                    inst["phase"] = nxt
+                    lib.dump_yaml(inf, inst)
+                    update_status_comment(
+                        sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                        "⏳ advancing", max_iter, github_repository
+                    )
+                    lib.ensure_phase_label(dir_, pid, instance, proto, pr, nxt)
+                    lib.cas_push(dir_, f"{instance}: phase {_phase_id} clear → advancing to {nxt}")
+                    lib.dispatch_continue(pid, instance, path=nxt)
+                else:
+                    # No further sibling → pipeline complete.
+                    lib.set_check_run(pid, sha, "completed", "success", "Complete", csum)
+                    update_status_comment(
+                        sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                        "✅ complete", max_iter, github_repository
+                    )
+                    lib.ensure_phase_label(dir_, pid, instance, proto, pr, "done")
+                    lib.cas_push(dir_, f"{instance}: phase {_phase_id} clear → done (no further phase)")
+            return
+
         this_state = lib.state_by_id(proto, agent_state)
         is_agent_phase = phase and this_state and this_state.get("kind") == "agent"
         conclude = run_conclude_hook(proto_path, proto, agent_state, evid, instance, blocking) if is_agent_phase else None
