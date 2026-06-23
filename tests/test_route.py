@@ -159,10 +159,14 @@ def test_real_protocols_grumpy_comment_no_longer_routes():
     assert r["skip"] is True
 
 
-def test_real_protocols_pr_opened_routes_to_pipeline():
-    # After M3, the pipeline (not fanout-mini) owns PR auto-triggers.
+def test_real_protocols_pr_opened_no_longer_routes():
+    # PR auto-triggers were removed: code-review is /review-only and
+    # recover-mental-model-stub is /recover-only, so a pull_request event matches
+    # no protocol and routes to skip (nothing runs on PR open/sync).
     r = lib.route(REAL_PROTOCOLS, "pull_request", "opened", "")
-    assert r["skip"] is False and r["protocol"].endswith("code-review/protocol.json")
+    assert r["skip"] is True
+    r = lib.route(REAL_PROTOCOLS, "pull_request", "synchronize", "")
+    assert r["skip"] is True
 
 
 def test_real_protocols_review_comment_routes_to_pipeline():
