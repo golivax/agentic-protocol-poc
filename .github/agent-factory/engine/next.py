@@ -701,10 +701,13 @@ if COMMAND == "continue" and NODE_PATH:
                "workflow": node.get("workflow")}
         declared = lib.state_inputs(proto_data, _p[-1])
         if declared:
+            # Path-aware: resolve each `from` OUTERMOST-search relative to this
+            # node's tree path, so a nested agent's inputs reach an earlier
+            # nested-fanout leg's evidence (e.g. report ← analyze.sec/perf).
             act["inputs"] = lib.resolve_inputs(
                 proto_data, DIR, PID, INSTANCE,
                 consuming_branch=(_p[-2] if len(_p) >= 2 else None),
-                consuming_phase=None, inputs=declared)
+                consuming_phase=None, inputs=declared, consuming_path=_p)
         print(json.dumps(act))
         sys.exit(0)
     if _kind == "gate":

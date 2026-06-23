@@ -304,6 +304,69 @@ def test_deep_fanout_walks_to_done(engine_env, tmp_path):
     assert not _read_yaml(final / "deep.analyze.__join.yaml").get("failed")
 
 
+def test_report_inputs_resolve_nested_legs(engine_env, tmp_path):
+    """`report` (tree path preflight.deep.report) declares
+    inputs:[{from:sec},{from:perf}]. sec/perf are legs of the NESTED `analyze`
+    fanout (an earlier sibling inside the `deep` sub-pipeline). After both legs
+    persist evidence, next.py's run-agent action for report must include `inputs`
+    mapping as:sec → deep.analyze.sec.evidence.json (NOT sec.evidence.json) and
+    as:perf → deep.analyze.perf.evidence.json — the path-aware cross-scope walk."""
+    base = dict(engine_env)
+    base["PR_HEAD_SHA"] = "abc123"
+    base["AGENT_RUN_ID"] = "r"
+
+    def run(script, *args, **env_extra):
+        e = dict(base); e.update(env_extra)
+        r = subprocess.run(["python3", str(script), *map(str, args)],
+                           text=True, capture_output=True, env=e)
+        assert r.returncode == 0, f"{script.name} {args}: {r.stderr}"
+        return r
+
+    def reclone(tag):
+        fresh = tmp_path / f"ri-{tag}"
+        subprocess.run(["git", "clone", "-q", "-b", "agentic-state",
+                        engine_env["STATE_REMOTE"], str(fresh)], check=True)
+        return fresh / "deep-fanout" / "pr-1"
+
+    v, ev_blank = _pass_verdicts(tmp_path, "ri")
+    # Distinctive evidence per leg so we can assert the resolved path is the file
+    # that actually carries each leg's payload.
+    ev_sec = tmp_path / "ri-sec-evidence.json"
+    ev_sec.write_text(json.dumps({"summary": "SEC-PAYLOAD"}))
+    ev_perf = tmp_path / "ri-perf-evidence.json"
+    ev_perf.write_text(json.dumps({"summary": "PERF-PAYLOAD"}))
+
+    # Walk: start → triage done → enter analyze → sec/perf done → join → continue report.
+    run(NEXT, tmp_path / "s1", "pr-1", PROTO, "start", "abc123")
+    run(ADVANCE, tmp_path / "s2", "pr-1", PROTO, v, ev_blank,
+        NODE_PATH="preflight.deep.triage")
+    run(NEXT, tmp_path / "s3", "pr-1", PROTO, "continue", NODE_PATH="preflight.deep.analyze")
+    run(ADVANCE, tmp_path / "s4", "pr-1", PROTO, v, ev_sec,
+        NODE_PATH="preflight.deep.analyze.sec")
+    run(ADVANCE, tmp_path / "s5", "pr-1", PROTO, v, ev_perf,
+        NODE_PATH="preflight.deep.analyze.perf")
+    run(JOIN, tmp_path / "s6", "pr-1", PROTO, NODE_PATH="preflight.deep.analyze")
+
+    # The leg evidence files exist on disk at the NESTED-scope paths.
+    fdir = reclone("evid")
+    assert (fdir / "deep.analyze.sec.evidence.json").is_file()
+    assert (fdir / "deep.analyze.perf.evidence.json").is_file()
+    assert json.loads((fdir / "deep.analyze.sec.evidence.json").read_text())["summary"] == "SEC-PAYLOAD"
+
+    # continue report → its run-agent action must carry resolved inputs.
+    r = run(NEXT, tmp_path / "s7", "pr-1", PROTO, "continue", "abc123",
+            NODE_PATH="preflight.deep.report")
+    act = json.loads(r.stdout)
+    assert act["action"] == "run-agent" and act["path"] == "preflight.deep.report"
+    by_as = {i["as"]: i for i in act.get("inputs", [])}
+    assert set(by_as) == {"sec", "perf"}, by_as
+    # KEY: the resolved path is the NESTED-scope file, not the top-level fallback.
+    assert by_as["sec"]["path"].endswith("deep.analyze.sec.evidence.json"), by_as["sec"]
+    assert not by_as["sec"]["path"].endswith("/sec.evidence.json"), by_as["sec"]
+    assert by_as["perf"]["path"].endswith("deep.analyze.perf.evidence.json"), by_as["perf"]
+    assert by_as["sec"]["kind"] == "evidence" and by_as["perf"]["kind"] == "evidence"
+
+
 def _fail_verdicts(tmp_path, tag):
     v = tmp_path / f"verdicts-fail-{tag}.json"
     v.write_text(json.dumps({"results": [

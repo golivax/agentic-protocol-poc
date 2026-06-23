@@ -169,19 +169,81 @@ def _branch_ids(protocol):
     return [b["id"] for b in fo.get("branches", [])] if fo else []
 
 
-def resolve_inputs(protocol, d, pid, instance, consuming_branch, consuming_phase, inputs):
-    """Map each {from, as} to {as, path, kind}. Resolution order for `from`:
+def _resolve_input_ref_pathaware(protocol, d, pid, instance, consuming_path, frm):
+    """Path-aware (depth-4+) single-`from` resolution, OUTERMOST-search relative to
+    the consuming node's tree path. Walks UP the enclosing sequences; in each scope
+    it scans the sequence's child states for a direct sibling match, and scans any
+    child fanout's branches for a nested-leg match. Returns {path, kind} or None.
+
+      - direct sibling sub-state F → output_artifact_path(state_path(proto, scope+[F]))
+        kind = 'answers' if F is a gate, else 'evidence'.
+      - leg F of a child fanout (scope+[fanoutid]) → its leg-output:
+          flat leg          → state_path(proto, scope+[fanoutid, F])
+          sub-pipeline leg  → its branch_output_substate appended.
+        kind = 'evidence' (a leg output is always evidence).
+    """
+    scope = _paths.parent_path(consuming_path)
+    while True:
+        children = (_paths.children(protocol, scope) if scope
+                    else protocol.get("states", []))
+        for c in children:
+            cid = c.get("id")
+            if cid == frm:
+                cpath = scope + [frm]
+                kind = "answers" if _paths.node_kind(protocol, cpath) == "gate" else "evidence"
+                return {"path": output_artifact_path(d, pid, instance,
+                                                     path=state_path(protocol, cpath),
+                                                     kind=kind),
+                        "kind": kind}
+            if c.get("kind") == "fanout":
+                fo_path = scope + [cid]
+                for br in c.get("branches", []):
+                    if br.get("id") == frm:
+                        leg_path = fo_path + [frm]
+                        if is_subpipeline_branch(br):
+                            last = br.get("states", [])[-1]["id"]
+                            leg_path = leg_path + [last]
+                        return {"path": output_artifact_path(d, pid, instance,
+                                                             path=state_path(protocol, leg_path),
+                                                             kind="evidence"),
+                                "kind": "evidence"}
+        if not scope:
+            return None
+        scope = _paths.parent_path(scope)
+
+
+def resolve_inputs(protocol, d, pid, instance, consuming_branch, consuming_phase,
+                   inputs, consuming_path=None):
+    """Map each {from, as} to {as, path, kind}.
+
+    When `consuming_path` (a tree-navigation path list) is given, resolution is
+    PATH-AWARE: each `from` is resolved OUTERMOST-search relative to the consuming
+    node's enclosing scopes (direct sibling sub-state, then a leg of a sibling
+    nested fanout, walking up to the top). This is the depth-4+ path that lets a
+    nested agent's inputs reach an earlier nested-fanout leg's evidence. Anything
+    unresolved falls through to the legacy 3-case resolution below (so a top-level
+    branch/phase `from` still works from a deep consumer).
+
+    Legacy (consuming_path=None) resolution order for `from`:
       1) a sub-state of the consuming branch  → that sub-state's evidence
       2) a fanout branch id                   → that branch's leg-output evidence
                                                  (last sub-state, or the flat leg)
       3) a phase id                           → that phase's evidence
-    `kind` is 'evidence' unless the source sub-state is a gate (then 'answers')."""
+    `kind` is 'evidence' unless the source sub-state is a gate (then 'answers').
+
+    Depth-<=3 results (paths + kind) are BYTE-IDENTICAL to the legacy function:
+    when consuming_path is None the path-aware branch is never taken."""
     phase = consuming_phase or None
     out = []
     sub_ids = {s["id"]: s for s in branch_substates(protocol, consuming_branch)} if consuming_branch else {}
     branch_ids = set(_branch_ids(protocol))
     for ref in inputs:
         frm, as_ = ref["from"], ref["as"]
+        if consuming_path is not None:
+            r = _resolve_input_ref_pathaware(protocol, d, pid, instance, consuming_path, frm)
+            if r is not None:
+                out.append({"as": as_, "path": r["path"], "kind": r["kind"]})
+                continue
         if frm in sub_ids:
             kind = "answers" if sub_ids[frm].get("kind") == "gate" else "evidence"
             path = output_artifact_path(d, pid, instance, branch=consuming_branch,
