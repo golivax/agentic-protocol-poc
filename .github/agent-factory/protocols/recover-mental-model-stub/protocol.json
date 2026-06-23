@@ -1,0 +1,68 @@
+{
+  "name": "recover-mental-model-stub",
+  "version": "0.1.0",
+  "triggers": [
+    { "on": "issue_comment", "comment_prefix": "/recover", "command": "start" },
+    { "on": "issue_comment", "comment_prefix": "/answer", "command": "answer" }
+  ],
+  "states": [
+    {
+      "id": "recover",
+      "kind": "fanout",
+      "label": "recover",
+      "branches": [
+        {
+          "id": "summary",
+          "workflow": "rmm-summary-agent",
+          "evidence": "summary.evidence.schema.json",
+          "max_iterations": 2,
+          "checks": [{ "run": "summary-present", "on_fail": "iterate" }],
+          "publish": "publish-summary"
+        },
+        {
+          "id": "rationale",
+          "states": [
+            {
+              "id": "draft",
+              "kind": "agent",
+              "workflow": "rmm-draft-agent",
+              "evidence": "draft.evidence.schema.json",
+              "max_iterations": 2,
+              "checks": [{ "run": "questions-present", "on_fail": "iterate" }]
+            },
+            {
+              "id": "clarify",
+              "kind": "gate",
+              "questions_from": "draft",
+              "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }]
+            },
+            {
+              "id": "finalize",
+              "kind": "agent",
+              "workflow": "rmm-finalize-agent",
+              "evidence": "finalize.evidence.schema.json",
+              "max_iterations": 2,
+              "inputs": [
+                { "from": "clarify", "as": "answers" },
+                { "from": "draft", "as": "draft" }
+              ],
+              "checks": [{ "run": "rationale-present", "on_fail": "iterate" }]
+            }
+          ]
+        }
+      ],
+      "next": "join"
+    },
+    { "id": "join", "kind": "join", "of": "recover", "next": "combine" },
+    {
+      "id": "combine",
+      "kind": "merge",
+      "hook": "append-rationale",
+      "inputs": [
+        { "from": "summary", "as": "summary" },
+        { "from": "rationale", "as": "rationale" }
+      ],
+      "next": "done"
+    }
+  ]
+}

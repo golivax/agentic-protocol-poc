@@ -267,17 +267,21 @@ def match_trigger(protocol, event_name, action="", comment_body=""):
     return ""
 
 
-def agent_workflow(protocol, phase="", branch=""):
+def agent_workflow(protocol, phase="", branch="", substate=""):
     """Resolve the gh-aw agent workflow basename for a leg.
     phase set + fanout phase -> that branch's workflow;
     phase set + agent phase  -> the phase state's workflow;
     branch only (single-phase fanout) -> that branch's workflow;
-    neither -> the first agent state's workflow. "" if unresolved."""
+    neither -> the first agent state's workflow. "" if unresolved.
+    substate set + sub-pipeline branch -> that sub-state's workflow."""
     if phase:
         st = state_by_id(protocol, phase)
         if st and st.get("kind") == "fanout":
             for b in st.get("branches", []):
                 if b["id"] == branch:
+                    if substate and "states" in b:
+                        sub = next((s for s in b["states"] if s.get("id") == substate), None)
+                        return (sub or {}).get("workflow", "")
                     return b.get("workflow", "")
             return ""
         return (st or {}).get("workflow", "")
@@ -286,6 +290,9 @@ def agent_workflow(protocol, phase="", branch=""):
             if st.get("kind") == "fanout":
                 for b in st.get("branches", []):
                     if b["id"] == branch:
+                        if substate and "states" in b:
+                            sub = next((s for s in b["states"] if s.get("id") == substate), None)
+                            return (sub or {}).get("workflow", "")
                         return b.get("workflow", "")
         return ""
     for st in protocol.get("states", []):
@@ -1110,12 +1117,13 @@ def _cli(argv):
         body = args[3] if len(args) > 3 else ""
         print(match_trigger(proto, ev, act, body))
     elif cmd == "agent-workflow":
-        # agent-workflow <protocol.json> <phase> <branch>
+        # agent-workflow <protocol.json> <phase> <branch> [substate]
         with open(args[0]) as f:
             proto = json.load(f)
         ph = args[1] if len(args) > 1 else ""
         br = args[2] if len(args) > 2 else ""
-        print(agent_workflow(proto, ph, br))
+        sub = args[3] if len(args) > 3 else ""
+        print(agent_workflow(proto, ph, br, sub))
     elif cmd == "route":
         # route <protocols_dir> <event_name> <action> <comment_body> <dispatch_protocol> <is_pr_comment>
         pdir = args[0]
