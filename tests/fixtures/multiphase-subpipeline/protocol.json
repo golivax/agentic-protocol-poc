@@ -1,0 +1,70 @@
+{
+  "name": "multiphase-subpipeline",
+  "version": "0.1.0",
+  "triggers": [
+    { "on": "pull_request", "actions": ["opened"], "command": "start" }
+  ],
+  "states": [
+    {
+      "id": "setup",
+      "kind": "agent",
+      "workflow": "setup-agent",
+      "evidence": "setup.evidence.schema.json",
+      "max_iterations": 2,
+      "checks": [{ "run": "always-pass", "on_fail": "iterate" }],
+      "next": "review"
+    },
+    {
+      "id": "review",
+      "kind": "fanout",
+      "branches": [
+        {
+          "id": "A",
+          "workflow": "a-agent",
+          "evidence": "a.evidence.schema.json",
+          "max_iterations": 2,
+          "checks": [{ "run": "always-pass", "on_fail": "iterate" }],
+          "publish": "noop"
+        },
+        {
+          "id": "B",
+          "states": [
+            {
+              "id": "draft",
+              "kind": "agent",
+              "workflow": "draft-agent",
+              "evidence": "draft.evidence.schema.json",
+              "max_iterations": 2,
+              "checks": [{ "run": "always-pass", "on_fail": "iterate" }]
+            },
+            {
+              "id": "clarify",
+              "kind": "gate",
+              "questions_from": "draft",
+              "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }]
+            },
+            {
+              "id": "finalize",
+              "kind": "agent",
+              "workflow": "finalize-agent",
+              "evidence": "finalize.evidence.schema.json",
+              "max_iterations": 2,
+              "inputs": [{ "from": "clarify", "as": "answers" },
+                         { "from": "draft", "as": "draft" }],
+              "checks": [{ "run": "always-pass", "on_fail": "iterate" }]
+            }
+          ]
+        }
+      ],
+      "next": "join"
+    },
+    { "id": "join", "kind": "join", "of": "review", "next": "combine" },
+    {
+      "id": "combine",
+      "kind": "merge",
+      "hook": "append-outputs",
+      "inputs": [{ "from": "A", "as": "a" }, { "from": "B", "as": "b" }],
+      "next": "done"
+    }
+  ]
+}
