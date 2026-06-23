@@ -131,6 +131,18 @@ def enclosing_fanout_id(proto, path):
     return None
 
 
+def enclosing_fanout_path(proto, path):
+    """FULL tree path of the nearest fanout ancestor of `path`, or None.
+    e.g. for ["preflight","deep","analyze","sec"] -> ["preflight","deep","analyze"];
+    for a top leg ["preflight","quick"] -> ["preflight"]. Used to tell join.py
+    which fanout a completing leg belongs to (Task 12)."""
+    for k in range(len(path) - 1, -1, -1):
+        anc = path[:k + 1]
+        if node_kind(proto, anc) == "fanout":
+            return list(anc)
+    return None
+
+
 def path_depth(path):
     return len(path)
 

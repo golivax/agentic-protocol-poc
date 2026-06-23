@@ -20,15 +20,23 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib
 
 
-def persist_output(dir_, pid, instance, branch, phase, substate, evid, kind="evidence"):
+def persist_output(dir_, pid, instance, branch, phase, substate, evid, kind="evidence",
+                   file_path=None):
     """Copy the agent's artifact to its deterministic persisted path so
     downstream `inputs` can resolve it. Best-effort: a missing/empty evid is a
-    no-op (the leg simply has no output to forward)."""
+    no-op (the leg simply has no output to forward).
+
+    `file_path` (NODE_PATH mode) is the canonical FILE-NAMING path (already routed
+    through lib.state_path); when given it takes precedence over branch/phase/substate
+    so a depth-4 leg persists to <deep.analyze.sec>.evidence.json."""
     if not evid or not os.path.isfile(evid):
         return
-    dst = lib.output_artifact_path(dir_, pid, instance,
-                                   branch=(branch or None), phase=(phase or None),
-                                   substate=(substate or None), kind=kind)
+    if file_path is not None:
+        dst = lib.output_artifact_path(dir_, pid, instance, path=file_path, kind=kind)
+    else:
+        dst = lib.output_artifact_path(dir_, pid, instance,
+                                       branch=(branch or None), phase=(phase or None),
+                                       substate=(substate or None), kind=kind)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.copyfile(evid, dst)
 
@@ -46,48 +54,78 @@ def gh_api(*args):
         sys.stderr.write(f"[engine] gh api failed: {result.stderr}\n")
 
 
-def fire_join(pid, instance, branch):
+def fire_join(pid, instance, branch, fanout_path=""):
     """On a TERMINAL branch (done OR failed), signal the fan-out barrier.
-    No-op for the single-agent path (branch empty)."""
+    No-op for the single-agent path (branch empty).
+
+    `fanout_path` (dot-joined TREE path of the ENCLOSING fanout) is carried as
+    client_payload[path] ONLY for a NESTED fanout (path length > 1); join.py
+    (Task 12b) reads it to evaluate the right nested barrier. For the TOP fanout
+    it is left empty so join.py's existing top-level evaluation is byte-identical.
+    """
     if not branch:
         return
-    gh_api(
+    args = [
         "repos/" + os.environ.get("GITHUB_REPOSITORY", "") + "/dispatches",
         "-f", "event_type=protocol-join",   # -f: literal string; -F would add JSON quoting
         "-F", f"client_payload[protocol]={pid}",
         "-F", f"client_payload[instance]={instance}",
-    )
+    ]
+    if fanout_path:
+        args += ["-F", f"client_payload[path]={fanout_path}"]
+    gh_api(*args)
 
 
 def complete_sequence(dir_, pid, instance, branch, phase, substate, sf, cursor_sf, cur,
-                      inf, pr, proto_path, max_iter, github_repository):
+                      inf, pr, proto_path, max_iter, github_repository,
+                      proto=None, tree_path=None):
     """Terminal action for the last sub-state of a done sub-pipeline leg.
     Marks the leg cursor done, emits a status comment, CAS-pushes, and fires join.
-    Called from advance_node when the last sub-state of branch finishes successfully."""
+    Called from advance_node when the last sub-state of branch finishes successfully.
+
+    `tree_path` (NODE_PATH mode) is the canonical tree path of the completing leaf.
+    When the enclosing fanout is NESTED (path length > 1) the join dispatch carries
+    its path so join.py evaluates the right barrier; the TOP fanout (length 1) fires
+    a path-less join — byte-identical to the legacy behavior."""
     cur["state"] = "done"             # last sub-state → leg terminal
     lib.dump_yaml(cursor_sf, cur)
     update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
                           "✅ done — published.", max_iter, github_repository)
     lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → leg done")
-    fire_join(pid, instance, branch)
+    fanout_path = ""
+    if tree_path is not None and proto is not None:
+        import paths as _paths
+        fp = _paths.enclosing_fanout_path(proto, tree_path)
+        if fp and len(fp) > 1:
+            fanout_path = ".".join(fp)
+    fire_join(pid, instance, branch, fanout_path)
 
 
 def advance_node(proto, proto_path, dir_, pid, instance, branch, phase, substate,
                  sf, cursor_sf, cr_name, sha, pr, inf, life_state, max_iter,
-                 github_repository, process):
+                 github_repository, process, tree_path=None):
     """Advance a sub-pipeline branch node.  Called when ``branch`` and ``substate``
     are both set.
 
-    process=='done':   If next sibling exists → seed/dispatch it (agent) or open
-                       the gate (gate kind); else → complete_sequence (leg terminal).
+    process=='done':   If next sibling exists → seed/dispatch it (agent), open the
+                       gate (gate kind), or — when the next sibling is a FANOUT —
+                       re-dispatch protocol-continue with client_payload[path]=<fanout
+                       tree path> (so next.py's `continue` enters the nested fanout)
+                       WITHOUT seeding a leg file; else → complete_sequence (leg terminal).
     process=='failed': Mark the branch cursor failed so the join barrier can observe
                        the leg's outcome; the caller (main) handles the shared
                        check-run / status-comment / cas-push / fire-join.
 
-    Signature settled on for Task 6:
+    `tree_path` (NODE_PATH mode) is the canonical TREE path of the leaf being
+    advanced (e.g. ["preflight","deep","triage"]). When set, sibling lookup +
+    file naming route through paths.* / lib.state_path so depth-4 works; when None
+    the legacy depth-<=3 branch/phase/substate behavior is byte-identical.
+
+    Signature (Task 6 + Task 12a `tree_path`):
       advance_node(proto, proto_path, dir_, pid, instance,
                    branch, phase, substate, sf, cursor_sf, cr_name,
-                   sha, pr, inf, life_state, max_iter, github_repository, process)
+                   sha, pr, inf, life_state, max_iter, github_repository, process,
+                   tree_path=None)
     """
     if process == "failed":
         cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
@@ -96,22 +134,54 @@ def advance_node(proto, proto_path, dir_, pid, instance, branch, phase, substate
         return
 
     # process == "done"
-    nxt_sub = lib.next_substate_id(proto, branch, substate)
+    if tree_path is not None:
+        import paths as _paths
+        parent = _paths.parent_path(tree_path)
+        nxt_sub = _paths.next_sibling(proto, tree_path)
+    else:
+        nxt_sub = lib.next_substate_id(proto, branch, substate)
     # Mark this sub-state's own file done (already set above), then move on.
     lib.set_check_run(cr_name, sha, "completed", "success",
                       f"{substate} complete", "")
     cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
     if nxt_sub:
+        nxt_kind = None
+        nxt_state = None
+        if tree_path is not None:
+            nxt_kind = _paths.node_kind(proto, parent + [nxt_sub])
+        else:
+            nxt_state = lib.state_by_id(
+                {"states": lib.branch_substates(proto, branch)}, nxt_sub)
+            nxt_kind = (nxt_state or {}).get("kind")
+
+        # --- Next sibling is a FANOUT → enter it via protocol-continue. ---
+        # The leg stays in-flight; we move the cursor onto the fanout id and let
+        # next.py's `continue` (NODE_PATH=<fanout path>) seed the fanout's child
+        # legs + nested __join.yaml. We deliberately do NOT seed a leg file here.
+        if nxt_kind == "fanout" and tree_path is not None:
+            cur["sub_state"] = nxt_sub
+            cur["state"] = life_state         # leg stays in flight
+            lib.dump_yaml(cursor_sf, cur)
+            fanout_tree_path = parent + [nxt_sub]
+            lib.cas_push(dir_, f"{instance}: {'.'.join(tree_path)} done → fanout {nxt_sub}")
+            gh_api(
+                f"repos/{github_repository}/dispatches",
+                "-f", "event_type=protocol-continue",
+                "-F", f"client_payload[protocol]={pid}",
+                "-F", f"client_payload[instance]={instance}",
+                "-F", f"client_payload[path]={'.'.join(fanout_tree_path)}",
+            )
+            return
+
         cur["sub_state"] = nxt_sub
         cur["state"] = life_state         # leg stays in flight
         lib.dump_yaml(cursor_sf, cur)
-        nxt_state = lib.state_by_id(
-            {"states": lib.branch_substates(proto, branch)}, nxt_sub)
-        if nxt_state and nxt_state.get("kind") == "gate":
+        if nxt_kind == "gate":
             # Open the gate (scoped to this branch); read questions from
             # the source sub-state's persisted evidence.
             questions = []
-            qfrom = nxt_state.get("questions_from")
+            qfrom = (nxt_state or {}).get("questions_from") if nxt_state is not None \
+                else (_paths.node_at_path(proto, parent + [nxt_sub]) or {}).get("questions_from")
             if qfrom:
                 qpath = lib.output_artifact_path(dir_, pid, instance,
                                                  branch=branch, phase=(phase or None),
@@ -127,8 +197,12 @@ def advance_node(proto, proto_path, dir_, pid, instance, branch, phase, substate
             lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → gate {nxt_sub} open")
             return
         # Otherwise: an agent sub-state → seed + dispatch (Plan 1 behaviour).
-        nsf = lib.state_file(dir_, pid, instance, branch=branch,
-                             phase=(phase if phase else None), substate=nxt_sub)
+        if tree_path is not None:
+            nsf = lib.state_file(dir_, pid, instance,
+                                 path=lib.state_path(proto, parent + [nxt_sub]))
+        else:
+            nsf = lib.state_file(dir_, pid, instance, branch=branch,
+                                 phase=(phase if phase else None), substate=nxt_sub)
         lib.dump_yaml(nsf, {
             "protocol": pid, "instance": instance, "state": life_state,
             "iteration": 1, "gates": {}, "head_sha": sha, "history": [],
@@ -144,10 +218,13 @@ def advance_node(proto, proto_path, dir_, pid, instance, branch, phase, substate
         ]
         if phase:
             redispatch += ["-F", f"client_payload[phase]={phase}"]
+        if tree_path is not None:
+            redispatch += ["-F", f"client_payload[path]={'.'.join(parent + [nxt_sub])}"]
         gh_api(*redispatch)
     else:
         complete_sequence(dir_, pid, instance, branch, phase, substate, sf, cursor_sf, cur,
-                          inf, pr, proto_path, max_iter, github_repository)
+                          inf, pr, proto_path, max_iter, github_repository,
+                          proto=proto, tree_path=tree_path)
 
 
 def run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid):
@@ -314,6 +391,11 @@ def main():
     branch = os.environ.get("BRANCH", "")
     phase = os.environ.get("PHASE", "")
     substate = os.environ.get("SUBSTATE", "")
+    # NODE_PATH (NOT PATH — the OS executable search path) is the dot-joined
+    # canonical TREE path of the leg being advanced. When set it drives a
+    # depth-N path-aware advance (the only way to express depth > 3). Empty →
+    # the legacy BRANCH/PHASE/SUBSTATE coords (depth <=3, byte-identical).
+    node_path_env = os.environ.get("NODE_PATH", "")
     pr = os.environ.get("PR", instance)
     agent_run_id = os.environ.get("AGENT_RUN_ID", "unknown")
     github_repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -324,44 +406,69 @@ def main():
 
     pid = lib.protocol_id(proto_path)
 
-    # Resolve the agent unit (agent_state, max_iterations, life_state) via the
-    # shared ladder. Error messages mapped back to the original advance.py / engine
-    # prefixes. The "no branch in fanout phase" message keeps its [advance] prefix
-    # and "fanout phase" wording to preserve the original advance.py error text.
-    try:
-        _unit = lib.resolve_agent_unit(proto, phase, branch, substate)
-    except ValueError as e:
-        _msg = str(e)
-        if "in phase '" in _msg:
-            # "no branch '<b>' in phase '<p>'" → [advance] prefix + "fanout phase" wording
-            sys.stderr.write(f"[advance] no branch '{branch}' in fanout phase '{phase}'\n")
-        elif _msg.startswith("no phase") or _msg.startswith("PHASE="):
-            sys.stderr.write(f"[advance] {_msg}\n")
-        else:
-            sys.stderr.write(f"[engine] {_msg}\n")
-        sys.exit(1)
-    agent_state = _unit["agent_state"]
-    max_iter = _unit["max_iterations"]
-    life_state = _unit["life_state"]
+    import paths as _paths
+    tree_path = None        # carried into advance_node only in NODE_PATH mode
+    file_path = None        # file-naming path (state_path-converted)
 
-    # State file and check-run name
-    sf = lib.state_file(dir_, pid, instance,
-                        branch=(branch if branch else None),
-                        phase=(phase if phase else None),
-                        substate=(substate if substate else None))
-    if phase and branch:
-        cr_name = f"{pid}/{phase}/{branch}"
-    elif phase:
-        cr_name = f"{pid}/{phase}"
-    elif branch:
-        cr_name = f"{pid}/{branch}"
+    if node_path_env:
+        # ---- NODE_PATH (depth-N) coordinate derivation ----
+        tree_path = node_path_env.split(".")
+        try:
+            _unit = lib.resolve_agent_unit_path(proto, tree_path)
+        except ValueError as e:
+            sys.stderr.write(f"[advance] {e}\n")
+            sys.exit(1)
+        agent_state = _unit["agent_state"]
+        max_iter = _unit["max_iterations"]
+        life_state = _unit["life_state"]
+        # Surface legacy-style branch/substate so the `if branch and substate:`
+        # sub-pipeline gates in main() fire; these are the leg's immediate
+        # parent + own ids (advance_node uses tree_path for real navigation).
+        branch = tree_path[-2] if len(tree_path) >= 2 else ""
+        substate = tree_path[-1]
+        phase = ""
+        file_path = lib.state_path(proto, tree_path)
+        sf = lib.state_file(dir_, pid, instance, path=file_path)
+        cr_name = pid + "/" + "/".join(tree_path[1:])
     else:
-        cr_name = pid
+        # Resolve the agent unit (agent_state, max_iterations, life_state) via the
+        # shared ladder. Error messages mapped back to the original advance.py / engine
+        # prefixes. The "no branch in fanout phase" message keeps its [advance] prefix
+        # and "fanout phase" wording to preserve the original advance.py error text.
+        try:
+            _unit = lib.resolve_agent_unit(proto, phase, branch, substate)
+        except ValueError as e:
+            _msg = str(e)
+            if "in phase '" in _msg:
+                # "no branch '<b>' in phase '<p>'" → [advance] prefix + "fanout phase" wording
+                sys.stderr.write(f"[advance] no branch '{branch}' in fanout phase '{phase}'\n")
+            elif _msg.startswith("no phase") or _msg.startswith("PHASE="):
+                sys.stderr.write(f"[advance] {_msg}\n")
+            else:
+                sys.stderr.write(f"[engine] {_msg}\n")
+            sys.exit(1)
+        agent_state = _unit["agent_state"]
+        max_iter = _unit["max_iterations"]
+        life_state = _unit["life_state"]
 
-    # A sub-pipeline leg gets a per-sub-state check-run so draft/finalize don't
-    # collide on one GitHub check-run.
-    if substate:
-        cr_name = f"{cr_name}/{substate}"
+        # State file and check-run name
+        sf = lib.state_file(dir_, pid, instance,
+                            branch=(branch if branch else None),
+                            phase=(phase if phase else None),
+                            substate=(substate if substate else None))
+        if phase and branch:
+            cr_name = f"{pid}/{phase}/{branch}"
+        elif phase:
+            cr_name = f"{pid}/{phase}"
+        elif branch:
+            cr_name = f"{pid}/{branch}"
+        else:
+            cr_name = pid
+
+        # A sub-pipeline leg gets a per-sub-state check-run so draft/finalize don't
+        # collide on one GitHub check-run.
+        if substate:
+            cr_name = f"{cr_name}/{substate}"
 
     # Checkout state
     lib.state_checkout(dir_)
@@ -434,15 +541,21 @@ def main():
 
         # Persist the evidence artifact so downstream `inputs` can resolve it.
         # Best-effort: a missing/empty evid file is silently skipped.
-        persist_output(dir_, pid, instance, branch, phase, substate, evid)
+        persist_output(dir_, pid, instance, branch, phase, substate, evid,
+                       file_path=file_path)
 
         # --- Sub-pipeline branch leg: advance the BRANCH CURSOR, not the phase. ---
         if branch and substate:
-            cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
-                                       phase=(phase if phase else None))
+            if tree_path is not None:
+                cursor_sf = lib.state_file(
+                    dir_, pid, instance,
+                    path=lib.state_path(proto, _paths.parent_path(tree_path)))
+            else:
+                cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
+                                           phase=(phase if phase else None))
             advance_node(proto, proto_path, dir_, pid, instance, branch, phase, substate,
                          sf, cursor_sf, cr_name, sha, pr, inf, life_state, max_iter,
-                         github_repository, process="done")
+                         github_repository, process="done", tree_path=tree_path)
             return
 
         this_state = lib.state_by_id(proto, agent_state)
@@ -563,6 +676,10 @@ def main():
             redispatch += ["-F", f"client_payload[substate]={substate}"]
         if phase:
             redispatch += ["-F", f"client_payload[phase]={phase}"]
+        # NODE_PATH mode: carry the full tree path so the re-dispatched continue
+        # resumes the same depth-N leg (next.py reads NODE_PATH).
+        if tree_path is not None:
+            redispatch += ["-F", f"client_payload[path]={'.'.join(tree_path)}"]
         gh_api(*redispatch)
 
     else:  # process == "failed"
@@ -572,11 +689,16 @@ def main():
         lib.dump_yaml(sf, state_data)
 
         if branch and substate:
-            cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
-                                       phase=(phase if phase else None))
+            if tree_path is not None:
+                cursor_sf = lib.state_file(
+                    dir_, pid, instance,
+                    path=lib.state_path(proto, _paths.parent_path(tree_path)))
+            else:
+                cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
+                                           phase=(phase if phase else None))
             advance_node(proto, proto_path, dir_, pid, instance, branch, phase, substate,
                          sf, cursor_sf, cr_name, sha, pr, inf, life_state, max_iter,
-                         github_repository, process="failed")
+                         github_repository, process="failed", tree_path=tree_path)
 
         # An agent PHASE that exhausts its iterations is a terminal phase failure
         # (label it). A fan-out leg / single-agent v1 reaching here is NOT a phase
@@ -596,7 +718,14 @@ def main():
             max_iter, github_repository
         )
         lib.cas_push(dir_, f"{instance}: iterations exhausted → failed")
-        fire_join(pid, instance, branch)
+        # A NESTED failed leg fires its enclosing fanout's path-keyed join; the TOP
+        # fanout (or legacy depth-<=3) fires a path-less join (byte-identical).
+        _fp = ""
+        if tree_path is not None:
+            _efp = _paths.enclosing_fanout_path(proto, tree_path)
+            if _efp and len(_efp) > 1:
+                _fp = ".".join(_efp)
+        fire_join(pid, instance, branch, _fp)
 
 
 if __name__ == "__main__":
