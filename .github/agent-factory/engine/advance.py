@@ -59,6 +59,97 @@ def fire_join(pid, instance, branch):
     )
 
 
+def complete_sequence(dir_, pid, instance, branch, phase, substate, sf, cursor_sf, cur,
+                      inf, pr, proto_path, max_iter, github_repository):
+    """Terminal action for the last sub-state of a done sub-pipeline leg.
+    Marks the leg cursor done, emits a status comment, CAS-pushes, and fires join.
+    Called from advance_node when the last sub-state of branch finishes successfully."""
+    cur["state"] = "done"             # last sub-state → leg terminal
+    lib.dump_yaml(cursor_sf, cur)
+    update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                          "✅ done — published.", max_iter, github_repository)
+    lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → leg done")
+    fire_join(pid, instance, branch)
+
+
+def advance_node(proto, proto_path, dir_, pid, instance, branch, phase, substate,
+                 sf, cursor_sf, cr_name, sha, pr, inf, life_state, max_iter,
+                 github_repository, process):
+    """Advance a sub-pipeline branch node.  Called when ``branch`` and ``substate``
+    are both set.
+
+    process=='done':   If next sibling exists → seed/dispatch it (agent) or open
+                       the gate (gate kind); else → complete_sequence (leg terminal).
+    process=='failed': Mark the branch cursor failed so the join barrier can observe
+                       the leg's outcome; the caller (main) handles the shared
+                       check-run / status-comment / cas-push / fire-join.
+
+    Signature settled on for Task 6:
+      advance_node(proto, proto_path, dir_, pid, instance,
+                   branch, phase, substate, sf, cursor_sf, cr_name,
+                   sha, pr, inf, life_state, max_iter, github_repository, process)
+    """
+    if process == "failed":
+        cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
+        cur["state"] = "failed"
+        lib.dump_yaml(cursor_sf, cur)
+        return
+
+    # process == "done"
+    nxt_sub = lib.next_substate_id(proto, branch, substate)
+    # Mark this sub-state's own file done (already set above), then move on.
+    lib.set_check_run(cr_name, sha, "completed", "success",
+                      f"{substate} complete", "")
+    cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
+    if nxt_sub:
+        cur["sub_state"] = nxt_sub
+        cur["state"] = life_state         # leg stays in flight
+        lib.dump_yaml(cursor_sf, cur)
+        nxt_state = lib.state_by_id(
+            {"states": lib.branch_substates(proto, branch)}, nxt_sub)
+        if nxt_state and nxt_state.get("kind") == "gate":
+            # Open the gate (scoped to this branch); read questions from
+            # the source sub-state's persisted evidence.
+            questions = []
+            qfrom = nxt_state.get("questions_from")
+            if qfrom:
+                qpath = lib.output_artifact_path(dir_, pid, instance,
+                                                 branch=branch, phase=(phase or None),
+                                                 substate=qfrom, kind="evidence")
+                if os.path.isfile(qpath):
+                    try:
+                        questions = json.load(open(qpath)).get("questions", []) or []
+                    except (json.JSONDecodeError, ValueError):
+                        questions = []
+            lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
+                          branch=branch, questions=questions,
+                          phase=(phase if phase else None))
+            lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → gate {nxt_sub} open")
+            return
+        # Otherwise: an agent sub-state → seed + dispatch (Plan 1 behaviour).
+        nsf = lib.state_file(dir_, pid, instance, branch=branch,
+                             phase=(phase if phase else None), substate=nxt_sub)
+        lib.dump_yaml(nsf, {
+            "protocol": pid, "instance": instance, "state": life_state,
+            "iteration": 1, "gates": {}, "head_sha": sha, "history": [],
+        })
+        lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → {nxt_sub}")
+        redispatch = [
+            f"repos/{github_repository}/dispatches",
+            "-f", "event_type=protocol-continue",
+            "-F", f"client_payload[protocol]={pid}",
+            "-F", f"client_payload[instance]={instance}",
+            "-F", f"client_payload[branch]={branch}",
+            "-F", f"client_payload[substate]={nxt_sub}",
+        ]
+        if phase:
+            redispatch += ["-F", f"client_payload[phase]={phase}"]
+        gh_api(*redispatch)
+    else:
+        complete_sequence(dir_, pid, instance, branch, phase, substate, sf, cursor_sf, cur,
+                          inf, pr, proto_path, max_iter, github_repository)
+
+
 def run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid):
     """Resolve and run the protocol's publish-state executable.
     Returns {conclusion, summary} dict; on any resolution/exec failure,
@@ -349,62 +440,9 @@ def main():
         if branch and substate:
             cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
                                        phase=(phase if phase else None))
-            nxt_sub = lib.next_substate_id(proto, branch, substate)
-            # Mark this sub-state's own file done (already set above), then move on.
-            lib.set_check_run(cr_name, sha, "completed", "success",
-                              f"{substate} complete", "")
-            cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
-            if nxt_sub:
-                cur["sub_state"] = nxt_sub
-                cur["state"] = life_state         # leg stays in flight
-                lib.dump_yaml(cursor_sf, cur)
-                nxt_state = lib.state_by_id(
-                    {"states": lib.branch_substates(proto, branch)}, nxt_sub)
-                if nxt_state and nxt_state.get("kind") == "gate":
-                    # Open the gate (scoped to this branch); read questions from
-                    # the source sub-state's persisted evidence.
-                    questions = []
-                    qfrom = nxt_state.get("questions_from")
-                    if qfrom:
-                        qpath = lib.output_artifact_path(dir_, pid, instance,
-                                                         branch=branch, phase=(phase or None),
-                                                         substate=qfrom, kind="evidence")
-                        if os.path.isfile(qpath):
-                            try:
-                                questions = json.load(open(qpath)).get("questions", []) or []
-                            except (json.JSONDecodeError, ValueError):
-                                questions = []
-                    lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
-                                  branch=branch, questions=questions,
-                                  phase=(phase if phase else None))
-                    lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → gate {nxt_sub} open")
-                    return
-                # Otherwise: an agent sub-state → seed + dispatch (Plan 1 behaviour).
-                nsf = lib.state_file(dir_, pid, instance, branch=branch,
-                                     phase=(phase if phase else None), substate=nxt_sub)
-                lib.dump_yaml(nsf, {
-                    "protocol": pid, "instance": instance, "state": life_state,
-                    "iteration": 1, "gates": {}, "head_sha": sha, "history": [],
-                })
-                lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → {nxt_sub}")
-                redispatch = [
-                    f"repos/{github_repository}/dispatches",
-                    "-f", "event_type=protocol-continue",
-                    "-F", f"client_payload[protocol]={pid}",
-                    "-F", f"client_payload[instance]={instance}",
-                    "-F", f"client_payload[branch]={branch}",
-                    "-F", f"client_payload[substate]={nxt_sub}",
-                ]
-                if phase:
-                    redispatch += ["-F", f"client_payload[phase]={phase}"]
-                gh_api(*redispatch)
-            else:
-                cur["state"] = "done"             # last sub-state → leg terminal
-                lib.dump_yaml(cursor_sf, cur)
-                update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
-                                      "✅ done — published.", max_iter, github_repository)
-                lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → leg done")
-                fire_join(pid, instance, branch)
+            advance_node(proto, proto_path, dir_, pid, instance, branch, phase, substate,
+                         sf, cursor_sf, cr_name, sha, pr, inf, life_state, max_iter,
+                         github_repository, process="done")
             return
 
         this_state = lib.state_by_id(proto, agent_state)
@@ -536,9 +574,9 @@ def main():
         if branch and substate:
             cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
                                        phase=(phase if phase else None))
-            cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
-            cur["state"] = "failed"
-            lib.dump_yaml(cursor_sf, cur)
+            advance_node(proto, proto_path, dir_, pid, instance, branch, phase, substate,
+                         sf, cursor_sf, cr_name, sha, pr, inf, life_state, max_iter,
+                         github_repository, process="failed")
 
         # An agent PHASE that exhausts its iterations is a terminal phase failure
         # (label it). A fan-out leg / single-agent v1 reaching here is NOT a phase
