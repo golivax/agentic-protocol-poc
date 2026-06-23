@@ -23,9 +23,19 @@ def test_continue_at_nested_fanout_emits_matrix(engine_env, tmp_path):
     assert act["action"] == "run-fanout"
     assert {l["path"] for l in act["legs"]} == {
         "preflight.deep.analyze.sec", "preflight.deep.analyze.perf"}
-    # nested fanout gets a path-keyed join marker (single-phase drops leading id).
+    # leg files + nested join marker seeded locally (single-phase drops leading id).
     marker = sd / "deep-fanout" / "pr-1" / "deep.analyze.__join.yaml"
     assert marker.is_file()
-    # leg files seeded for both children.
     assert (sd / "deep-fanout" / "pr-1" / "deep.analyze.sec.yaml").is_file()
     assert (sd / "deep-fanout" / "pr-1" / "deep.analyze.perf.yaml").is_file()
+
+    # PERSISTENCE: re-clone the state branch from the bare origin (the same way the
+    # real matrix legs re-checkout state) and assert the seeded files were pushed —
+    # not merely written to the local DIR. cas_push must have run.
+    fresh = tmp_path / "reclone"
+    subprocess.run(["git", "clone", "-q", "-b", "agentic-state",
+                    e["STATE_REMOTE"], str(fresh)], check=True)
+    fdir = fresh / "deep-fanout" / "pr-1"
+    assert (fdir / "deep.analyze.__join.yaml").is_file()
+    assert (fdir / "deep.analyze.sec.yaml").is_file()
+    assert (fdir / "deep.analyze.perf.yaml").is_file()

@@ -673,7 +673,13 @@ if lib.is_multiphase(proto_data) and PHASE and COMMAND == "advance-phase":
 if COMMAND == "continue" and NODE_PATH:
     _p = NODE_PATH.split(".")
     if paths.is_fanout(proto_data, _p):
-        enter_node(proto_data, _p, "continue")
+        # Match the established seed(emit=False)→cas_push→emit ordering of
+        # start_fanout / seed_and_dispatch_phase: enter_node seeds the leg files +
+        # nested __join.yaml marker locally, cas_push publishes them to origin so
+        # the matrix legs (which re-checkout state) find them, THEN emit.
+        branches = enter_node(proto_data, _p, "continue", emit=False)
+        lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter nested fanout {NODE_PATH} (continue)")
+        print(json.dumps(_fanout_action(proto_data, _p, branches)))
         sys.exit(0)
 
 if not BRANCH and is_fanout() and not PHASE:
