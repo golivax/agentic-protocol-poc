@@ -936,7 +936,7 @@ def render_fanout_status_body(dir_, pid, instance, proto):
     return f"\U0001f50d **{pid} · {instance}**\n\n{sections}{headline}\n\n[Full state & audit trail]({link})\n"
 
 
-DEFAULT_MAX_DEPTH = 4
+DEFAULT_MAX_DEPTH = 5
 
 
 def effective_max_depth(proto):
@@ -1133,17 +1133,29 @@ def _gh_dispatch(event_type, fields):
     subprocess.run(["gh", "api"] + args, text=True, capture_output=True)
 
 
-def dispatch_continue(pid, instance, branch, substate, phase=""):
-    """Dispatch a protocol-continue event to resume a sub-pipeline leg at substate."""
+def dispatch_continue(pid, instance, branch=None, substate=None, phase="", path=None):
+    """Dispatch a protocol-continue event to resume a sub-pipeline leg.
+    `path` (dot-joined tree path) drives the recursive NODE_PATH continue guard
+    for NESTED legs; when set it is sent alone. The legacy branch/substate/phase
+    form (depth-<=3) is byte-identical."""
+    if path:
+        _gh_dispatch("protocol-continue", {"protocol": pid, "instance": instance, "path": path})
+        return
     f = {"protocol": pid, "instance": instance, "branch": branch, "substate": substate}
     if phase:
         f["phase"] = phase
     _gh_dispatch("protocol-continue", f)
 
 
-def fire_join_dispatch(pid, instance):
-    """Dispatch a protocol-join event (all legs done; trigger the join barrier)."""
-    _gh_dispatch("protocol-join", {"protocol": pid, "instance": instance})
+def fire_join_dispatch(pid, instance, fanout_path=""):
+    """Dispatch a protocol-join event (all legs done; trigger the join barrier).
+    `fanout_path` (dot-joined TREE path of the enclosing fanout) is carried as
+    client_payload[path] ONLY for a NESTED fanout; the TOP fanout stays path-less
+    (byte-identical to the legacy behavior)."""
+    f = {"protocol": pid, "instance": instance}
+    if fanout_path:
+        f["path"] = fanout_path
+    _gh_dispatch("protocol-join", f)
 
 
 def materialize_inputs(resolved, target_dir):

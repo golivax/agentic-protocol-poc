@@ -76,3 +76,18 @@ def test_state_path_multiphase_keeps_full():
 def test_state_path_empty():
     p = _proto("subpipeline-mini")
     assert lib.state_path(p, []) == []
+
+
+def test_gate_deep_fixture_shapes():
+    p = _proto("gate-deep")
+    # Deepest leaf path is length 5 (single-phase fanout → ... → gate/agent).
+    assert paths.max_static_depth(p) == 5
+    # The two gates sit where the plan says.
+    assert paths.node_kind(p, ["outer", "B", "inner", "C", "clarify"]) == "gate"
+    assert paths.node_kind(p, ["outer", "B", "inner", "E", "ask"]) == "gate"
+    # clarify has a following sibling; ask is last.
+    assert paths.next_sibling(p, ["outer", "B", "inner", "C", "clarify"]) == "wrap"
+    assert paths.next_sibling(p, ["outer", "B", "inner", "E", "ask"]) is None
+    # The enclosing fanout of both gates is the NESTED inner fanout (length 3).
+    assert paths.enclosing_fanout_path(p, ["outer", "B", "inner", "C", "clarify"]) \
+        == ["outer", "B", "inner"]

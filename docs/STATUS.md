@@ -46,6 +46,20 @@ GitHub-Actions workflow wiring (input artifact staging, `/answer` routing, merge
 job env) — see `docs/superpowers/notes-deferred-workflow-integration.md`; it lands
 on `main` per the workflow-on-default-branch rule.
 
+### Recursive sub-pipelines (arbitrary depth) — engine done
+
+A sub-state may itself be a fanout or sub-pipeline, to arbitrary bounded depth.
+The engine carries one variable-length **node-path** (`NODE_PATH` env) instead of
+the fixed `(phase, branch, substate)` triple; `next.py`/`advance.py`/`join.py`
+enter, advance, and bubble joins recursively (path-keyed `<fanout>.__join.yaml`
+markers for nested fanouts; the top fanout keeps `_instance.yaml`). A
+configurable `max_depth` (default **5**) bounds the static tree. The `/answer`
+handler is recursive too: `_find_open_gate` follows live cursors to a gate at any
+depth, and `do_answer` advances the enclosing sub-pipeline cursor / fires the
+enclosing (nested) join. Exercised by `tests/fixtures/deep-fanout/` (depth-4 walk)
+and `tests/fixtures/gate-deep/` (depth-5 nested gates). **Deferred to Stage 4:**
+the GitHub-Actions matrix wiring for arbitrary-depth legs + a live protocol.
+
 ## Proven end-to-end (real GitHub Actions)
 
 - Engine: `next.py` (planner), `advance.py` (sole state writer + publisher),
