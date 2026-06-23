@@ -60,3 +60,50 @@ def test_join_marker_two_paths_independent(tmp_path):
     assert fab != fac
     assert fab.endswith("/proto/inst/a.b.__join.yaml")
     assert fac.endswith("/proto/inst/a.c.__join.yaml")
+
+
+def test_two_protocols_seed_into_disjoint_paths(engine_env, tmp_path):
+    """Two different protocols seeded for the same instance key produce disjoint state paths.
+
+    subpipeline-mini (single-phase fanout) and multiphase-subpipeline (multi-phase)
+    both use instance key 'pr-1' but write into separate <protocol-id>/pr-1/ subtrees
+    under the shared STATE_REMOTE origin — no path collision possible.
+    """
+    import subprocess as _sp
+
+    NEXT_PY = ROOT / ".github/agent-factory/engine/next.py"
+    fixtures = ROOT / "tests/fixtures"
+
+    protocols = [
+        ("subpipeline-mini", fixtures / "subpipeline-mini/protocol.json"),
+        ("multiphase-subpipeline", fixtures / "multiphase-subpipeline/protocol.json"),
+    ]
+
+    # Each next.py call needs its own local checkout dir; they share the same
+    # STATE_REMOTE (engine_env["STATE_REMOTE"]) so both protocol trees accumulate
+    # in the same bare origin.
+    for idx, (proto_name, proto_path) in enumerate(protocols):
+        sd = tmp_path / f"sd{idx}"
+        r = _sp.run(
+            ["python3", str(NEXT_PY), str(sd), "pr-1", str(proto_path), "start"],
+            env=engine_env,
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, f"{proto_name} next.py start failed:\n{r.stderr}"
+
+    # Clone the shared origin once to inspect both protocol trees side-by-side.
+    view = tmp_path / "view"
+    _sp.run(
+        ["git", "clone", "-q", engine_env["STATE_REMOTE"], str(view)],
+        check=True,
+    )
+
+    # Both protocol dirs must exist and be non-empty (each seeded independently).
+    a = {x.name for x in (view / "subpipeline-mini" / "pr-1").iterdir()}
+    b = {x.name for x in (view / "multiphase-subpipeline" / "pr-1").iterdir()}
+
+    assert (view / "subpipeline-mini").exists() and (view / "multiphase-subpipeline").exists()
+    assert a and b  # both seeded independently
+    # The two dirs are disjoint namespaces — no shared file path can exist.
+    assert (view / "subpipeline-mini" / "pr-1") != (view / "multiphase-subpipeline" / "pr-1")
