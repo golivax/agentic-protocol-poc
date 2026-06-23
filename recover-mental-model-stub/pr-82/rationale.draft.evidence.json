@@ -1,5 +1,5 @@
 {"questions": [
-  {"id": "q1", "text": "Is this intended to remain a standalone example, or is there a plan to integrate it into the engine's rate-limiting path? The `examples/` placement and the deliberate omission of eviction suggest it is purely illustrative, but the docstring's careful design rationale hints at future promotion — which is it, and who decides when it graduates?"},
-  {"id": "q2", "text": "The `_state` dict grows unbounded because there is no eviction. What is the expected key cardinality and process lifetime in the target usage scenario? If keys are PR numbers or user IDs over a long-running process, what prevents this from becoming a memory leak?"},
-  {"id": "q3", "text": "The docstring flags 'single-process only', but the engine uses matrix fan-out legs that could share a process. Is there a concurrent-access scenario where two callers hit `allow()` for the same key simultaneously, producing a race on the check-then-update sequence in `_state`?"}
+  {"id": "q1", "text": "The dict has no eviction policy, so it grows unbounded for unique keys — is this intended for a fixed set of known keys, and if not, what is the expected memory ceiling or eviction strategy?"},
+  {"id": "q2", "text": "The implementation is documented as single-process only; if this is ever used behind a load balancer or multiple workers, state will diverge across processes — is there a plan to swap in a shared backend (e.g. Redis) later, or is single-process a permanent constraint?"},
+  {"id": "q3", "text": "Why is this placed under `examples/` rather than a library module or a dedicated `ratelimit/` package — is it intended purely as reference code, or will production paths import it directly?"}
 ]}
