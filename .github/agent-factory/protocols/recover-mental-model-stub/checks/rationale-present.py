@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import json, sys
 
-evidence = json.load(open(sys.argv[1]))
+with open(sys.argv[1]) as f:
+    evidence = json.load(f)
 rationale = evidence.get("rationale", "") or ""
 if rationale.strip():
     print(json.dumps({"check": "rationale-present", "pass": True, "feedback": ""}))

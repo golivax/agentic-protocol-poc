@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import json, sys
 
-evidence = json.load(open(sys.argv[1]))
+with open(sys.argv[1]) as f:
+    evidence = json.load(f)
 questions = evidence.get("questions", []) or []
 missing = []
 if not questions:

@@ -5,9 +5,12 @@ Drives the engine through the full pipeline under ENGINE_LOCAL:
 
 Also tests all 4 checks for pass/fail behaviour.
 """
-import json, subprocess, sys
+import importlib, json, os, subprocess, sys
 from pathlib import Path
 from conftest import ENGINE, PROTOCOLS, run_engine, run_check, read_state_yaml
+
+sys.path.insert(0, str(ENGINE))
+lib = importlib.import_module("lib")
 
 PROTO_DIR = PROTOCOLS / "recover-mental-model-stub"
 PROTO = PROTO_DIR / "protocol.json"
@@ -164,6 +167,7 @@ def test_full_pipeline(tmp_path, engine_env):
     # 6. Run join.py — both legs done.
     ej = dict(engine_env)
     ej["PR_HEAD_SHA"] = "abc123"
+    ej["PR"] = "1"
     out, err, rc = run_engine("join.py", tmp_path / "dir-join", "pr-1", PROTO, env=ej)
     assert rc == 0, f"join failed:\n{err}"
 
@@ -172,3 +176,42 @@ def test_full_pipeline(tmp_path, engine_env):
     inst = read_state_yaml(w3 / "recover-mental-model-stub/pr-1/_instance.yaml")
     assert inst.get("joined") is True, f"expected joined=True, got {inst}"
     assert inst.get("phase") == "combine", f"expected phase=combine, got {inst.get('phase')!r}"
+
+
+def test_run_merge_hook(tmp_path, engine_env):
+    """Directly exercise lib.run_merge_hook for the combine state.
+
+    Resolution (is_multiphase=False, single fanout phase):
+      summary  → flat branch  → <dir>/recover-mental-model-stub/pr-1/summary.evidence.json
+      rationale → sub-pipeline → last substate=finalize →
+                  <dir>/recover-mental-model-stub/pr-1/rationale.finalize.evidence.json
+    """
+    # Wire lib.STATE_REMOTE so state_checkout can clone the bare origin.
+    for k, v in engine_env.items():
+        os.environ[k] = v
+    lib.STATE_REMOTE = engine_env["STATE_REMOTE"]
+
+    dir_ = str(tmp_path / "dir")
+    lib.state_checkout(dir_)
+
+    base = os.path.join(dir_, "recover-mental-model-stub", "pr-1")
+    os.makedirs(base, exist_ok=True)
+
+    # Flat summary branch leg output.
+    with open(os.path.join(base, "summary.evidence.json"), "w") as f:
+        json.dump({"summary": "SUMMARY-TEXT"}, f)
+    # Sub-pipeline rationale branch leg output (last substate = finalize).
+    with open(os.path.join(base, "rationale.finalize.evidence.json"), "w") as f:
+        json.dump({"rationale": "RATIONALE-TEXT"}, f)
+
+    proto_path = str(PROTO)
+    proto = json.load(open(proto_path))
+    merge_state = lib.state_by_id(proto, "combine")
+    assert merge_state is not None, "combine state not found in protocol"
+
+    res = lib.run_merge_hook(dir_, "recover-mental-model-stub", "pr-1", proto_path, merge_state)
+    assert res["conclusion"] == "success", (
+        f"Expected conclusion='success', got {res!r}"
+    )
+    # The hook returns a fixed summary string on success — confirm it's non-empty.
+    assert res.get("summary"), f"Expected non-empty summary, got {res!r}"

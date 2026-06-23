@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Merge hook for the combine state.
 
-ABI: <hook> <inputs-dir> <instance>
+ABI: <hook> <workdir> <instance>
 Env: ENGINE_LOCAL, GITHUB_REPOSITORY, PUBLISH_TOKEN, PR (inherited)
 Reads:
-  <inputs-dir>/inputs/summary.json  — summary leg evidence
-  <inputs-dir>/inputs/rationale.json — rationale leg output (finalize evidence)
+  <workdir>/inputs/summary.json   — summary leg evidence
+  <workdir>/inputs/rationale.json — rationale leg output (finalize evidence)
+The engine calls this as `<hook> <workdir> <instance>`; the hook appends
+"inputs" itself (`inputs_dir = os.path.join(sys.argv[1], "inputs")`).
 Posts a combined markdown comment; prints {"conclusion","summary"}.
 """
 import json, os, sys
