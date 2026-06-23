@@ -128,3 +128,35 @@ def test_answer_finds_nested_gate_in_multiphase(tmp_path, engine_env):
     assert answers["answers"][qid] == "postgres"
     # The continue re-dispatch must carry the phase so the resumed leg uses qualified paths.
     assert "client_payload[phase]=review" in err
+
+
+def test_full_subpipeline_leg_walk_to_join(tmp_path, engine_env):
+    # Enter fanout (seeds B.draft + flat A).
+    run_engine("next.py", tmp_path / "d0", "pr-1", str(PROTO), "advance-phase", "abc123",
+               env=engine_env, phase="review")
+    # Finish flat leg A.
+    out, err, rc = _advance_substate(tmp_path, engine_env, "pr-1", "A", "", n=1)  # flat: no substate
+    # NOTE: flat branches advance with BRANCH set + SUBSTATE empty.
+    assert rc == 0, err
+
+    # B: draft → opens clarify gate (evidence must carry a question so the gate has one to answer).
+    assert _advance_substate(tmp_path, engine_env, "pr-1", "B", "draft", n=2,
+                             evidence={"questions": [{"id": "q1", "text": "Which DB?"}]})[2] == 0
+    work = _state_dir(tmp_path, engine_env, suffix="-1")
+    qid = read_state_yaml(work / "multiphase-subpipeline/pr-1/review.B.clarify.yaml"
+                          )["gates"]["questions"][0]["id"]
+
+    # Answer the gate → advances cursor to finalize.
+    e = dict(engine_env, ANSWER_BODY=f"/answer {qid}: pg", ANSWER_ACTOR="al", PR_HEAD_SHA="abc123")
+    assert run_engine("next.py", tmp_path / "d1", "pr-1", str(PROTO), "answer", env=e)[2] == 0
+
+    # Finish B.finalize → leg done.
+    assert _advance_substate(tmp_path, engine_env, "pr-1", "B", "finalize", n=3)[2] == 0
+    work = _state_dir(tmp_path, engine_env, suffix="-2")
+    assert read_state_yaml(work / "multiphase-subpipeline/pr-1/review.B.yaml")["state"] == "done"
+
+    # Join: both legs done → instance joins.
+    ej = dict(engine_env, PR_HEAD_SHA="abc123")
+    assert run_engine("join.py", tmp_path / "j", "pr-1", str(PROTO), env=ej)[2] == 0
+    work = _state_dir(tmp_path, engine_env, suffix="-3")
+    assert read_state_yaml(work / "multiphase-subpipeline/pr-1/_instance.yaml").get("joined") is True
