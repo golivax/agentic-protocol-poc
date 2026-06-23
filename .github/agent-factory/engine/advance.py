@@ -375,7 +375,8 @@ def main():
                             except (json.JSONDecodeError, ValueError):
                                 questions = []
                     lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
-                                  branch=branch, questions=questions)
+                                  branch=branch, questions=questions,
+                                  phase=(phase if phase else None))
                     lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → gate {nxt_sub} open")
                     return
                 # Otherwise: an agent sub-state → seed + dispatch (Plan 1 behaviour).

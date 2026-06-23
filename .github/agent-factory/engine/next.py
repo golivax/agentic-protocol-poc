@@ -41,6 +41,35 @@ def emit_run_fanout(branches):
     print(json.dumps({"action": "run-fanout", "iteration": 1, "feedback": "", "reason": "fanout", "branches": branches}))
 
 
+def seed_branch(b, fanout_id, phase=None):
+    """Seed one fan-out branch's state file(s) and return its run-fanout emit dict.
+    Used by BOTH the single-phase (start_fanout, phase=None) and multi-phase
+    (seed_and_dispatch_phase, phase set) paths — one seeding logic, two callers.
+    `phase` qualifies the state-file path; head_sha is included on the flat file
+    only when `phase` is set (preserving the pre-existing single/multi divergence)."""
+    bid = b["id"]
+    if lib.is_subpipeline_branch(b):
+        first = b["states"][0]
+        cf = lib.state_file(DIR, PID, INSTANCE, bid, phase=phase)
+        os.makedirs(os.path.dirname(cf), exist_ok=True)
+        cur = {"protocol": PID, "instance": INSTANCE, "state": fanout_id,
+               "sub_state": first["id"], "iteration": 1, "gates": {}, "history": []}
+        lib.dump_yaml(cf, cur)
+        sf = lib.state_file(DIR, PID, INSTANCE, bid, phase=phase, substate=first["id"])
+        lib.dump_yaml(sf, {"protocol": PID, "instance": INSTANCE, "state": fanout_id,
+                           "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []})
+        return {"id": bid, "workflow": first["workflow"],
+                "substate": first["id"], "iteration": 1, "feedback": ""}
+    sf = lib.state_file(DIR, PID, INSTANCE, bid, phase=phase)
+    os.makedirs(os.path.dirname(sf), exist_ok=True)
+    flat = {"protocol": PID, "instance": INSTANCE, "state": fanout_id,
+            "iteration": 1, "gates": {}, "history": []}
+    if phase:
+        flat["head_sha"] = HEAD_SHA
+    lib.dump_yaml(sf, flat)
+    return {"id": bid, "workflow": b["workflow"], "iteration": 1, "feedback": ""}
+
+
 def is_fanout():
     for s in proto_data.get("states", []):
         if s.get("kind") == "fanout":
@@ -57,35 +86,7 @@ def start_fanout():
             branches_config = s.get("branches", [])
             break
 
-    branches = []
-    for b in branches_config:
-        bid = b["id"]
-        if lib.is_subpipeline_branch(b):
-            first = b["states"][0]
-            # Branch CURSOR: sub_state + leg life-state (the fanout id).
-            cf = lib.state_file(DIR, PID, INSTANCE, bid)
-            os.makedirs(os.path.dirname(cf), exist_ok=True)
-            lib.dump_yaml(cf, {
-                "protocol": PID, "instance": INSTANCE, "state": fstate,
-                "sub_state": first["id"], "iteration": 1, "gates": {}, "history": [],
-            })
-            # First SUB-STATE file (the per-step iterate state).
-            sf = lib.state_file(DIR, PID, INSTANCE, bid, substate=first["id"])
-            lib.dump_yaml(sf, {
-                "protocol": PID, "instance": INSTANCE, "state": fstate,
-                "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": [],
-            })
-            branches.append({"id": bid, "workflow": first["workflow"],
-                             "substate": first["id"], "iteration": 1, "feedback": ""})
-        else:
-            sf = lib.state_file(DIR, PID, INSTANCE, bid)
-            os.makedirs(os.path.dirname(sf), exist_ok=True)
-            lib.dump_yaml(sf, {
-                "protocol": PID, "instance": INSTANCE, "state": fstate,
-                "iteration": 1, "gates": {}, "history": [],
-            })
-            branches.append({"id": bid, "workflow": b["workflow"],
-                             "iteration": 1, "feedback": ""})
+    branches = [seed_branch(b, fstate) for b in branches_config]
 
     inf = lib.instance_file(DIR, PID, INSTANCE)
     os.makedirs(os.path.dirname(inf), exist_ok=True)
@@ -170,18 +171,10 @@ def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
 
     if kind == "fanout":
         branches_config = phase_state.get("branches", [])
-        # Per-branch phase files carry head_sha (consistent with write_fresh_state;
-        # the legacy start_fanout omits it — deliberate divergence).
-        for b in branches_config:
-            sf = lib.state_file(DIR, PID, INSTANCE, b["id"], phase=phase_id)
-            os.makedirs(os.path.dirname(sf), exist_ok=True)
-            lib.dump_yaml(sf, {
-                "protocol": PID, "instance": INSTANCE, "state": phase_id,
-                "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": [],
-            })
+        # Seed each branch (flat OR sub-pipeline) under the phase-qualified path
+        # via the shared helper — same logic the single-phase start_fanout uses.
+        branches = [seed_branch(b, phase_id, phase=phase_id) for b in branches_config]
         lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter fan-out phase {phase_id} ({command})")
-        branches = [{"id": b["id"], "workflow": b["workflow"], "iteration": 1, "feedback": ""}
-                    for b in branches_config]
         print(json.dumps({"action": "run-fanout", "iteration": 1, "feedback": "",
                           "reason": f"phase:{phase_id}", "phase": phase_id, "branches": branches}))
     elif kind == "gate":
@@ -387,22 +380,32 @@ def do_resolve_gate():
     refuse(f"Unknown gate decision '{decision}'.", "gate: unknown decision")
 
 
+def _gate_phase(proto):
+    """Phase qualifier for sub-pipeline gate/cursor state files: the fanout phase
+    id in a multi-phase protocol, else None (single-phase → unqualified paths)."""
+    if lib.is_multiphase(proto):
+        fo = lib._fanout_state(proto)
+        return fo["id"] if fo else None
+    return None
+
+
 def _find_open_gate_branch(proto, want_branch=""):
     """Return (branch_id, gate_substate_id) for the first open data-gate, or (None, None)."""
     fo = lib._fanout_state(proto)
     if not fo:
         return None, None
+    ph = _gate_phase(proto)
     for b in fo.get("branches", []):
         if want_branch and b["id"] != want_branch:
             continue
-        cf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"])
+        cf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"], phase=ph)
         if not os.path.isfile(cf):
             continue
         cur = lib.load_yaml(cf)
         sub = cur.get("sub_state", "")
         for s in b.get("states", []):
             if s["id"] == sub and s.get("kind") == "gate":
-                gsf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"], substate=sub)
+                gsf = lib.state_file(DIR, PID, INSTANCE, branch=b["id"], substate=sub, phase=ph)
                 if os.path.isfile(gsf) and lib.load_yaml(gsf).get("gates", {}).get("state") == "open":
                     return b["id"], sub
     return None, None
@@ -443,13 +446,14 @@ def do_answer():
                           "reason": "answer: no open gate"}))
         return
 
-    gsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=gate)
+    ph = _gate_phase(proto_data)
+    gsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=gate, phase=ph)
     gdata = lib.load_yaml(gsf)
     questions = gdata.get("gates", {}).get("questions", []) or []
 
     # Merge new answers into the persisted answers artifact.
     apath = lib.output_artifact_path(DIR, PID, INSTANCE, branch=branch,
-                                     substate=gate, kind="answers")
+                                     substate=gate, kind="answers", phase=ph)
     existing = {}
     if os.path.isfile(apath):
         try:
@@ -489,7 +493,7 @@ def do_answer():
     gdata["gates"]["state"] = "answered"
     lib.dump_yaml(gsf, gdata)
     nxt_sub = lib.next_substate_id(proto_data, branch, gate)
-    cf = lib.state_file(DIR, PID, INSTANCE, branch=branch)
+    cf = lib.state_file(DIR, PID, INSTANCE, branch=branch, phase=ph)
     cur = lib.load_yaml(cf)
     sha = gdata.get("head_sha", "") or HEAD_SHA
     if nxt_sub:
@@ -503,14 +507,14 @@ def do_answer():
         cur["sub_state"] = nxt_sub
         cur["state"] = life
         lib.dump_yaml(cf, cur)
-        nsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=nxt_sub)
+        nsf = lib.state_file(DIR, PID, INSTANCE, branch=branch, substate=nxt_sub, phase=ph)
         lib.dump_yaml(nsf, {"protocol": PID, "instance": INSTANCE, "state": life,
                             "iteration": 1, "gates": {}, "head_sha": sha, "history": []})
         lib.set_check_run(f"{PID}/{branch}/{gate}", sha, "completed", "success",
                           "Answered", f"Answered by @{actor}.")
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered -> {nxt_sub}")
         lib.post_pr_comment(pr, f"{gate} answered by @{actor}; continuing to {nxt_sub}.")
-        lib.dispatch_continue(PID, INSTANCE, branch, nxt_sub)
+        lib.dispatch_continue(PID, INSTANCE, branch, nxt_sub, phase=ph or "")
     else:
         cur["state"] = "done"
         lib.dump_yaml(cf, cur)

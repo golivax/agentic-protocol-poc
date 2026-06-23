@@ -82,10 +82,22 @@ follow-up in the spirit of the `recover-mental-model-stub` effort).
 - **Problem #2 — arbitrary-depth recursion** (a sub-state that is itself a
   fanout/sub-pipeline). Decided: pursue it next, as its own spec. This fix must not
   add throwaway fixed-rung scaffolding that #2 will rip out.
-- Any change to `advance.py`, `join.py`, `run-checks.py`, or `lib.state_file` /
+- Any change to `join.py`, `run-checks.py`, or `lib.state_file` /
   `lib.resolve_agent_unit` — they already support the 3-rung shape.
 - Live gh-aw agent wiring, `agentic-engine.yml` matrix changes, or a live PR
   verification.
+
+> **Implementation correction (post-merge, 2026-06-23):** this spec originally
+> also listed `advance.py` and `lib.open_gate` as untouched, assuming the durable
+> side already threaded `phase` everywhere. That was incomplete: the gate-**open**
+> write path (`lib.open_gate`, called from `advance.py` when a sub-pipeline agent
+> sub-state advances into a gate sub-state) did **not** accept/forward `phase`, so
+> a multi-phase nested gate was written to an unqualified path that the now
+> phase-aware `/answer` reader could never find. The fix therefore added a
+> `phase=None` parameter to `lib.open_gate` and passed it from `advance.py` (both
+> default to the legacy unqualified path when `phase` is None, so single-phase is
+> unchanged). The whole-branch review confirmed this is a correct fix for an
+> incomplete spec assumption, not a scope departure.
 
 ## Approach (chosen: A — thread `PHASE`, share one seeding helper)
 
