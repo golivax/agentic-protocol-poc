@@ -1,7 +1,7 @@
 {
   "name": "gate-deep",
   "version": "0.1.0",
-  "triggers": [{ "on": "issue_comment", "actions": ["created"], "command": "answer", "match": "^/answer" }],
+  "triggers": [{ "on": "issue_comment", "comment_prefix": "/clarify", "command": "answer" }],
   "states": [
     {
       "id": "outer",

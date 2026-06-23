@@ -116,3 +116,34 @@ def test_cli_match_trigger(tmp_path):
 def test_cli_agent_workflow(tmp_path):
     p = _write(tmp_path, PIPELINE)
     assert _cli("agent-workflow", p, "review", "grumpy") == "grumpy-agent"
+
+
+# ── command_prefix: per-protocol answer-prefix lookup ────────────────────────
+
+def test_command_prefix_returns_declared_prefix():
+    proto = {"triggers": [
+        {"on": "issue_comment", "comment_prefix": "/recover", "command": "start"},
+        {"on": "issue_comment", "comment_prefix": "/clarify", "command": "answer"},
+    ]}
+    assert lib.command_prefix(proto, "answer", "/answer") == "/clarify"
+
+
+def test_command_prefix_default_when_no_trigger():
+    # subpipeline-mini declares no answer trigger → the default is used.
+    proto = {"triggers": [
+        {"on": "pull_request", "actions": ["opened"], "command": "start"},
+    ]}
+    assert lib.command_prefix(proto, "answer", "/answer") == "/answer"
+
+
+def test_command_prefix_default_when_trigger_has_no_prefix():
+    proto = {"triggers": [{"on": "issue_comment", "command": "answer"}]}
+    assert lib.command_prefix(proto, "answer", "/answer") == "/answer"
+
+
+def test_command_prefix_first_match_wins():
+    proto = {"triggers": [
+        {"on": "issue_comment", "comment_prefix": "/a", "command": "answer"},
+        {"on": "issue_comment", "comment_prefix": "/b", "command": "answer"},
+    ]}
+    assert lib.command_prefix(proto, "answer", "/answer") == "/a"

@@ -7,6 +7,11 @@ from conftest import FIXTURES, run_engine, read_state_yaml
 
 PROTO = FIXTURES / "gate-deep/protocol.json"
 
+# gate-deep declares a NON-default answer prefix (comment_prefix: "/clarify"), so
+# these tests double as the end-to-end proof that do_answer strips the
+# protocol-configured prefix rather than a hardcoded "/answer" literal. The
+# default-prefix path stays covered by subpipeline-mini in test_gate_data.py.
+
 
 def _seed_open_gate(work, branch_seq_file, gate_id, questions):
     """Seed gate-deep/pr-1 state so the engine sees the inner fanout in flight
@@ -59,7 +64,7 @@ def test_find_open_gate_descends_to_depth5(tmp_path, engine_env):
     _seed_open_gate(tmp_path / "work", "B.inner.C.yaml", "clarify",
                     [{"id": "q1", "text": "db?"}])
     _push_seed(tmp_path / "work", engine_env)
-    e = _answer_env(engine_env, "/answer q1: postgres")
+    e = _answer_env(engine_env, "/clarify q1: postgres")
     out, err, rc = run_engine("next.py", tmp_path / "dir2", "pr-1", PROTO, "answer",
                               "deadbeef", env=e)
     assert rc == 0, err
@@ -71,7 +76,7 @@ def test_nested_answer_advances_cursor_and_dispatches_path(tmp_path, engine_env)
     _seed_open_gate(tmp_path / "work", "B.inner.C.yaml", "clarify",
                     [{"id": "q1", "text": "db?"}])
     _push_seed(tmp_path / "work", engine_env)
-    e = _answer_env(engine_env, "/answer q1: postgres")
+    e = _answer_env(engine_env, "/clarify q1: postgres")
     out, err, rc = run_engine("next.py", tmp_path / "dir2", "pr-1", PROTO, "answer",
                               "deadbeef", env=e)
     assert rc == 0, err
@@ -89,7 +94,7 @@ def test_nested_answer_partial_keeps_gate_open(tmp_path, engine_env):
     _seed_open_gate(tmp_path / "work", "B.inner.C.yaml", "clarify",
                     [{"id": "q1", "text": "db?"}, {"id": "q2", "text": "cache?"}])
     _push_seed(tmp_path / "work", engine_env)
-    e = _answer_env(engine_env, "/answer q1: postgres")   # q2 missing → partial
+    e = _answer_env(engine_env, "/clarify q1: postgres")   # q2 missing → partial
     out, err, rc = run_engine("next.py", tmp_path / "dir2", "pr-1", PROTO, "answer",
                               "deadbeef", env=e)
     assert rc == 0, err
@@ -104,7 +109,7 @@ def test_nested_answer_gate_as_last_fires_nested_join(tmp_path, engine_env):
     _seed_open_gate(tmp_path / "work", "B.inner.E.yaml", "ask",
                     [{"id": "q1", "text": "ok?"}])
     _push_seed(tmp_path / "work", engine_env)
-    e = _answer_env(engine_env, "/answer q1: yes")
+    e = _answer_env(engine_env, "/clarify q1: yes")
     out, err, rc = run_engine("next.py", tmp_path / "dir2", "pr-1", PROTO, "answer",
                               "deadbeef", env=e)
     assert rc == 0, err
