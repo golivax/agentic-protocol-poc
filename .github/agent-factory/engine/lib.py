@@ -82,6 +82,29 @@ def output_artifact_path(d, pid, instance, branch=None, phase=None, substate=Non
     return sf[:-len(".yaml")] + f".{kind}.json"
 
 
+def join_marker_file(d, pid, instance, fanout_path):
+    """Path to the path-keyed join marker for a nested fanout.
+    `fanout_path` is the FILE-NAMING path (already converted via state_path);
+    callers in Task 12 pass lib.state_path(proto, tree_path).
+    Only nested fanouts (len(tree_path) > 1) should call this — top-level
+    fanout join tracking stays on _instance.yaml (back-compat)."""
+    base = f"{d}/{pid}/{instance}"
+    return f"{base}/{'.'.join(fanout_path)}.__join.yaml"
+
+
+def read_join(d, pid, instance, fanout_path):
+    """Read the path-keyed join marker dict, or {} if it does not exist yet."""
+    f = join_marker_file(d, pid, instance, fanout_path)
+    return load_yaml(f) if os.path.isfile(f) else {}
+
+
+def write_join(d, pid, instance, fanout_path, data):
+    """Write (overwrite) the path-keyed join marker dict."""
+    f = join_marker_file(d, pid, instance, fanout_path)
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    dump_yaml(f, data)
+
+
 def state_by_id(protocol, state_id):
     """Return the state dict with the given id, or None."""
     for s in protocol.get("states", []):
