@@ -1,1 +1,0 @@
-{"finding": "This PR adds a minimal demo Python module (`demo/stage4c-sample.py`) with two intentionally flawed functions — a zero-division risk in `divide` and missing type checks/docstrings in `add` — planted as targets for the Stage 4c deep-review-stub agent walkthrough."}
