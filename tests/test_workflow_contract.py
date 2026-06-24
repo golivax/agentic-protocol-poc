@@ -32,3 +32,10 @@ def test_engine_yml_threads_node_path_not_legacy():
 def test_engine_yml_matrix_leg_has_path_and_workflow():
     t = _load("agentic-engine.yml")
     assert "matrix.leg.path" in t
+
+
+def test_join_yml_threads_node_path_and_path_concurrency():
+    t = _load("protocol-join.yml")
+    assert "NODE_PATH: ${{ github.event.client_payload.path }}" in t
+    # concurrency group is path-aware so nested joins don't serialize against the top join
+    assert "join-${{ github.event.client_payload.instance }}-${{ github.event.client_payload.path }}" in t
