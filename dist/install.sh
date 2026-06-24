@@ -6,6 +6,7 @@ SOURCE="golivax/agentic-protocol-poc"
 REF="main"
 DRY_RUN=0
 FORCE=0
+DRIFTED=""
 BASE_URL=""
 SUBCMD=""
 PROTOCOLS=()
@@ -125,7 +126,12 @@ print_plan() {
 }
 
 fetch_one() {  # <repo-relative-path>
-  local path="$1"; mkdir -p "$(dirname "$path")"; gh_raw "$path" > "$path"
+  local path="$1"
+  if [[ "$FORCE" != 1 && -n "$DRIFTED" ]] && grep -qxF "$path" <<<"$DRIFTED"; then
+    log "skipping locally-modified ${path} (use --force to overwrite)"
+    return 0
+  fi
+  mkdir -p "$(dirname "$path")"; gh_raw "$path" > "$path"
 }
 
 fetch_unit() {
@@ -266,7 +272,41 @@ cmd_install() {
   finalize_commit
   log "done — open a PR or comment a trigger to run the protocol"
 }
-cmd_update() { die "not yet implemented"; }
+cmd_update() {
+  preflight
+  bootstrap_helpers
+  local rcpt=".github/agent-factory/.install.json"
+  [[ -f "$rcpt" ]] || die "no install receipt found ($rcpt) — run install first"
+  # default to the protocols recorded in the receipt
+  if [[ ${#PROTOCOLS[@]} -eq 0 ]]; then
+    mapfile -t PROTOCOLS < <(python3 -c "import json;print('\n'.join(json.load(open('$rcpt'))['protocols']))")
+  fi
+  local old_ev; old_ev="$(python3 -c "import json;print(json.load(open('$rcpt'))['engine_version'])")"
+  if python3 -c "import sys; sys.path.insert(0,'$WORKDIR'); import receipt; sys.exit(0 if receipt.is_breaking_bump('$old_ev','$ENGINE_VERSION') else 1)"; then
+    log "WARNING: engine ${old_ev} → ${ENGINE_VERSION} is a breaking bump; finish open reviews before updating or expect to restart them"
+  fi
+  # drift check (skip locally-modified unless --force)
+  local drifted; drifted="$(python3 "$WORKDIR/receipt.py" drift "$rcpt" .)"
+  if [[ -n "$drifted" && "$FORCE" != 1 ]]; then
+    log "locally-modified files will be SKIPPED (use --force to overwrite):"; echo "$drifted" >&2
+  fi
+  DRIFTED="$drifted"
+  # compute the new file set, fetch it, delete orphans
+  fetch_unit
+  for p in "${PROTOCOLS[@]}"; do install_agents "$p"; done
+  configure_endpoints
+  local newfiles; newfiles="$(git ls-files .github; git ls-files --others --exclude-standard .github)"
+  # delete files the receipt had but the new set doesn't
+  local orphan
+  while read -r orphan; do
+    [[ -n "$orphan" ]] && { log "removing orphan ${orphan}"; git rm -f "$orphan" 2>/dev/null || rm -f "$orphan"; }
+  done < <(python3 "$WORKDIR/receipt.py" orphans "$rcpt" $newfiles)
+  write_install_receipt
+  git add -A .github
+  git commit -m "chore: update agentic protocol(s) to ${REF}: ${PROTOCOLS[*]}"
+  git push
+  log "update complete"
+}
 
 parse_args "$@"
 case_dispatch
