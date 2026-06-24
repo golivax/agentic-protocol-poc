@@ -29,3 +29,17 @@ def test_write_receipt_roundtrip(tmp_path):
     receipt.write_receipt(str(out), r)
     assert json.loads(out.read_text()) == r
     assert out.read_text().endswith("\n")
+
+
+def test_orphans_finds_removed_files():
+    old = {"files": {"a": "h1", "b": "h2", "c": "h3"}}
+    assert receipt.orphans(old, ["a", "c"]) == ["b"]
+
+
+def test_drift_detects_local_edits(tmp_path):
+    (tmp_path / "a").write_bytes(b"orig")
+    rec = {"files": {"a": receipt.file_hash(str(tmp_path / "a")), "gone": "x"}}
+    # unchanged → no drift; missing file is not drift
+    assert receipt.drifted(rec, str(tmp_path)) == []
+    (tmp_path / "a").write_bytes(b"edited")
+    assert receipt.drifted(rec, str(tmp_path)) == ["a"]
