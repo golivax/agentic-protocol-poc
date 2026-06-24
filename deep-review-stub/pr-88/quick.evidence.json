@@ -1,0 +1,1 @@
+{"finding": "This PR adds a demo Python module (`demo/stage4c-sample.py`) for the Stage 4c deep-review-stub live walk — it intentionally plants two code quality issues (missing docstrings/type checks and a zero-division guard) to exercise the stub review agents."}
