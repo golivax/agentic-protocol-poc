@@ -36,11 +36,20 @@ jobs:
       - name: Evaluate join
         env:
           STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
+          # The unified join.py DISPATCHES protocol-continue (advance the enclosing
+          # sequence cursor to .next) and protocol-join (bubble a nested failure) — a
+          # repository_dispatch that triggers a workflow, which the default GITHUB_TOKEN
+          # cannot do. It needs the dispatch-capable PAT (held already via STATE_REMOTE).
+          GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
           PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR: ${{ steps.head.outputs.pr }}
           PR_HEAD_SHA: ${{ steps.head.outputs.sha }}
           NODE_PATH: ${{ github.event.client_payload.path }}
+          # client_payload is untrusted at the workflow boundary — pass via env, never
+          # interpolate into the run: block (CLAUDE.md security rule).
+          DISPATCH_PROTOCOL: ${{ github.event.client_payload.protocol }}
+          INSTANCE: ${{ github.event.client_payload.instance }}
         run: |
-          PROTO=".github/agent-factory/protocols/${{ github.event.client_payload.protocol }}/protocol.json"
-          .github/agent-factory/engine/join.py /tmp/state "${{ github.event.client_payload.instance }}" "$PROTO"
+          PROTO=".github/agent-factory/protocols/$DISPATCH_PROTOCOL/protocol.json"
+          .github/agent-factory/engine/join.py /tmp/state "$INSTANCE" "$PROTO"
