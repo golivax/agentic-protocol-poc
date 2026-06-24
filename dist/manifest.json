@@ -1,0 +1,12 @@
+{
+  "source": "golivax/agentic-protocol-poc",
+  "ref": "main",
+  "engine_version": "1.0.0",
+  "min_gh_aw_version": "0.77.0",
+  "engine_dir": ".github/agent-factory/engine",
+  "engine_workflows": [
+    ".github/workflows/agentic-orchestrator.yml",
+    ".github/workflows/agentic-engine.yml",
+    ".github/workflows/protocol-join.yml"
+  ]
+}
