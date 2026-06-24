@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+import json, sys
+with open(sys.argv[1]) as f:
+    evidence = json.load(f)
+finding = (evidence.get("finding") or "")
+if isinstance(finding, str) and finding.strip():
+    print(json.dumps({"check": "finding-present", "pass": True, "feedback": ""}))
+else:
+    print(json.dumps({"check": "finding-present", "pass": False,
+                      "feedback": "evidence must have a non-empty string 'finding'"}))

@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Publish hook: post the leg's finding as a PR comment. ABI: <hook> <evidence.json> <instance-key>."""
+import json, os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "engine"))
+import lib  # noqa: E402
+with open(sys.argv[1]) as f:
+    evidence = json.load(f)
+finding = evidence.get("finding", "") or ""
+pr = os.environ.get("PR", "")
+body = f"**deep-review-stub finding**\n\n{finding}" if finding else "(no finding produced)"
+lib.post_pr_comment(pr, body)
+print(json.dumps({"conclusion": "success", "summary": "Posted finding."}))
