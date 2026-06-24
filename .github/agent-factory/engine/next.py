@@ -365,7 +365,7 @@ def do_override():
 
     if halted.get("reason") == "blocked":
         blocked_phase = halted.get("phase")
-        nxt = lib.next_phase_id(proto_data, blocked_phase)
+        nxt = paths.next_sibling(proto_data, [blocked_phase])
         if not nxt:
             refuse("The blocked gate is the final phase; there is nothing to advance to.",
                    "override: no next phase")
@@ -375,19 +375,21 @@ def do_override():
         inst.setdefault("overrides", []).append(
             {"phase": blocked_phase, "actor": actor, "reason": reason})
         inst.pop("halted", None)
-        # Note: _instance.yaml's head_sha stays the instance-seed head (as on every
-        # phase advance — seed_and_dispatch_phase uses setdefault). The authoritative
-        # head the forced phase runs against is recorded per-phase in its own state
-        # file; we intentionally do not rewrite the cursor head on override.
-        lib.dump_yaml(inf, inst)  # persist before seed_and_dispatch_phase reloads inf
+        # Advance the root cursor to `nxt` and dispatch a path-continue; the
+        # continue dispatch will seed+enter the next phase via the NODE_PATH guard.
+        # Note: _instance.yaml's head_sha stays the instance-seed head (as before —
+        # the authoritative head is recorded per-phase in each phase's own state file).
+        inst["phase"] = nxt
+        lib.dump_yaml(inf, inst)
         note = f"⚠️ {blocked_phase} gate was blocked — overridden by @{actor}; proceeding to {nxt}."
         if reason:
             note += f"\n\n> {reason}"
         lib.post_pr_comment(pr, note)
-        # Advance exactly one phase. seed_and_dispatch_phase reloads _instance.yaml
-        # (keeping the overrides[] record + cleared halted just written), sets the
-        # cursor to nxt, CAS-pushes, and emits that phase's run action.
-        seed_and_dispatch_phase(nxt, "override")
+        lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, nxt)
+        lib.cas_push(DIR, f"{INSTANCE}: gate {blocked_phase} overridden by {actor} → continue {nxt}")
+        lib.dispatch_continue(PID, INSTANCE, path=nxt)
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": f"override:continue:{nxt}"}))
         return
 
     # Not a blocked halt → give a precise message: exhausted vs simply not-halted.
@@ -463,13 +465,24 @@ def do_resolve_gate():
         gdata["gates"] = g
         lib.dump_yaml(sf, gdata)
         lib.set_check_run(cr_name, sha, "completed", "success", "Approved", f"Approved by @{actor}.")
-        nxt = lib.next_phase_id(proto_data, cursor)
+        nxt = paths.next_sibling(proto_data, [cursor])
         if nxt:
             note = f"✅ {cursor} gate approved by @{actor}; proceeding to {nxt}."
             if reason:
                 note += f"\n\n> {reason}"
             lib.post_pr_comment(pr, note)
-            seed_and_dispatch_phase(nxt, "approve")   # sets cursor, pushes, emits run action
+            # Advance the root cursor to `nxt` and dispatch a path-continue; the
+            # continue dispatch will seed+enter the next phase (fan-out, agent, or gate)
+            # via the NODE_PATH guard in next.py. This replaces seed_and_dispatch_phase
+            # so the approve arm is path-based like the rest of the unified engine.
+            inst = lib.load_yaml(inf)
+            inst["phase"] = nxt
+            lib.dump_yaml(inf, inst)
+            lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, nxt)
+            lib.cas_push(DIR, f"{INSTANCE}: gate {cursor} approved by {actor} → continue {nxt}")
+            lib.dispatch_continue(PID, INSTANCE, path=nxt)
+            print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                              "reason": f"gate:approved:{cursor}:continue:{nxt}"}))
         else:
             lib.set_check_run(PID, sha, "completed", "success", "Complete", f"Approved by @{actor}.")
             note = f"✅ {cursor} gate approved by @{actor}; pipeline complete."

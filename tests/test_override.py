@@ -155,9 +155,14 @@ def test_override_advances_one_phase(state_origin, tmp_path):
     env = _env(state_origin, OVERRIDE_ACTOR="alice", OVERRIDE_REASON="ship it")
     out, err, rc = _run(NEXT_PY, [tmp_path / "ovr", inst, PIPELINE_PROTO, "override", "sha-blk"], env)
     assert rc == 0, err
+    # Task 7: override now dispatches protocol-continue(path=review) instead of seeding
+    # the fan-out inline. The emitted action is noop + reason=override:continue:review.
     action = json.loads(out)
-    assert action["action"] == "run-fanout"
-    assert action["phase"] == "review"
+    assert action["action"] == "noop"
+    assert "override:continue:review" in action["reason"]
+    # The dispatch appears in ENGINE_LOCAL stderr
+    assert "event_type=protocol-continue" in err
+    assert "client_payload[path]=review" in err
 
     _clone(state_origin, tmp_path / "verify")
     base = tmp_path / "verify" / PID / inst
@@ -167,9 +172,10 @@ def test_override_advances_one_phase(state_origin, tmp_path):
     assert inf["overrides"] == [{"phase": "preflight", "actor": "alice", "reason": "ship it"}]
     # The blocked gate's verdict is preserved — never rewritten.
     assert yaml.safe_load((base / "preflight.yaml").read_text())["state"] == "failed"
-    # The next phase (review fan-out) was seeded.
+    # Fan-out leg seeding is deferred to the protocol-continue dispatch (NODE_PATH=review
+    # triggers enter_node(["review"]) in the next next.py invocation).
     for b in REVIEW_BRANCHES:
-        assert (base / f"review.{b}.yaml").is_file()
+        assert not (base / f"review.{b}.yaml").is_file()
 
 
 def test_override_announcement_names_actor(state_origin, tmp_path):
