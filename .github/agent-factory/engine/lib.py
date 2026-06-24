@@ -965,6 +965,88 @@ def check_depth(proto):
         raise ValueError(f"protocol depth {d} exceeds max_depth {cap}")
 
 
+def _validate_sequence(states, path_hint):
+    """Walk a list of state dicts (a sequence at `path_hint`) and raise ValueError
+    with an actionable message + the offending node id for each authoring rule:
+
+    Rule 1 — join.of unknown fanout in scope
+        A join's `of` must name a fanout sibling in the SAME sequence.
+        Rationale: join and its fanout are always siblings at the same tree level
+        (deep-fanout: join-analyze.of="analyze" are both in the "deep" sub-pipeline).
+
+    Rule 2 — agent/flat-branch missing workflow
+        Every `kind:agent` state OR flat fanout branch (a branch dict without
+        `states`) must carry a `workflow` key.
+
+    Rule 3 — gate.questions_from nonexistent sibling
+        A gate's `questions_from` (when set) must refer to another state id in
+        the same enclosing sequence.
+    """
+    # Collect ids and fanout ids visible in this sequence for rule 1.
+    sibling_ids = {s.get("id") for s in states if s.get("id")}
+    fanout_ids = {s.get("id") for s in states if s.get("kind") == "fanout"}
+
+    for st in states:
+        sid = st.get("id", "<unnamed>")
+        kind = st.get("kind", "")
+
+        # Rule 2a — top-level agent state missing workflow
+        if kind == "agent" and not st.get("workflow"):
+            raise ValueError(
+                f"agent node '{sid}' missing 'workflow' — add a \"workflow\": \"<name>\" "
+                f"key to the '{sid}' state"
+            )
+
+        # Rule 1 — join references unknown fanout
+        if kind == "join":
+            of = st.get("of", "")
+            if of and of not in fanout_ids:
+                raise ValueError(
+                    f"join '{sid}' references unknown fanout of='{of}' — "
+                    f"make sure a fanout with id='{of}' exists as a sibling of '{sid}'"
+                )
+
+        # Rule 3 — gate.questions_from nonexistent sibling
+        if kind == "gate":
+            qf = st.get("questions_from", "")
+            if qf and qf not in sibling_ids:
+                raise ValueError(
+                    f"gate '{sid}' has questions_from='{qf}' but no sibling state "
+                    f"with id='{qf}' exists — add the source state or correct the name"
+                )
+
+        # Recurse into fanout branches
+        if kind == "fanout":
+            for br in st.get("branches", []):
+                bid = br.get("id", "<unnamed>")
+                if br.get("states"):
+                    # sub-pipeline branch — recurse into its states
+                    _validate_sequence(br["states"], path_hint + [bid])
+                else:
+                    # flat branch (implicit agent) — must have workflow (Rule 2b)
+                    if not br.get("workflow"):
+                        raise ValueError(
+                            f"agent node '{bid}' missing 'workflow' — add a "
+                            f"\"workflow\": \"<name>\" key to the '{bid}' branch"
+                        )
+
+
+def validate_protocol(proto):
+    """Validate a parsed protocol dict for common authoring errors.
+
+    Raises ValueError with an actionable message naming the offending node id
+    for each of the following high-value rules:
+      - join.of references a fanout not in scope (same sequence)
+      - agent node (top-level or flat fanout branch) missing 'workflow'
+      - gate.questions_from names a nonexistent sibling sub-state
+
+    Intentionally does NOT validate: check file existence, schema references,
+    trigger syntax, or anything that requires disk access — those belong in
+    check/run-checks resolution, not here. Keep this rule set small (YAGNI).
+    """
+    _validate_sequence(proto.get("states", []), [])
+
+
 def has_fanout(protocol):
     """True iff the protocol has at least one fan-out state."""
     return any(s.get("kind") == "fanout" for s in protocol.get("states", []))
