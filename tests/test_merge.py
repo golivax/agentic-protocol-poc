@@ -214,3 +214,43 @@ def test_join_mode3_publish_only_finalizes(tmp_path, engine_env):
     assert inst.get("phase") in (None, "review"), (
         f"Expected phase to be None/review (no advance), got {inst.get('phase')!r}"
     )
+
+
+def test_run_merge_hook_provides_PR_env_from_instance(tmp_path, monkeypatch):
+    """Live-found regression: the merge hook posts its combined PR comment via
+    lib.post_pr_comment, which reads PR from the env. In the unified engine the
+    merge runs from next.py in the PLAN job, which does not set PR — so the hook's
+    comment silently no-op'd. run_merge_hook must derive PR from the instance for
+    the hook subprocess. With PR unset in the parent env, the hook must still see it."""
+    import json as _json
+    import pathlib as _pl
+    import sys as _sys
+    _root = _pl.Path(__file__).resolve().parent.parent
+    _sys.path.insert(0, str(_root / ".github/agent-factory/engine"))
+    import lib as _lib
+
+    pdir = tmp_path / "proto"
+    (pdir / "publish").mkdir(parents=True)
+    proto = {
+        "name": "merge-pr-probe",
+        "states": [
+            {"id": "f", "kind": "fanout", "branches": [
+                {"id": "a", "workflow": "a-agent"}]},
+            {"id": "join-f", "kind": "join", "of": "f", "next": "c"},
+            {"id": "c", "kind": "merge", "hook": "echo-pr", "inputs": []},
+        ],
+    }
+    (pdir / "protocol.json").write_text(_json.dumps(proto))
+    hook = pdir / "publish" / "echo-pr"
+    hook.write_text('#!/usr/bin/env python3\n'
+                    'import os, json\n'
+                    'print(json.dumps({"conclusion": "success", '
+                    '"summary": os.environ.get("PR", "MISSING")}))\n')
+    hook.chmod(0o755)
+
+    monkeypatch.delenv("PR", raising=False)
+    res = _lib.run_merge_hook(str(tmp_path / "state"), "merge-pr-probe", "pr-77",
+                              str(pdir / "protocol.json"), proto["states"][2])
+    assert res["summary"] == "77", (
+        f"merge hook must receive PR derived from the instance (pr-77 -> 77): {res}"
+    )

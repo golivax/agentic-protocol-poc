@@ -1224,7 +1224,14 @@ def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
     if kind == "ERR" or not os.access(path, os.X_OK):
         sys.stderr.write(f"[merge] hook unresolved/not-exec: {path}\n")
         return {"conclusion": "neutral", "summary": "merge hook unresolved"}
-    r = subprocess.run([path, workdir, instance], text=True, capture_output=True)
+    # The trusted hook posts its combined PR comment via lib.post_pr_comment, which
+    # reads PR from the env. In the unified engine the merge runs from next.py in the
+    # PLAN job, which does not set PR (pre-4a it ran in protocol-join.yml, which did),
+    # so derive PR from the instance for the hook subprocess. setdefault keeps any
+    # PR the job already provides. (Live-found: combine merge comment silently dropped.)
+    hook_env = dict(os.environ)
+    hook_env.setdefault("PR", instance[len("pr-"):] if instance.startswith("pr-") else instance)
+    r = subprocess.run([path, workdir, instance], text=True, capture_output=True, env=hook_env)
     if r.returncode != 0:
         sys.stderr.write(f"[merge] hook nonzero: {r.stderr}\n")
         return {"conclusion": "neutral", "summary": "merge hook failed"}
