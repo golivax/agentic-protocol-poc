@@ -1,0 +1,1 @@
+{"finding": "Combined: sec — the change is security-neutral; the missing zero-division guard in `divide` is a robustness concern only, with no injection, escalation, or data-exposure risk introduced; perf — the change is performance-neutral, adding only two trivial O(1) arithmetic functions with no loops, I/O, or hot-path impact. The two concerns do not compound each other."}

@@ -1,6 +1,6 @@
 protocol: deep-review-stub
 instance: pr-88
-state: preflight
+state: done
 sub_state: report
 iteration: 1
 gates: {}
