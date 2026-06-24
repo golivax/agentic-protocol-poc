@@ -48,3 +48,16 @@ def test_orchestrator_yml_path_concurrency_and_no_protocol_advance():
     assert "protocol-advance" not in t                  # dropped from on: types
     # protocol-continue is still accepted; protocol-join still owned by protocol-join.yml
     assert "protocol-continue" in t
+
+
+def test_no_workflow_references_retired_mechanisms():
+    for name in ("agentic-engine.yml", "protocol-join.yml", "agentic-orchestrator.yml"):
+        t = _load(name)
+        assert "protocol-advance" not in t, name
+        assert "client_payload.branch" not in t, name
+        assert "client_payload.substate" not in t, name
+
+
+def test_lint_workflow_runs_actionlint():
+    t = _load("lint.yml")
+    assert "actionlint" in t
