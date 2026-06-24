@@ -111,11 +111,12 @@ def test_full_pipeline(tmp_path, engine_env):
         ev = tmp_path / f"{branch}-{substate or 'flat'}.json"
         ev.write_text(json.dumps(evidence_dict))
         e = dict(engine_env)
-        e["BRANCH"] = branch
         e["PR_HEAD_SHA"] = "abc123"
         e["AGENT_RUN_ID"] = "r"
-        if substate:
-            e["SUBSTATE"] = substate
+        # Unified NODE_PATH coordinate: recover-mental-model-stub is single-phase
+        # (fanout `recover`), so the tree path is recover.<branch>[.<substate>].
+        node = "recover." + branch + (f".{substate}" if substate else "")
+        e["NODE_PATH"] = node
         # Each advance.py call needs its own workdir (git-clone into non-empty fails).
         out, err, rc = run_engine(
             "advance.py",
@@ -256,18 +257,18 @@ def test_answer_then_continue_dispatches_finalize(tmp_path, engine_env):
     ev = tmp_path / "draft.json"
     ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "Why?"}]}))
     e = dict(engine_env)
-    e.update(BRANCH="rationale", SUBSTATE="draft", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    e.update(NODE_PATH="recover.rationale.draft", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
     run_engine("advance.py", tmp_path / "dir-adv", "pr-1", PROTO, passv, ev, env=e)
     ea = dict(engine_env)
     ea.update(ANSWER_BODY="/answer q1: yes", ANSWER_ACTOR="al", PR_HEAD_SHA="abc123")
     run_engine("next.py", tmp_path / "dir-answer", "pr-1", PROTO, "answer", env=ea)
 
     ec = dict(engine_env)
-    ec.update(BRANCH="rationale", SUBSTATE="finalize")
+    ec.update(NODE_PATH="recover.rationale.finalize")
     out, err, rc = run_engine("next.py", tmp_path / "dir-cont", "pr-1", PROTO, "continue", env=ec)
     assert rc == 0, err
     action = json.loads(out)
     assert action["action"] == "run-agent", f"expected run-agent, got {action}"
-    assert action.get("substate") == "finalize"
+    assert action.get("path") == "recover.rationale.finalize"
     names = {i["as"] for i in action.get("inputs", [])}
     assert {"answers", "draft"} <= names, f"inputs missing: {names}"

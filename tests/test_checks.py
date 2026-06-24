@@ -99,7 +99,7 @@ from conftest import FIXTURES, PROTOCOLS, run_check
 # Paths
 # ---------------------------------------------------------------------------
 
-GRUMPY_CHECKS = FIXTURES / "single-agent/checks"
+GRUMPY_CHECKS = PROTOCOLS / "code-review/checks"
 SCHEMA_VALID = GRUMPY_CHECKS / "schema-valid.py"
 RUBRIC_COVERAGE = GRUMPY_CHECKS / "rubric-coverage.py"
 TRACES = GRUMPY_CHECKS / "traces-exist-in-diff.py"

@@ -202,7 +202,7 @@ def test_advance_preflight_advance_to_next_sets_review_label(tmp_path):
     # 2. Run advance.py with passing verdicts (conclude hook will return neutral/no-block)
     v = _write_json(tmp_path / "verdicts.json", VERDICTS_PASS)
     ev = _write_json(tmp_path / "evidence.json", EVIDENCE_MIN)
-    env = _crp_env(state_origin, PHASE="preflight", PR="801", PR_HEAD_SHA="sha-adv")
+    env = _crp_env(state_origin, NODE_PATH="preflight", PR="801", PR_HEAD_SHA="sha-adv")
     _, err, rc = _run(ADVANCE_PY, [tmp_path / "adv", instance, CRP_PROTO, v, ev], env)
     assert rc == 0, f"advance.py failed: {err}"
 
@@ -236,7 +236,7 @@ def test_advance_preflight_exhausted_sets_failed_label(tmp_path):
 
     v = _write_json(tmp_path / "verdicts.json", VERDICTS_ITER_FAIL_EXHAUSTED)
     ev = _write_json(tmp_path / "evidence.json", EVIDENCE_MIN)
-    env = _crp_env(state_origin, PHASE="preflight", PR="802", PR_HEAD_SHA="sha-fail")
+    env = _crp_env(state_origin, NODE_PATH="preflight", PR="802", PR_HEAD_SHA="sha-fail")
     _, err, rc = _run(ADVANCE_PY, [tmp_path / "adv", instance, CRP_PROTO, v, ev], env)
     assert rc == 0, f"advance.py failed: {err}"
 
@@ -275,7 +275,7 @@ def test_advance_preflight_blocked_sets_blocked_label(tmp_path):
 
     v = _write_json(tmp_path / "verdicts.json", VERDICTS_BLOCK)
     ev = _write_json(tmp_path / "evidence.json", EVIDENCE_MIN)
-    env = _crp_env(state_origin, PHASE="preflight", PR="803", PR_HEAD_SHA="sha-blk")
+    env = _crp_env(state_origin, NODE_PATH="preflight", PR="803", PR_HEAD_SHA="sha-blk")
     _, err, rc = _run(ADVANCE_PY, [tmp_path / "adv", instance, CRP_PROTO, v, ev], env)
     assert rc == 0, f"advance.py failed: {err}"
 
@@ -303,8 +303,8 @@ def test_advance_preflight_blocked_sets_blocked_label(tmp_path):
 # ---------------------------------------------------------------------------
 
 JOIN_PY = ENGINE / "join.py"
-MG_PROTO = ROOT / "tests/fixtures/fanout-mini/protocol.json"
-MG_PID = "fanout-mini"
+MG_PROTO = ROOT / "tests/fixtures/simple-fanout/protocol.json"
+MG_PID = "simple-fanout"
 
 CRP_REVIEW_BRANCHES = [
     b["id"]
@@ -323,25 +323,25 @@ def _join_env(state_origin, **extra):
     return e
 
 
-def _seed_mg(state_origin, work, instance, grumpy_state, security_state):
-    """Seed fanout-mini per-branch state + _instance.yaml and push."""
+def _seed_mg(state_origin, work, instance, a_state, b_state):
+    """Seed simple-fanout per-branch state (a, b) + _instance.yaml and push."""
     env = _join_env(state_origin)
     _run(LIB_PY, ["state-checkout", str(work)], env)
     base = work / MG_PID / instance
     base.mkdir(parents=True, exist_ok=True)
-    (base / "grumpy.yaml").write_text(json.dumps({
-        "protocol": MG_PID, "instance": instance, "state": grumpy_state,
+    (base / "a.yaml").write_text(json.dumps({
+        "protocol": MG_PID, "instance": instance, "state": a_state,
         "iteration": 1, "gates": {}, "history": [],
     }))
-    (base / "security.yaml").write_text(json.dumps({
-        "protocol": MG_PID, "instance": instance, "state": security_state,
+    (base / "b.yaml").write_text(json.dumps({
+        "protocol": MG_PID, "instance": instance, "state": b_state,
         "iteration": 1, "gates": {}, "history": [],
     }))
     (base / "_instance.yaml").write_text(json.dumps({
         "protocol": MG_PID, "instance": instance, "head_sha": "jsha",
         "joined": False,
     }))
-    _run(LIB_PY, ["cas-push", str(work), f"seed {instance} g={grumpy_state} s={security_state}"], env)
+    _run(LIB_PY, ["cas-push", str(work), f"seed {instance} a={a_state} b={b_state}"], env)
 
 
 def _seed_crp_review_done(state_origin, work, instance):
@@ -455,47 +455,19 @@ def test_join_finalizes_failed_sets_failed_label(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# End-to-end phase-label progression + v1 regression guard (Task 7)
+# End-to-end phase-label progression
 # ---------------------------------------------------------------------------
 
-GRUMPY_PROTO = ROOT / "tests/fixtures/single-agent/protocol.json"
 
-
-def test_phase_advance_relabels(engine_env, tmp_path):
-    """Driving the cursor to the next phase via advance-phase relabels the PR."""
-    # Each run_engine call clones fresh from origin into its own dir.
-    state_dir = tmp_path / "state1"
-    # start → preflight
-    _, err, rc = run_engine("next.py", state_dir, "pr-701", CRP_PROTO,
-                            "start", "cafe1234", env=engine_env)
-    assert rc == 0, err
-    inf = state_dir / "code-review" / "pr-701" / "_instance.yaml"
-    assert read_state_yaml(inf)["phase_label"] == "pre-flight gate"
-
-    # advance-phase to the review fanout (orchestrator would set PHASE=review);
-    # use a fresh clone dir — state_checkout always git-clones, can't reuse.
-    env2 = dict(engine_env)
-    env2["PHASE"] = "review"
-    state_dir2 = tmp_path / "state2"
-    _, err, rc = run_engine("next.py", state_dir2, "pr-701", CRP_PROTO,
-                            "advance-phase", "cafe1234", env=env2)
-    assert rc == 0, err
-    inf2 = state_dir2 / "code-review" / "pr-701" / "_instance.yaml"
-    assert read_state_yaml(inf2)["phase_label"] == "review"
-
-
-def test_v1_grumpy_records_no_phase_label(engine_env, tmp_path):
-    """The single-agent v1 path has no _instance.yaml → no phase label, and the
-    state file it writes carries no phase_label key (byte-identical baseline)."""
-    state_dir = tmp_path / "state"
-    _, err, rc = run_engine("next.py", state_dir, "pr-702", GRUMPY_PROTO,
-                            "start", "f00dface", env=engine_env)
-    assert rc == 0, err
-    # no instance file at all for v1
-    assert not (state_dir / "single-agent" / "pr-702" / "_instance.yaml").exists()
-    # v1 single-agent path: state file lives at <pid>/<instance>.yaml (no subdir)
-    sf = state_dir / "single-agent" / "pr-702.yaml"
-    assert "phase_label" not in read_state_yaml(sf)
+# test_phase_advance_relabels (start→pre-flight label, then advance-phase→review
+# label) was deleted: the start→label half is covered by
+# test_start_seeds_first_phase_label, and the advance-to-review relabel is covered
+# by test_advance_preflight_advance_to_next_sets_review_label (NODE_PATH path).
+#
+# test_v1_grumpy_records_no_phase_label was deleted: it asserted the LEGACY
+# single-agent path created NO _instance.yaml. The unified single-agent path (via
+# enter_root) DOES create _instance.yaml — see test_cap_single_agent, which
+# asserts the new, correct behaviour.
 
 
 # ---------------------------------------------------------------------------

@@ -14,19 +14,19 @@ Bash assertion → pytest mapping
 --------------------------------
 Scenario A: both branches present, grumpy passed iter 1, security failed iter 1 → in-progress:
   1.  check "render: grumpy section present"
-      grep -q "**grumpy**"
+      grep -q "**a**"
       → test_render_grumpy_section_present
   2.  check "render: security section present"
-      grep -q "**security**"
+      grep -q "**b**"
       → test_render_security_section_present
   3.  check "render: passed checklist line"
-      grep -q "iteration 1/3 — all checks passed"
+      grep -q "iteration 1/2 — all checks passed"
       → test_render_passed_checklist_line
   4.  check "render: failed checklist line w/ fb"
-      grep -q "iteration 1/3 — sec: bad anchor"
+      grep -q "iteration 1/2 — sec: bad anchor"
       → test_render_failed_checklist_line_with_feedback
   5.  check "render: tree/ link, not blob"
-      grep -q "tree/agentic-state/fanout-mini/pr-80" and not grep "blob"
+      grep -q "tree/agentic-state/simple-fanout/pr-80" and not grep "blob"
       → test_render_tree_link_not_blob
   6.  check "render: link has no .yaml suffix"
       not grep -q "pr-80.yaml"
@@ -67,7 +67,7 @@ sys.path.insert(0, str(ENGINE))
 import lib  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROTO = ROOT / "tests/fixtures/fanout-mini/protocol.json"
+PROTO = ROOT / "tests/fixtures/simple-fanout/protocol.json"
 
 # The renderer reads GITHUB_REPOSITORY from the environment to build state links.
 os.environ.setdefault("GITHUB_REPOSITORY", "golivax/agentic-protocol-poc")
@@ -82,15 +82,15 @@ def seed_branch(base_dir, instance, branch, state, history):
 
     Mirrors the bash seed_branch():
         jq -n --arg inst $inst --arg st $st --argjson h $hist \
-          '{protocol:"fanout-mini", instance:$inst, state:$st, iteration:1, gates:{}, history:$h}' \
+          '{protocol:"simple-fanout", instance:$inst, state:$st, iteration:1, gates:{}, history:$h}' \
           > "$d/fanout-mini/$inst/$b.yaml"
 
     JSON is valid YAML, so we write JSON directly (identical to what the bash does).
     """
-    d = pathlib.Path(base_dir) / "fanout-mini" / instance
+    d = pathlib.Path(base_dir) / "simple-fanout" / instance
     d.mkdir(parents=True, exist_ok=True)
     data = {
-        "protocol": "fanout-mini",
+        "protocol": "simple-fanout",
         "instance": instance,
         "state": state,
         "iteration": 1,
@@ -103,7 +103,7 @@ def seed_branch(base_dir, instance, branch, state, history):
 def render(base_dir, instance):
     """Call render_fanout_status_body and return the body string."""
     return lib.render_fanout_status_body(
-        str(base_dir), "fanout-mini", instance, str(PROTO)
+        str(base_dir), "simple-fanout", instance, str(PROTO)
     )
 
 
@@ -114,34 +114,34 @@ def render(base_dir, instance):
 @pytest.fixture(scope="module")
 def scenario_a(tmp_path_factory):
     d = tmp_path_factory.mktemp("sc_a")
-    seed_branch(d, "pr-80", "grumpy",   "review", [{"iteration": 1, "feedback": ""}])
-    seed_branch(d, "pr-80", "security", "review", [{"iteration": 1, "feedback": "sec: bad anchor"}])
+    seed_branch(d, "pr-80", "a",   "review", [{"iteration": 1, "feedback": ""}])
+    seed_branch(d, "pr-80", "b", "review", [{"iteration": 1, "feedback": "sec: bad anchor"}])
     return render(d, "pr-80")
 
 
 def test_render_grumpy_section_present(scenario_a):
-    """Bash assertion 1: grumpy section present — grep "**grumpy**"."""
-    assert "**grumpy**" in scenario_a
+    """Bash assertion 1: grumpy section present — grep "**a**"."""
+    assert "**a**" in scenario_a
 
 
 def test_render_security_section_present(scenario_a):
-    """Bash assertion 2: security section present — grep "**security**"."""
-    assert "**security**" in scenario_a
+    """Bash assertion 2: security section present — grep "**b**"."""
+    assert "**b**" in scenario_a
 
 
 def test_render_passed_checklist_line(scenario_a):
-    """Bash assertion 3: passed checklist line — "iteration 1/3 — all checks passed"."""
-    assert "iteration 1/3 — all checks passed" in scenario_a
+    """Bash assertion 3: passed checklist line — "iteration 1/2 — all checks passed"."""
+    assert "iteration 1/2 — all checks passed" in scenario_a
 
 
 def test_render_failed_checklist_line_with_feedback(scenario_a):
-    """Bash assertion 4: failed checklist line with feedback — "iteration 1/3 — sec: bad anchor"."""
-    assert "iteration 1/3 — sec: bad anchor" in scenario_a
+    """Bash assertion 4: failed checklist line with feedback — "iteration 1/2 — sec: bad anchor"."""
+    assert "iteration 1/2 — sec: bad anchor" in scenario_a
 
 
 def test_render_tree_link_not_blob(scenario_a):
     """Bash assertion 5: tree/ link present and no blob link."""
-    assert "tree/agentic-state/fanout-mini/pr-80" in scenario_a
+    assert "tree/agentic-state/simple-fanout/pr-80" in scenario_a
     assert "blob" not in scenario_a
 
 
@@ -162,8 +162,8 @@ def test_render_in_progress_headline(scenario_a):
 @pytest.fixture(scope="module")
 def scenario_b(tmp_path_factory):
     d = tmp_path_factory.mktemp("sc_b")
-    seed_branch(d, "pr-81", "grumpy",   "done", [{"iteration": 1, "feedback": ""}])
-    seed_branch(d, "pr-81", "security", "done", [{"iteration": 1, "feedback": ""}])
+    seed_branch(d, "pr-81", "a",   "done", [{"iteration": 1, "feedback": ""}])
+    seed_branch(d, "pr-81", "b", "done", [{"iteration": 1, "feedback": ""}])
     return render(d, "pr-81")
 
 
@@ -179,8 +179,8 @@ def test_render_complete_headline(scenario_b):
 @pytest.fixture(scope="module")
 def scenario_c(tmp_path_factory):
     d = tmp_path_factory.mktemp("sc_c")
-    seed_branch(d, "pr-82", "grumpy",   "done",   [{"iteration": 1, "feedback": ""}])
-    seed_branch(d, "pr-82", "security", "failed", [{"iteration": 3, "feedback": "exhausted"}])
+    seed_branch(d, "pr-82", "a",   "done",   [{"iteration": 1, "feedback": ""}])
+    seed_branch(d, "pr-82", "b", "failed", [{"iteration": 3, "feedback": "exhausted"}])
     return render(d, "pr-82")
 
 
@@ -196,7 +196,7 @@ def test_render_incomplete_headline(scenario_c):
 @pytest.fixture(scope="module")
 def scenario_d(tmp_path_factory):
     d = tmp_path_factory.mktemp("sc_d")
-    seed_branch(d, "pr-83", "grumpy", "review", [])  # empty history
+    seed_branch(d, "pr-83", "a", "review", [])  # empty history
     # security branch file is intentionally NOT written
     return render(d, "pr-83")
 

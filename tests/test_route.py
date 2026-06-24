@@ -153,8 +153,8 @@ REAL_PROTOCOLS = str(ROOT / ".github/agent-factory/protocols")
 
 
 def test_real_protocols_grumpy_comment_no_longer_routes():
-    # fanout-demo protocol was moved to tests/fixtures/fanout-mini; it is no
-    # longer a shipped protocol, so /grumpy has no route → skip.
+    # The standalone fan-out demo protocol is not a shipped protocol, so /grumpy
+    # has no route → skip.
     r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/grumpy", is_pr_comment=True)
     assert r["skip"] is True
 
@@ -175,7 +175,7 @@ def test_real_protocols_review_comment_routes_to_pipeline():
 
 
 def test_real_protocols_v1_grumpy_comment_no_longer_routes():
-    # single-demo protocol was moved to tests/fixtures/single-agent; it is no
-    # longer a shipped protocol, so /v1-grumpy has no route → skip.
+    # The standalone single-agent demo protocol is not a shipped protocol, so
+    # /v1-grumpy has no route → skip.
     r = lib.route(REAL_PROTOCOLS, "issue_comment", "", "/v1-grumpy", is_pr_comment=True)
     assert r["skip"] is True

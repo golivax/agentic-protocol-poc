@@ -23,13 +23,12 @@ INSTANCE = sys.argv[2]
 PROTO = sys.argv[3]
 COMMAND = sys.argv[4]
 HEAD_SHA = sys.argv[5] if len(sys.argv) > 5 else ""
-BRANCH = os.environ.get("BRANCH", "")
-PHASE = os.environ.get("PHASE", "")
-SUBSTATE = os.environ.get("SUBSTATE", "")
 # NODE_PATH (NOT PATH — that is the OS executable search path) is the dot-joined
-# tree-navigation path of a `continue` dispatch. When it resolves to a fanout
-# node, the planner emits that fanout's children matrix (a nested fanout is
-# dispatched as its own engine invocation). Empty → legacy flat/leaf resolution.
+# tree-navigation path of a `continue` dispatch. It is the SOLE coordinate of the
+# unified engine: when it resolves to a fanout node the planner emits that fanout's
+# children matrix (a nested fanout is dispatched as its own engine invocation), to
+# an agent it seeds + emits run-agent, to a gate it opens the gate, to a merge it
+# runs the reduce hook. start/reset ignore it (they route to enter_root).
 NODE_PATH = os.environ.get("NODE_PATH", "")
 
 with open(PROTO) as f:
@@ -58,9 +57,8 @@ lib.state_checkout(DIR)
 def _fanout_action(proto, path, branches):
     """Build the run-fanout action dict for the fanout at `path`. Single-phase
     keeps reason='fanout' with NO phase key; multi-phase uses reason='phase:<id>'
-    and adds the phase key — byte-identical to the legacy start_fanout /
-    seed_and_dispatch_phase emits. `branches` stays the authoritative key the GHA
-    layer reads; `legs` is emitted alongside as the path-aware companion for
+    and adds the phase key. `branches` stays the authoritative key the GHA layer
+    reads; `legs` is emitted alongside as the path-aware companion for
     nested-fanout matrix wiring."""
     multi = lib.is_multiphase(proto)
     act = {"action": "run-fanout", "iteration": 1, "feedback": "",
@@ -80,12 +78,12 @@ def enter_node(proto, path, command, emit=True):
     """Recursive sequencer: seed the node at the tree-navigation `path` and, when
     `emit`, print its action JSON (run-agent / run-fanout / gate-open noop).
 
-    Generalizes start_fanout + seed_and_dispatch_phase + seed_branch into one
-    walk. INSTANCE-file / phase-label / cas_push side-effects stay with the
-    callers (start_fanout, seed_and_dispatch_phase) — this function only seeds the
-    node's own state file(s) and emits. Every file call routes the tree path
-    through lib.state_path (single-phase drops the leading top fanout id), so
-    depth-<=3 files stay byte-identical to the legacy seed_branch layout.
+    The recursive sequencer for the unified engine: enter_root and the NODE_PATH
+    `continue` arms call it. INSTANCE-file / phase-label / cas_push side-effects
+    stay with those callers — this function only seeds the node's own state
+    file(s) and emits. Every file call routes the tree path through lib.state_path
+    (single-phase drops the leading top fanout id), so depth-<=3 files keep their
+    historical layout.
 
     `path` is rooted at the top phase/fanout id; e.g. the top fanout enters as
     [fanout_id]. `command` is carried for parity with the recursive callers."""
@@ -166,35 +164,11 @@ def _seed_child(proto, path, cfg):
     return {"id": path[-1], "workflow": cfg.get("workflow"), "iteration": 1, "feedback": ""}
 
 
-def is_fanout():
-    for s in proto_data.get("states", []):
-        if s.get("kind") == "fanout":
-            return True
-    return False
-
-
-def is_pure_agent_root():
-    """True when the protocol is a single-agent root sequence with no legacy
-    `kind:deterministic` publish state.  These protocols route through enter_root
-    (which seeds _instance.yaml) instead of the legacy single-agent path.
-    The guard preserves byte-identity for legacy fixtures that have a
-    `kind:deterministic` publish state after the agent state."""
-    states = proto_data.get("states", [])
-    if not states:
-        return False
-    # Must have at least one agent state and NO deterministic state.
-    for s in states:
-        if s.get("kind") == "deterministic":
-            return False
-    return any(s.get("kind") == "agent" for s in states)
-
-
 def _reset_wipe(inf, inst_dir, prev, pr):
     """Wipe all prior-run state files for this instance and finalize any
-    superseded status comment. Called on both `start`/`reset` entry and on
-    the `reset_instance=True` arm of seed_and_dispatch_phase (multi-phase
-    advance-to-first). A fresh run with no prior files is safe (no-op when
-    inst_dir is empty or doesn't exist yet)."""
+    superseded status comment. Called on `start`/`reset` entry (via enter_root).
+    A fresh run with no prior files is safe (no-op when inst_dir is empty or
+    doesn't exist yet)."""
     # Abandon the prior run's status comment so this run gets a FRESH one.
     # Render its final state FIRST (the files still exist), edit the old
     # comment once with a "superseded" banner above that frozen snapshot,
@@ -220,8 +194,7 @@ def _reset_wipe(inf, inst_dir, prev, pr):
 def _emit_for_node(path, branches):
     """Emit the action JSON for the node at `path`. `branches` is the return
     value from enter_node (emit=False) — the branch emit-dicts for fanout nodes,
-    None for agent/gate. The action shape is byte-identical to the legacy
-    start_fanout / seed_and_dispatch_phase emits for all existing node kinds."""
+    None for agent/gate."""
     kind = paths.node_kind(proto_data, path)
     if kind == "fanout":
         print(json.dumps(_fanout_action(proto_data, path, branches)))
@@ -241,12 +214,10 @@ def _emit_for_node(path, branches):
 
 
 def enter_root(command, head_sha):
-    """Unified entry for start/reset with no NODE_PATH: seed the FIRST top-level
-    node via the recursive sequencer, create _instance.yaml, apply labels,
-    CAS-push, and emit the node's action. Replaces the two old guards:
-      - multi-phase start/reset (→ seed_and_dispatch_phase with reset_instance=True)
-      - single-phase fanout start/reset (→ start_fanout)
-    Behavior-preserving: same action shapes, same file layout, same label calls."""
+    """Unified entry for start/reset: seed the FIRST top-level node via the
+    recursive sequencer, create _instance.yaml, apply labels, CAS-push, and emit
+    the node's action. The single entry point for EVERY protocol shape
+    (single-agent, single-phase fanout, multi-phase)."""
     first = paths.root_ids(proto_data)[0]
     pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
     inf = lib.instance_file(DIR, PID, INSTANCE)
@@ -261,105 +232,6 @@ def enter_root(command, head_sha):
     branches = enter_node(proto_data, [first], command, emit=False)
     lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter root phase {first} ({command})")
     _emit_for_node([first], branches)
-
-
-def start_fanout():
-    fstate = None
-    for s in proto_data.get("states", []):
-        if s.get("kind") == "fanout":
-            fstate = s["id"]
-            break
-
-    # Delegate seeding to the recursive sequencer (top fanout → tree path
-    # [fstate]); emit=False so we keep the legacy seed→instance→label→cas_push→emit
-    # ordering. enter_node returns the branch emit-dicts for the deferred emit.
-    branches = enter_node(proto_data, [fstate], COMMAND, emit=False)
-
-    inf = lib.instance_file(DIR, PID, INSTANCE)
-    os.makedirs(os.path.dirname(inf), exist_ok=True)
-    lib.dump_yaml(inf, {
-        "protocol": PID, "instance": INSTANCE, "head_sha": HEAD_SHA, "joined": False,
-    })
-
-    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
-    lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, fstate)
-    lib.cas_push(DIR, f"{PID}/{INSTANCE}: fan-out review ({COMMAND})")
-    print(json.dumps(_fanout_action(proto_data, [fstate], branches)))
-
-
-def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
-    """Multi-phase: seed the named phase's state + the instance cursor, push,
-    and emit the phase's run action. Used for the first phase (start/reset) and
-    for each subsequent phase (advance-phase).
-
-    reset_instance=True is the RESTART path (a fresh start/reset re-entering the
-    first phase). A restart must wipe the WHOLE prior run, not just re-seed phase
-    one: stale later-phase leg files (e.g. review.grumpy.yaml) and instance
-    markers (joined / overrides / halted) would otherwise survive and keep
-    rendering in the status comment, and head_sha would stay pinned to the old
-    commit. We delete every state file under the instance dir and rebuild
-    _instance.yaml from scratch. The prior run's status comment is ABANDONED, not
-    reused: it gets one final "superseded" edit (banner above its frozen state)
-    and then status_comment_id is dropped, so this run creates a NEW comment —
-    one edited-in-place comment per run reads far more clearly than a single
-    comment rewritten across restarts. On a phase advance / override
-    (reset_instance=False) earlier phases must be preserved, so we mutate in
-    place exactly as before."""
-    phase_state = lib.state_by_id(proto_data, phase_id)
-    if phase_state is None:
-        sys.stderr.write(f"[next] unknown phase '{phase_id}' in protocol\n")
-        sys.exit(1)
-    kind = phase_state.get("kind")
-    inf = lib.instance_file(DIR, PID, INSTANCE)
-    inst_dir = os.path.dirname(inf)
-    os.makedirs(inst_dir, exist_ok=True)
-
-    prev = lib.load_yaml(inf) if os.path.isfile(inf) else {}
-    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
-    if reset_instance:
-        _reset_wipe(inf, inst_dir, prev, pr)
-        inst = {}
-    else:
-        inst = prev
-
-    inst.setdefault("protocol", PID)
-    inst.setdefault("instance", INSTANCE)
-    inst["phase"] = phase_id
-    if HEAD_SHA:
-        # Restart refreshes the head to the new commit; an in-pipeline advance
-        # keeps the instance-seed head (per-phase files carry their own head_sha).
-        if reset_instance:
-            inst["head_sha"] = HEAD_SHA
-        else:
-            inst.setdefault("head_sha", HEAD_SHA)
-    inst.setdefault("joined", False)
-    lib.dump_yaml(inf, inst)
-
-    # Sync the PR's phase label to this phase (removes setup / prior label).
-    lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, phase_id)
-
-    # All three arms delegate seeding to enter_node (emit=False), keep the
-    # phase-specific cas_push message here, then emit — preserving the legacy
-    # seed→cas_push→emit ordering exactly. The tree path of a top-level phase is
-    # simply [phase_id].
-    if kind == "fanout":
-        # enter_node returns the branch emit-dicts (emit deferred to after cas_push).
-        branches = enter_node(proto_data, [phase_id], command, emit=False)
-        lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter fan-out phase {phase_id} ({command})")
-        print(json.dumps(_fanout_action(proto_data, [phase_id], branches)))
-    elif kind == "gate":
-        # cursor already written above; enter_node's gate arm calls open_gate
-        # (seeds the gate file + check-run + status comment). No agent dispatch —
-        # the run ends and waits for a human.
-        enter_node(proto_data, [phase_id], command, emit=False)
-        lib.cas_push(DIR, f"{PID}/{INSTANCE}: open gate {phase_id} ({command})")
-        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
-                          "reason": f"gate-open:{phase_id}"}))
-    else:
-        enter_node(proto_data, [phase_id], command, emit=False)
-        lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter agent phase {phase_id} ({command})")
-        print(json.dumps({"action": "run-agent", "iteration": 1, "feedback": "",
-                          "reason": f"phase:{phase_id}", "phase": phase_id}))
 
 
 def do_override():
@@ -494,9 +366,9 @@ def do_resolve_gate():
                 note += f"\n\n> {reason}"
             lib.post_pr_comment(pr, note)
             # Advance the root cursor to `nxt` and dispatch a path-continue; the
-            # continue dispatch will seed+enter the next phase (fan-out, agent, or gate)
-            # via the NODE_PATH guard in next.py. This replaces seed_and_dispatch_phase
-            # so the approve arm is path-based like the rest of the unified engine.
+            # continue dispatch seeds+enters the next phase (fan-out, agent, or gate)
+            # via the NODE_PATH guard in next.py — path-based like the rest of the
+            # unified engine.
             inst = lib.load_yaml(inf)
             inst["phase"] = nxt
             lib.dump_yaml(inf, inst)
@@ -557,16 +429,6 @@ def do_resolve_gate():
         return
 
     refuse(f"Unknown gate decision '{decision}'.", "gate: unknown decision")
-
-
-def _gate_phase(proto):
-    """Phase qualifier for sub-pipeline gate/cursor state files: the fanout phase
-    id in a multi-phase protocol, else None (single-phase → unqualified paths).
-    Kept for the do_resolve_gate / do_override paths that still use legacy coords."""
-    if lib.is_multiphase(proto):
-        fo = lib._fanout_state(proto)
-        return fo["id"] if fo else None
-    return None
 
 
 def _find_open_gate(proto, want=""):
@@ -660,10 +522,8 @@ def do_answer():
     # id in multi-phase) — derived from enclosing_fanout_id filtered by is_multiphase.
     ph = (paths.enclosing_fanout_id(proto_data, gate_path)
           if lib.is_multiphase(proto_data) else None)
-    # life is the leg's in-flight state value: the enclosing fanout id. This replaces
-    # the old hardcoded `lib._fanout_state(proto_data)["id"]` (which was already fixed
-    # in the prior task) and the old "_gate_phase"-based approach. For depth <=3 the
-    # value is identical: enclosing_fanout_id(["review","B","clarify"]) == "review".
+    # life is the leg's in-flight state value: the enclosing fanout id.
+    # enclosing_fanout_id(["review","B","clarify"]) == "review".
     life = paths.enclosing_fanout_id(proto_data, gate_path)
 
     # File paths all derived from the gate/branch tree paths via lib.state_path so
@@ -788,39 +648,23 @@ if COMMAND == "resolve-gate":
     do_resolve_gate()
     sys.exit(0)
 
-if COMMAND in ("start", "reset") and not NODE_PATH and not BRANCH and not PHASE:
-    # Unified entry for multi-phase protocols, single-phase fanout protocols, and
-    # pure single-agent root protocols (no kind:deterministic legacy publish state).
-    # Legacy single-agent fixtures with a kind:deterministic publish state keep the
-    # old path (no _instance.yaml) for byte-identical backwards compatibility.
-    if lib.is_multiphase(proto_data) or is_fanout() or is_pure_agent_root():
-        enter_root(COMMAND, HEAD_SHA)
-        sys.exit(0)
-
-if lib.is_multiphase(proto_data) and not PHASE and not BRANCH and not NODE_PATH:
-    # Multi-phase protocol, unbranched/unphased entry for non-start/reset commands.
-    # NODE_PATH is excluded: a `continue` with NODE_PATH routes to the NODE_PATH
-    # fanout/agent/gate arm below and does not need PHASE.
-    sys.stderr.write(f"[next] multi-phase '{COMMAND}' needs a PHASE\n")
-    sys.exit(2)
-
-if lib.is_multiphase(proto_data) and PHASE and COMMAND == "advance-phase":
-    # Phase transition (advance.py already set the cursor to PHASE) → seed+dispatch it.
-    seed_and_dispatch_phase(PHASE, COMMAND)
+if COMMAND in ("start", "reset"):
+    # Unified entry for EVERY protocol shape (single-agent, single-phase fanout,
+    # multi-phase). enter_root seeds the first top-level node via the recursive
+    # sequencer, creates _instance.yaml, applies labels, CAS-pushes, and emits.
+    enter_root(COMMAND, HEAD_SHA)
     sys.exit(0)
 
 # A `continue` whose tree path resolves to a fanout node dispatches that fanout's
-# children matrix (nested fanouts are entered as their own engine invocation).
-# Sits before the legacy BRANCH/PHASE/SUBSTATE single-agent resolution so the
-# flat/leaf continue path stays untouched.
+# children matrix (nested fanouts are entered as their own engine invocation). A
+# continue MUST carry NODE_PATH — it is the sole coordinate of the unified engine.
 if COMMAND == "continue" and NODE_PATH:
     _p = NODE_PATH.split(".")
     _kind = paths.node_kind(proto_data, _p)
     if _kind == "fanout":
-        # Match the established seed(emit=False)→cas_push→emit ordering of
-        # start_fanout / seed_and_dispatch_phase: enter_node seeds the leg files +
-        # nested __join.yaml marker locally, cas_push publishes them to origin so
-        # the matrix legs (which re-checkout state) find them, THEN emit.
+        # The established seed(emit=False)→cas_push→emit ordering: enter_node seeds
+        # the leg files + nested __join.yaml marker locally, cas_push publishes them
+        # to origin so the matrix legs (which re-checkout state) find them, THEN emit.
         branches = enter_node(proto_data, _p, "continue", emit=False)
         lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter nested fanout {NODE_PATH} (continue)")
         print(json.dumps(_fanout_action(proto_data, _p, branches)))
@@ -876,120 +720,12 @@ if COMMAND == "continue" and NODE_PATH:
                           "reason": f"merge:{_p[-1]}"}))
         sys.exit(0)
 
-if not BRANCH and is_fanout() and not PHASE:
-    # start/reset were handled by enter_root above; only error-guard remains.
-    if COMMAND == "continue":
-        sys.stderr.write("[next] fanout 'continue' requires a BRANCH\n")
-        sys.exit(2)
-    else:
-        sys.stderr.write(f"[next] unknown command: {COMMAND}\n")
-        sys.exit(2)
-
-# The "agent unit" (its id + max_iterations + life_state) comes from
-# lib.resolve_agent_unit: PHASE-first → BRANCH → single-agent.
-# Single-agent path is the regression-guarded baseline and must stay byte-for-byte
-# identical. Error messages are mapped back to the original next.py / engine prefixes.
-try:
-    _unit = lib.resolve_agent_unit(proto_data, PHASE, BRANCH, SUBSTATE)
-except ValueError as e:
-    _msg = str(e)
-    if _msg.startswith("no phase") or _msg.startswith("PHASE=") or "in phase '" in _msg:
-        sys.stderr.write(f"[next] {_msg}\n")
-    else:
-        sys.stderr.write(f"[engine] {_msg}\n")
-    sys.exit(1)
-AGENT_STATE = _unit["agent_state"]
-MAX = _unit["max_iterations"]
-LIFE_STATE = _unit["life_state"]
-
-if MAX is None:
-    sys.stderr.write(f"[engine] agent unit '{AGENT_STATE}' has no max_iterations\n")
-    sys.exit(1)
-
-# BRANCH/PHASE empty → single-agent path (branch=None, phase=None)
-SF = lib.state_file(DIR, PID, INSTANCE,
-                    branch=(BRANCH if BRANCH else None),
-                    phase=(PHASE if PHASE else None),
-                    substate=(SUBSTATE if SUBSTATE else None))
-
-
-def write_fresh_state():
-    os.makedirs(os.path.dirname(SF), exist_ok=True)
-    lib.dump_yaml(SF, {
-        "protocol": PID,
-        "instance": INSTANCE,
-        "state": LIFE_STATE,
-        "iteration": 1,
-        "gates": {},
-        "head_sha": HEAD_SHA,
-        "history": [],
-    })
-
-
-def emit_run_agent(iteration, feedback, reason):
-    action = {"action": "run-agent", "iteration": iteration, "feedback": feedback, "reason": reason}
-    if PHASE:
-        action["phase"] = PHASE
-    if SUBSTATE:
-        action["substate"] = SUBSTATE
-    declared = lib.state_inputs(proto_data, AGENT_STATE)
-    if declared:
-        action["inputs"] = lib.resolve_inputs(
-            proto_data, DIR, PID, INSTANCE,
-            consuming_branch=(BRANCH or None), consuming_phase=(PHASE or None),
-            inputs=declared)
-    print(json.dumps(action))
-
-
-def emit_halt(reason):
-    print(json.dumps({"action": "halt", "iteration": 0, "feedback": "", "reason": reason}))
-
-
-def start_fresh():
-    write_fresh_state()
-    lib.cas_push(DIR, f"{PID}/{INSTANCE}: fresh review ({COMMAND})")
-    emit_run_agent(1, "", COMMAND)
-
-
-# Determine the instance lifecycle from the (optional) state file. Defensive reads
-# (// fallbacks) keep a malformed/partial state file from aborting under set -e.
-# Literal equality, NOT a case pattern: a case glob would treat metacharacters in
-# LIFE_STATE (if a future protocol used any) as wildcards.
-LIFECYCLE = "absent"
-ITER = 0
-
-if os.path.isfile(SF):
-    sf_data = lib.load_yaml(SF)
-    STATE = sf_data.get("state") or ""
-    ITER = sf_data.get("iteration") or 0
-    if STATE == LIFE_STATE:
-        # iterations 1..MAX are all valid attempts; > MAX means the loop is spent.
-        if ITER > MAX:
-            LIFECYCLE = "terminal"
-        else:
-            LIFECYCLE = "active"
-    else:
-        LIFECYCLE = "terminal"  # done / failed / any non-agent terminal
-
-if COMMAND == "reset":
-    start_fresh()
-elif COMMAND == "start":
-    if LIFECYCLE in ("absent", "terminal"):
-        start_fresh()
-    else:  # active
-        emit_halt(f"review already in flight at iteration {ITER}")
-elif COMMAND == "continue":
-    if LIFECYCLE == "absent":
-        start_fresh()
-    elif LIFECYCLE == "active":
-        sf_data = lib.load_yaml(SF)
-        history = sf_data.get("history") or []
-        FB = ""
-        if history:
-            FB = history[-1].get("feedback") or ""
-        emit_run_agent(ITER, FB, "resume")
-    else:  # terminal
-        emit_halt("instance is terminal")
-else:
-    sys.stderr.write(f"[next] unknown command: {COMMAND}\n")
+# A `continue` reaching here carried no resolvable NODE_PATH coordinate. The
+# unified engine has a single coordinate (NODE_PATH); start/reset routed to
+# enter_root above and a continue must name the node it resumes.
+if COMMAND == "continue":
+    sys.stderr.write("[next] 'continue' requires a NODE_PATH\n")
     sys.exit(2)
+
+sys.stderr.write(f"[next] unknown command: {COMMAND}\n")
+sys.exit(2)

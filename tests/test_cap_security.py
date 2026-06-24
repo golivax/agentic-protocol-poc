@@ -37,10 +37,14 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
 FIXTURES = ROOT / "tests/fixtures"
+PROTOCOLS = ROOT / ".github/agent-factory/protocols"
 
 # Protocol that has a subpipeline so NODE_PATH (depth-3) resolves normally,
-# used by traversal tests to confirm well-formed paths still work.
-SUBPIPELINE_PROTO = FIXTURES / "subpipeline-mini/protocol.json"
+# used by traversal tests to confirm well-formed paths still work. The kept
+# recover-mental-model-stub has the right shape: a flat `summary` leg + a
+# sub-pipeline `rationale` leg whose sub-states are draft → clarify(gate) → finalize.
+SUBPIPELINE_PROTO = PROTOCOLS / "recover-mental-model-stub/protocol.json"
+SUBPIPELINE_PID = "recover-mental-model-stub"
 # Single-agent protocol (its `name` field is "single-agent"). It has NO data
 # gate, so do_answer early-returns at _find_open_gate → None: the injection
 # tests that use it prove the do_answer PATH is inert (no exec before/around the
@@ -120,7 +124,9 @@ def _all_files_under(directory):
 
 
 def _seed_open_gate(tmp_path, engine_env, proto=SUBPIPELINE_PROTO):
-    """Drive start → branch B draft done → clarify gate open (exactly as gate_data tests)."""
+    """Drive start → rationale.draft done → clarify gate open via the unified
+    NODE_PATH coordinate (recover-mental-model-stub: rationale is the sub-pipeline
+    leg, draft → clarify(gate) → finalize)."""
     _run_next(tmp_path / "seed-dir", "pr-1", proto, "start", engine_env,
               extra_env={"PR_HEAD_SHA": "abc123"})
     v = tmp_path / "v-pass.json"
@@ -130,7 +136,7 @@ def _seed_open_gate(tmp_path, engine_env, proto=SUBPIPELINE_PROTO):
     ev = tmp_path / "draft.json"
     ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "Which DB?"}]}))
     e = dict(engine_env)
-    e.update({"BRANCH": "B", "SUBSTATE": "draft", "PR_HEAD_SHA": "abc123", "AGENT_RUN_ID": "r1"})
+    e.update({"NODE_PATH": "recover.rationale.draft", "PR_HEAD_SHA": "abc123", "AGENT_RUN_ID": "r1"})
     _run_advance(tmp_path / "adv-dir", "pr-1", proto, v, ev, engine_env, extra_env=e)
 
 
@@ -288,7 +294,7 @@ class TestAnswerBodyInjection:
 
         # Value must be stored verbatim (the stored value is the part after "q1: ")
         clone = _clone(engine_env["STATE_REMOTE"], tmp_path, "ans")
-        answers_file = clone / "subpipeline-mini/pr-1/B.clarify.answers.json"
+        answers_file = clone / SUBPIPELINE_PID / "pr-1/rationale.clarify.answers.json"
         assert answers_file.exists(), "answers file not written"
         doc = json.loads(answers_file.read_text())
         stored = doc.get("answers", {}).get("q1", "")

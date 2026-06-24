@@ -86,7 +86,7 @@ def test_block_halt_stamps_halted_marker(state_origin, tmp_path):
     seed_preflight(state_origin, tmp_path / "seed", inst, state="preflight", iteration=1, head_sha="sha-block")
     v = write_json(tmp_path, "verdicts.json", VERDICTS_BLOCK)
     ev = write_json(tmp_path, "evidence.json", EVIDENCE_MIN)
-    env = _env(state_origin, PHASE="preflight", PR="1", PR_HEAD_SHA="sha-block")
+    env = _env(state_origin, NODE_PATH="preflight", PR="1", PR_HEAD_SHA="sha-block")
     _run(ADVANCE_PY, [tmp_path / "adv", inst, PIPELINE_PROTO, v, ev], env)
 
     _clone(state_origin, tmp_path / "verify")
@@ -104,7 +104,7 @@ def test_block_posts_oneoff_notice_and_updates_comment(state_origin, tmp_path):
     seed_preflight(state_origin, tmp_path / "seed", inst, state="preflight", iteration=1, head_sha="sha-blk")
     v = write_json(tmp_path, "verdicts.json", VERDICTS_BLOCK)
     ev = write_json(tmp_path, "evidence.json", EVIDENCE_MIN)
-    env = _env(state_origin, PHASE="preflight", PR="3", PR_HEAD_SHA="sha-blk")
+    env = _env(state_origin, NODE_PATH="preflight", PR="3", PR_HEAD_SHA="sha-blk")
     _, err, _ = _run(ADVANCE_PY, [tmp_path / "adv", inst, PIPELINE_PROTO, v, ev], env)
 
     # one-off timeline notice naming the gate + the override escape hatch
@@ -120,7 +120,7 @@ def test_exhaustion_writes_no_halted_marker(state_origin, tmp_path):
     seed_preflight(state_origin, tmp_path / "seed", inst, state="preflight", iteration=2, head_sha="sha-exh")
     v = write_json(tmp_path, "verdicts.json", VERDICTS_ITER_FAIL)
     ev = write_json(tmp_path, "evidence.json", EVIDENCE_MIN)
-    env = _env(state_origin, PHASE="preflight", PR="2", PR_HEAD_SHA="sha-exh")
+    env = _env(state_origin, NODE_PATH="preflight", PR="2", PR_HEAD_SHA="sha-exh")
     _run(ADVANCE_PY, [tmp_path / "adv", inst, PIPELINE_PROTO, v, ev], env)
 
     _clone(state_origin, tmp_path / "verify")
@@ -145,7 +145,7 @@ def _seed_blocked(state_origin, tmp_path, inst, head_sha="sha-blk"):
     seed_preflight(state_origin, tmp_path / "seed", inst, state="preflight", iteration=1, head_sha=head_sha)
     v = write_json(tmp_path, "v.json", VERDICTS_BLOCK)
     ev = write_json(tmp_path, "ev.json", EVIDENCE_MIN)
-    env = _env(state_origin, PHASE="preflight", PR=inst[3:], PR_HEAD_SHA=head_sha)
+    env = _env(state_origin, NODE_PATH="preflight", PR=inst[3:], PR_HEAD_SHA=head_sha)
     _run(ADVANCE_PY, [tmp_path / "adv", inst, PIPELINE_PROTO, v, ev], env)
 
 

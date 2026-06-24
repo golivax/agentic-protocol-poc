@@ -222,13 +222,9 @@ def test_gate_questions_from_nonexistent_sibling_exit2(engine_env, tmp_path):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("fixture", [
-    "single-agent",
-    "fanout-mini",
     "simple-fanout",
     "deep-fanout",
     "gate-deep",
-    "subpipeline-mini",
-    "multiphase-subpipeline",
     "cap-single-agent",
 ])
 def test_valid_fixture_not_rejected(engine_env, tmp_path, fixture):
@@ -236,8 +232,7 @@ def test_valid_fixture_not_rejected(engine_env, tmp_path, fixture):
     proto_path = FIXTURES / fixture / "protocol.json"
     r = _run_next(tmp_path, engine_env, proto_path)
     # The run may succeed (0) or fail for legitimate runtime reasons (e.g. missing
-    # evidence schema, bad agent_unit resolution for the legacy single-agent fixture) —
-    # but it must NOT be exit 2 due to validate_protocol.
+    # evidence schema) — but it must NOT be exit 2 due to validate_protocol.
     # We accept 0 or 1; only 2 indicates a validation error.
     assert r.returncode != 2, (
         f"fixture '{fixture}' was wrongly rejected by validate_protocol:\n{r.stderr}"
