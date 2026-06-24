@@ -1,0 +1,1 @@
+{"finding": "Areas needing deep review: demo/stage4c-sample.py::divide (no zero-division guard — raises ZeroDivisionError when b=0); demo/stage4c-sample.py::add (no type annotations or input validation — silently misbehaves on non-numeric inputs)."}
