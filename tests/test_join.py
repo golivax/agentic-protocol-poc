@@ -6,7 +6,7 @@ fresh checkout dir and inspects stdout/stderr + the post-join state on origin.
 
 Seeding mirrors the bash seed() function:
   python3 lib.py state-checkout <dir>
-  # write grumpy.yaml, security.yaml, _instance.yaml as JSON (valid YAML)
+  # write a.yaml, b.yaml, _instance.yaml as JSON (valid YAML)
   python3 lib.py cas-push <dir> "seed ..."
 
 join.py is then called with a SEPARATE checkout dir so it clones fresh.
@@ -16,13 +16,13 @@ Bash assertion → pytest mapping
 --------------------------------
 Case 1 — both done → aggregate success, joined=true:
   1.  check "all done → check-run success"
-      grep -q "check-run fanout-mini sha=joinsha status=completed conclusion=success"
+      grep -q "check-run simple-fanout sha=joinsha status=completed conclusion=success"
       → test_all_done_check_run_success
   2.  check "all done → comment shows complete headline"
       grep -q "Review complete — published"
       → test_all_done_comment_headline
   3.  check "all done → comment shows both sections"
-      grep -q "**grumpy**" && grep -q "**security**"
+      grep -q "**a**" && grep -q "**b**"
       → test_all_done_comment_both_sections
   4.  check "all done → joined=true"
       yq -r .joined ... == true
@@ -30,13 +30,13 @@ Case 1 — both done → aggregate success, joined=true:
 
 Case 2 — one failed → aggregate failure:
   5.  check "one failed → check-run failure"
-      grep -q "check-run fanout-mini sha=joinsha status=completed conclusion=failure"
+      grep -q "check-run simple-fanout sha=joinsha status=completed conclusion=failure"
       → test_one_failed_check_run_failure
   6.  check "one failed → comment shows incomplete headline"
       grep -q "Review incomplete — a branch could not complete"
       → test_one_failed_comment_headline
   7.  check "one failed → comment shows both sections"
-      grep -q "**grumpy**" && grep -q "**security**"
+      grep -q "**a**" && grep -q "**b**"
       → test_one_failed_comment_both_sections
 
 Case 3 — not all terminal → no aggregate yet, joined stays false:
@@ -69,7 +69,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
 LIB_PY = ENGINE / "lib.py"
 JOIN_PY = ENGINE / "join.py"
-PROTO = ROOT / "tests/fixtures/fanout-mini/protocol.json"
+PROTO = ROOT / "tests/fixtures/simple-fanout/protocol.json"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -90,55 +90,55 @@ def _run(cmd, env, check=True):
     return subprocess.run(cmd, env=env, text=True, capture_output=True, check=check)
 
 
-def seed(state_remote, workdir, pr, grumpy_state, security_state):
+def seed(state_remote, workdir, pr, a_state, b_state):
     """Mirror the bash seed() function.
 
     1. state-checkout into workdir
-    2. Write grumpy.yaml, security.yaml, _instance.yaml as JSON (valid YAML)
+    2. Write a.yaml, b.yaml, _instance.yaml as JSON (valid YAML)
     3. cas-push to commit into the bare origin
 
     Args:
         state_remote: path to the bare git origin
         workdir: path for the seed checkout (must NOT exist yet)
         pr: instance key, e.g. "pr-1"
-        grumpy_state: state string for the grumpy branch
-        security_state: state string for the security branch
+        a_state: state string for the grumpy branch
+        b_state: state string for the security branch
     """
     env = make_env(state_remote)
     _run(["python3", str(LIB_PY), "state-checkout", str(workdir)], env)
 
-    d = pathlib.Path(workdir) / "fanout-mini" / pr
+    d = pathlib.Path(workdir) / "simple-fanout" / pr
     d.mkdir(parents=True, exist_ok=True)
 
-    grumpy_data = {
-        "protocol": "fanout-mini",
+    a_data = {
+        "protocol": "simple-fanout",
         "instance": pr,
-        "state": grumpy_state,
+        "state": a_state,
         "iteration": 1,
         "gates": {},
         "history": [],
     }
-    security_data = {
-        "protocol": "fanout-mini",
+    b_data = {
+        "protocol": "simple-fanout",
         "instance": pr,
-        "state": security_state,
+        "state": b_state,
         "iteration": 1,
         "gates": {},
         "history": [],
     }
     instance_data = {
-        "protocol": "fanout-mini",
+        "protocol": "simple-fanout",
         "instance": pr,
         "head_sha": "joinsha",
         "joined": False,
     }
 
-    (d / "grumpy.yaml").write_text(json.dumps(grumpy_data))
-    (d / "security.yaml").write_text(json.dumps(security_data))
+    (d / "a.yaml").write_text(json.dumps(a_data))
+    (d / "b.yaml").write_text(json.dumps(b_data))
     (d / "_instance.yaml").write_text(json.dumps(instance_data))
 
     _run(
-        ["python3", str(LIB_PY), "cas-push", str(workdir), f"seed {pr} g={grumpy_state} s={security_state}"],
+        ["python3", str(LIB_PY), "cas-push", str(workdir), f"seed {pr} g={a_state} s={b_state}"],
         env,
     )
 
@@ -165,7 +165,7 @@ def checkout_verify(state_remote, verify_dir):
 
 
 def load_instance_yaml(verify_dir, pr):
-    p = pathlib.Path(verify_dir) / "fanout-mini" / pr / "_instance.yaml"
+    p = pathlib.Path(verify_dir) / "simple-fanout" / pr / "_instance.yaml"
     with open(p) as f:
         return yaml.safe_load(f)
 
@@ -191,7 +191,7 @@ def case_all_done(tmp_path_factory):
 def test_all_done_check_run_success(case_all_done):
     """Bash assertion 1: all done → check-run success."""
     out, _, _ = case_all_done
-    assert "check-run fanout-mini sha=joinsha status=completed conclusion=success" in out
+    assert "check-run simple-fanout sha=joinsha status=completed conclusion=success" in out
 
 
 def test_all_done_comment_headline(case_all_done):
@@ -201,10 +201,10 @@ def test_all_done_comment_headline(case_all_done):
 
 
 def test_all_done_comment_both_sections(case_all_done):
-    """Bash assertion 3: all done → comment shows both **grumpy** and **security** sections."""
+    """Bash assertion 3: all done → comment shows both **a** and **b** sections."""
     out, _, _ = case_all_done
-    assert "**grumpy**" in out
-    assert "**security**" in out
+    assert "**a**" in out
+    assert "**b**" in out
 
 
 def test_all_done_joined_true(case_all_done):
@@ -234,7 +234,7 @@ def case_one_failed(tmp_path_factory):
 def test_one_failed_check_run_failure(case_one_failed):
     """Bash assertion 5: one failed → check-run failure."""
     out, _ = case_one_failed
-    assert "check-run fanout-mini sha=joinsha status=completed conclusion=failure" in out
+    assert "check-run simple-fanout sha=joinsha status=completed conclusion=failure" in out
 
 
 def test_one_failed_comment_headline(case_one_failed):
@@ -246,8 +246,8 @@ def test_one_failed_comment_headline(case_one_failed):
 def test_one_failed_comment_both_sections(case_one_failed):
     """Bash assertion 7: one failed → comment shows both sections."""
     out, _ = case_one_failed
-    assert "**grumpy**" in out
-    assert "**security**" in out
+    assert "**a**" in out
+    assert "**b**" in out
 
 
 # ---------------------------------------------------------------------------

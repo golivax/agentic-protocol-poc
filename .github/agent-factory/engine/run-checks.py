@@ -45,30 +45,54 @@ def main():
     with open(proto) as f:
         protocol = json.load(f)
 
-    branch = os.environ.get("BRANCH", "")
-    substate = os.environ.get("SUBSTATE", "")
+    node_path_env = os.environ.get("NODE_PATH", "")
 
-    # Find the state node
-    state_node = None
-    for s in protocol.get("states", []):
-        if s.get("id") == state_id:
-            state_node = s
-            break
-
-    # Resolve the config node: the branch node when BRANCH is set, else the state node.
-    # When BRANCH and SUBSTATE are both set and the branch is a sub-pipeline branch,
-    # descend into the branch's sub-states to find the config node for that sub-state.
-    # CHECK_PARAMS (sub-state-scoped, branch-scoped, or state-scoped) and the check list
-    # both come from this one node.
-    if branch:
-        node = next(
-            (b for b in (state_node or {}).get("branches", []) if b.get("id") == branch),
-            None,
-        )
-        if substate and node:
-            node = next((s for s in node.get("states", []) if s.get("id") == substate), None)
+    if node_path_env:
+        # NODE_PATH mode (Stage 4b+): the env var carries the full dot-joined tree
+        # path (e.g. "review.grumpy" or "review.B.draft"). Use paths.node_at_path
+        # to navigate the protocol tree directly — no flat state_id lookup needed.
+        # (sys.path already includes this dir from the top-of-file insert.)
+        import paths as _paths
+        tree_path = node_path_env.split(".")
+        node = _paths.node_at_path(protocol, tree_path)
+        if node is None:
+            # An unresolvable NODE_PATH is a genuine runner error, NOT an empty
+            # check list. Silently emitting {"results":[]} would make advance.py
+            # see zero failing verdicts and proceed as if all checks passed —
+            # a dangerous false-success. Exit non-zero (the ABI reserves non-zero
+            # for a real runner error) so the checks job fails loudly.
+            sys.stderr.write(
+                f"run-checks: NODE_PATH '{node_path_env}' does not resolve to a "
+                f"node in protocol '{proto}'\n"
+            )
+            sys.exit(1)
     else:
-        node = state_node
+        # Legacy BRANCH/SUBSTATE mode (backward-compat for tests that call run-checks.py
+        # with BRANCH/SUBSTATE env and a flat state_id positional arg).
+        branch = os.environ.get("BRANCH", "")
+        substate = os.environ.get("SUBSTATE", "")
+
+        # Find the state node
+        state_node = None
+        for s in protocol.get("states", []):
+            if s.get("id") == state_id:
+                state_node = s
+                break
+
+        # Resolve the config node: the branch node when BRANCH is set, else the state node.
+        # When BRANCH and SUBSTATE are both set and the branch is a sub-pipeline branch,
+        # descend into the branch's sub-states to find the config node for that sub-state.
+        # CHECK_PARAMS (sub-state-scoped, branch-scoped, or state-scoped) and the check list
+        # both come from this one node.
+        if branch:
+            node = next(
+                (b for b in (state_node or {}).get("branches", []) if b.get("id") == branch),
+                None,
+            )
+            if substate and node:
+                node = next((s for s in node.get("states", []) if s.get("id") == substate), None)
+        else:
+            node = state_node
 
     params = (node or {}).get("params", {})
     params_json = json.dumps(params, separators=(",", ":"))

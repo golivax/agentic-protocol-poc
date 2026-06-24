@@ -3,10 +3,13 @@
 # Pure planner: reads (state, protocol, command), emits an action JSON on stdout.
 # The WORKFLOW decides what an event means and passes a command; the planner never
 # sniffs events. Commands:
-#   start    external request — fresh review from a clean slate (Absent or Terminal);
-#            leave an in-flight review undisturbed (Active → halt).
-#   reset    unconditional fresh review (a new head commit invalidates the old one).
-#   continue the engine's own iterate loop — resume Active; halt on Terminal.
+#   start / reset   enter the protocol from its first top-level node via enter_root
+#                   (start/reset both seed a fresh run; reset is invoked when a new
+#                   head commit invalidates the old run).
+#   continue        resume the leg named by NODE_PATH (the SOLE coordinate of the
+#                   unified engine) — seed/dispatch the fanout/agent/gate/merge it
+#                   resolves to. A continue WITHOUT a resolvable NODE_PATH errors.
+#   answer / override / resolve-gate   human-gate commands (path-aware).
 # head_sha (optional) is recorded as instance metadata (the check-run target); it is
 # NEVER compared to decide policy — that decision lives in the workflow.
 import json
@@ -23,13 +26,12 @@ INSTANCE = sys.argv[2]
 PROTO = sys.argv[3]
 COMMAND = sys.argv[4]
 HEAD_SHA = sys.argv[5] if len(sys.argv) > 5 else ""
-BRANCH = os.environ.get("BRANCH", "")
-PHASE = os.environ.get("PHASE", "")
-SUBSTATE = os.environ.get("SUBSTATE", "")
 # NODE_PATH (NOT PATH — that is the OS executable search path) is the dot-joined
-# tree-navigation path of a `continue` dispatch. When it resolves to a fanout
-# node, the planner emits that fanout's children matrix (a nested fanout is
-# dispatched as its own engine invocation). Empty → legacy flat/leaf resolution.
+# tree-navigation path of a `continue` dispatch. It is the SOLE coordinate of the
+# unified engine: when it resolves to a fanout node the planner emits that fanout's
+# children matrix (a nested fanout is dispatched as its own engine invocation), to
+# an agent it seeds + emits run-agent, to a gate it opens the gate, to a merge it
+# runs the reduce hook. start/reset ignore it (they route to enter_root).
 NODE_PATH = os.environ.get("NODE_PATH", "")
 
 with open(PROTO) as f:
@@ -43,6 +45,12 @@ except ValueError as _e:
     sys.stderr.write(f"[next] {_e}\n")
     sys.exit(2)
 
+try:
+    lib.validate_protocol(proto_data)
+except ValueError as _e:
+    sys.stderr.write(f"[next] {_e}\n")
+    sys.exit(2)
+
 # Check out the state branch first: both the fan-out planner (below) and the
 # single-agent path write into DIR, and state_checkout only depends on DIR,
 # so doing it here is behaviour-preserving for the single-agent path.
@@ -52,9 +60,8 @@ lib.state_checkout(DIR)
 def _fanout_action(proto, path, branches):
     """Build the run-fanout action dict for the fanout at `path`. Single-phase
     keeps reason='fanout' with NO phase key; multi-phase uses reason='phase:<id>'
-    and adds the phase key — byte-identical to the legacy start_fanout /
-    seed_and_dispatch_phase emits. `branches` stays the authoritative key the GHA
-    layer reads; `legs` is emitted alongside as the path-aware companion for
+    and adds the phase key. `branches` stays the authoritative key the GHA layer
+    reads; `legs` is emitted alongside as the path-aware companion for
     nested-fanout matrix wiring."""
     multi = lib.is_multiphase(proto)
     act = {"action": "run-fanout", "iteration": 1, "feedback": "",
@@ -62,11 +69,18 @@ def _fanout_action(proto, path, branches):
     if multi:
         act["phase"] = path[-1]
     act["branches"] = branches
-    # `legs` is the path-aware companion to `branches` (Stage 3): one entry per
-    # child carrying its full tree path. Additive — `branches` stays authoritative
-    # for the depth-<=3 GHA layer; `legs` carries the tree path the nested-fanout
-    # matrix needs. child_tree_path = fanout_tree_path + [branch_id].
-    act["legs"] = [{"path": ".".join(path + [b["id"]])} for b in branches]
+    # `legs` is the path-aware companion to `branches` (Stage 3/4b): one entry per
+    # child carrying its full LEAF tree path + agent workflow. Additive —
+    # `branches` stays authoritative for the depth-<=3 GHA layer; `legs` is the
+    # single uniform shape the GHA matrix reads for node path + workflow.
+    # Leaf path = fanout_path + branch_id for a FLAT branch;
+    #            fanout_path + branch_id + first_substate for a SUB-PIPELINE branch
+    # (`branches[]` dicts from _seed_child already carry `substate` for sub-pipelines).
+    legs = []
+    for b in branches:
+        leaf = path + [b["id"]] + ([b["substate"]] if b.get("substate") else [])
+        legs.append({"path": ".".join(leaf), "workflow": b.get("workflow")})
+    act["legs"] = legs
     return act
 
 
@@ -74,12 +88,12 @@ def enter_node(proto, path, command, emit=True):
     """Recursive sequencer: seed the node at the tree-navigation `path` and, when
     `emit`, print its action JSON (run-agent / run-fanout / gate-open noop).
 
-    Generalizes start_fanout + seed_and_dispatch_phase + seed_branch into one
-    walk. INSTANCE-file / phase-label / cas_push side-effects stay with the
-    callers (start_fanout, seed_and_dispatch_phase) — this function only seeds the
-    node's own state file(s) and emits. Every file call routes the tree path
-    through lib.state_path (single-phase drops the leading top fanout id), so
-    depth-<=3 files stay byte-identical to the legacy seed_branch layout.
+    The recursive sequencer for the unified engine: enter_root and the NODE_PATH
+    `continue` arms call it. INSTANCE-file / phase-label / cas_push side-effects
+    stay with those callers — this function only seeds the node's own state
+    file(s) and emits. Every file call routes the tree path through lib.state_path
+    (single-phase drops the leading top fanout id), so depth-<=3 files keep their
+    historical layout.
 
     `path` is rooted at the top phase/fanout id; e.g. the top fanout enters as
     [fanout_id]. `command` is carried for parity with the recursive callers."""
@@ -116,7 +130,8 @@ def enter_node(proto, path, command, emit=True):
                            "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []})
         if emit:
             act = {"action": "run-agent", "iteration": 1, "feedback": "",
-                   "reason": f"phase:{path[-1]}"}
+                   "reason": f"phase:{path[-1]}", "path": ".".join(path),
+                   "workflow": paths.node_at_path(proto, path).get("workflow")}
             if lib.is_multiphase(proto):
                 act["phase"] = path[-1]
             print(json.dumps(act))
@@ -160,128 +175,75 @@ def _seed_child(proto, path, cfg):
     return {"id": path[-1], "workflow": cfg.get("workflow"), "iteration": 1, "feedback": ""}
 
 
-def is_fanout():
-    for s in proto_data.get("states", []):
-        if s.get("kind") == "fanout":
-            return True
-    return False
-
-
-def start_fanout():
-    fstate = None
-    for s in proto_data.get("states", []):
-        if s.get("kind") == "fanout":
-            fstate = s["id"]
-            break
-
-    # Delegate seeding to the recursive sequencer (top fanout → tree path
-    # [fstate]); emit=False so we keep the legacy seed→instance→label→cas_push→emit
-    # ordering. enter_node returns the branch emit-dicts for the deferred emit.
-    branches = enter_node(proto_data, [fstate], COMMAND, emit=False)
-
-    inf = lib.instance_file(DIR, PID, INSTANCE)
-    os.makedirs(os.path.dirname(inf), exist_ok=True)
-    lib.dump_yaml(inf, {
-        "protocol": PID, "instance": INSTANCE, "head_sha": HEAD_SHA, "joined": False,
-    })
-
-    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
-    lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, fstate)
-    lib.cas_push(DIR, f"{PID}/{INSTANCE}: fan-out review ({COMMAND})")
-    print(json.dumps(_fanout_action(proto_data, [fstate], branches)))
-
-
-def seed_and_dispatch_phase(phase_id, command, reset_instance=False):
-    """Multi-phase: seed the named phase's state + the instance cursor, push,
-    and emit the phase's run action. Used for the first phase (start/reset) and
-    for each subsequent phase (advance-phase).
-
-    reset_instance=True is the RESTART path (a fresh start/reset re-entering the
-    first phase). A restart must wipe the WHOLE prior run, not just re-seed phase
-    one: stale later-phase leg files (e.g. review.grumpy.yaml) and instance
-    markers (joined / overrides / halted) would otherwise survive and keep
-    rendering in the status comment, and head_sha would stay pinned to the old
-    commit. We delete every state file under the instance dir and rebuild
-    _instance.yaml from scratch. The prior run's status comment is ABANDONED, not
-    reused: it gets one final "superseded" edit (banner above its frozen state)
-    and then status_comment_id is dropped, so this run creates a NEW comment —
-    one edited-in-place comment per run reads far more clearly than a single
-    comment rewritten across restarts. On a phase advance / override
-    (reset_instance=False) earlier phases must be preserved, so we mutate in
-    place exactly as before."""
-    phase_state = lib.state_by_id(proto_data, phase_id)
-    if phase_state is None:
-        sys.stderr.write(f"[next] unknown phase '{phase_id}' in protocol\n")
-        sys.exit(1)
-    kind = phase_state.get("kind")
-    inf = lib.instance_file(DIR, PID, INSTANCE)
-    inst_dir = os.path.dirname(inf)
-    os.makedirs(inst_dir, exist_ok=True)
-
-    prev = lib.load_yaml(inf) if os.path.isfile(inf) else {}
-    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
-    if reset_instance:
-        # Abandon the prior run's status comment so this run gets a FRESH one.
-        # Render its final state FIRST (the files still exist), edit the old
-        # comment once with a "superseded" banner above that frozen snapshot,
-        # then drop the id — ensure_status_comment creates the new comment.
-        old_cid = prev.get("status_comment_id")
-        if old_cid:
-            frozen = lib.render_instance_status_body(DIR, PID, INSTANCE, PROTO)
-            banner = (f"↻ _Superseded — a newer run started (new commit or "
-                      f"`/review`); see the newest **{PID} · {INSTANCE}** comment below._")
-            lib.finalize_superseded_comment(pr, old_cid, f"{banner}\n\n{frozen}")
-        # Remove the prior run's phase label so a restart from e.g. "approval
-        # gate" does not orphan it (the wipe below drops our tracking of it).
-        lib.remove_pr_label(pr, prev.get("phase_label", ""))
-        # Wipe every prior-run state file (phase yamls + fan-out legs + the old
-        # _instance.yaml); cas_push stages the deletions. Start the instance clean.
+def _reset_wipe(inf, inst_dir, prev, pr):
+    """Wipe all prior-run state files for this instance and finalize any
+    superseded status comment. Called on `start`/`reset` entry (via enter_root).
+    A fresh run with no prior files is safe (no-op when inst_dir is empty or
+    doesn't exist yet)."""
+    # Abandon the prior run's status comment so this run gets a FRESH one.
+    # Render its final state FIRST (the files still exist), edit the old
+    # comment once with a "superseded" banner above that frozen snapshot,
+    # then drop the id — ensure_status_comment creates the new comment.
+    old_cid = prev.get("status_comment_id")
+    if old_cid:
+        frozen = lib.render_instance_status_body(DIR, PID, INSTANCE, PROTO)
+        banner = (f"↻ _Superseded — a newer run started (new commit or "
+                  f"`/review`); see the newest **{PID} · {INSTANCE}** comment below._")
+        lib.finalize_superseded_comment(pr, old_cid, f"{banner}\n\n{frozen}")
+    # Remove the prior run's phase label so a restart from e.g. "approval
+    # gate" does not orphan it (the wipe below drops our tracking of it).
+    lib.remove_pr_label(pr, prev.get("phase_label", ""))
+    # Wipe every prior-run state file (phase yamls + fan-out legs + the old
+    # _instance.yaml); cas_push stages the deletions. Start the instance clean.
+    if os.path.isdir(inst_dir):
         for name in os.listdir(inst_dir):
             p = os.path.join(inst_dir, name)
             if os.path.isfile(p):
                 os.remove(p)
-        inst = {}
-    else:
-        inst = prev
 
-    inst.setdefault("protocol", PID)
-    inst.setdefault("instance", INSTANCE)
-    inst["phase"] = phase_id
-    if HEAD_SHA:
-        # Restart refreshes the head to the new commit; an in-pipeline advance
-        # keeps the instance-seed head (per-phase files carry their own head_sha).
-        if reset_instance:
-            inst["head_sha"] = HEAD_SHA
-        else:
-            inst.setdefault("head_sha", HEAD_SHA)
-    inst.setdefault("joined", False)
-    lib.dump_yaml(inf, inst)
 
-    # Sync the PR's phase label to this phase (removes setup / prior label).
-    lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, phase_id)
-
-    # All three arms delegate seeding to enter_node (emit=False), keep the
-    # phase-specific cas_push message here, then emit — preserving the legacy
-    # seed→cas_push→emit ordering exactly. The tree path of a top-level phase is
-    # simply [phase_id].
+def _emit_for_node(path, branches):
+    """Emit the action JSON for the node at `path`. `branches` is the return
+    value from enter_node (emit=False) — the branch emit-dicts for fanout nodes,
+    None for agent/gate."""
+    kind = paths.node_kind(proto_data, path)
     if kind == "fanout":
-        # enter_node returns the branch emit-dicts (emit deferred to after cas_push).
-        branches = enter_node(proto_data, [phase_id], command, emit=False)
-        lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter fan-out phase {phase_id} ({command})")
-        print(json.dumps(_fanout_action(proto_data, [phase_id], branches)))
-    elif kind == "gate":
-        # cursor already written above; enter_node's gate arm calls open_gate
-        # (seeds the gate file + check-run + status comment). No agent dispatch —
-        # the run ends and waits for a human.
-        enter_node(proto_data, [phase_id], command, emit=False)
-        lib.cas_push(DIR, f"{PID}/{INSTANCE}: open gate {phase_id} ({command})")
+        print(json.dumps(_fanout_action(proto_data, path, branches)))
+        return
+    if kind == "gate":
         print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
-                          "reason": f"gate-open:{phase_id}"}))
-    else:
-        enter_node(proto_data, [phase_id], command, emit=False)
-        lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter agent phase {phase_id} ({command})")
-        print(json.dumps({"action": "run-agent", "iteration": 1, "feedback": "",
-                          "reason": f"phase:{phase_id}", "phase": phase_id}))
+                          "reason": f"gate-open:{path[-1]}"}))
+        return
+    # agent (or sequence that enters down to an agent leaf via enter_node)
+    node = paths.node_at_path(proto_data, path)
+    act = {"action": "run-agent", "iteration": 1, "feedback": "",
+           "reason": f"phase:{path[-1]}",
+           "path": ".".join(path),
+           "workflow": node.get("workflow")}
+    if lib.is_multiphase(proto_data):
+        act["phase"] = path[-1]
+    print(json.dumps(act))
+
+
+def enter_root(command, head_sha):
+    """Unified entry for start/reset: seed the FIRST top-level node via the
+    recursive sequencer, create _instance.yaml, apply labels, CAS-push, and emit
+    the node's action. The single entry point for EVERY protocol shape
+    (single-agent, single-phase fanout, multi-phase)."""
+    first = paths.root_ids(proto_data)[0]
+    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    inf = lib.instance_file(DIR, PID, INSTANCE)
+    inst_dir = os.path.dirname(inf)
+    os.makedirs(inst_dir, exist_ok=True)
+    prev = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+    _reset_wipe(inf, inst_dir, prev, pr)
+    lib.apply_setup_label(proto_data, pr)
+    lib.dump_yaml(inf, {"protocol": PID, "instance": INSTANCE,
+                        "head_sha": head_sha, "phase": first, "joined": False})
+    lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, first)
+    branches = enter_node(proto_data, [first], command, emit=False)
+    lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter root phase {first} ({command})")
+    _emit_for_node([first], branches)
 
 
 def do_override():
@@ -309,7 +271,7 @@ def do_override():
 
     if halted.get("reason") == "blocked":
         blocked_phase = halted.get("phase")
-        nxt = lib.next_phase_id(proto_data, blocked_phase)
+        nxt = paths.next_sibling(proto_data, [blocked_phase])
         if not nxt:
             refuse("The blocked gate is the final phase; there is nothing to advance to.",
                    "override: no next phase")
@@ -319,19 +281,21 @@ def do_override():
         inst.setdefault("overrides", []).append(
             {"phase": blocked_phase, "actor": actor, "reason": reason})
         inst.pop("halted", None)
-        # Note: _instance.yaml's head_sha stays the instance-seed head (as on every
-        # phase advance — seed_and_dispatch_phase uses setdefault). The authoritative
-        # head the forced phase runs against is recorded per-phase in its own state
-        # file; we intentionally do not rewrite the cursor head on override.
-        lib.dump_yaml(inf, inst)  # persist before seed_and_dispatch_phase reloads inf
+        # Advance the root cursor to `nxt` and dispatch a path-continue; the
+        # continue dispatch will seed+enter the next phase via the NODE_PATH guard.
+        # Note: _instance.yaml's head_sha stays the instance-seed head (as before —
+        # the authoritative head is recorded per-phase in each phase's own state file).
+        inst["phase"] = nxt
+        lib.dump_yaml(inf, inst)
         note = f"⚠️ {blocked_phase} gate was blocked — overridden by @{actor}; proceeding to {nxt}."
         if reason:
             note += f"\n\n> {reason}"
         lib.post_pr_comment(pr, note)
-        # Advance exactly one phase. seed_and_dispatch_phase reloads _instance.yaml
-        # (keeping the overrides[] record + cleared halted just written), sets the
-        # cursor to nxt, CAS-pushes, and emits that phase's run action.
-        seed_and_dispatch_phase(nxt, "override")
+        lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, nxt)
+        lib.cas_push(DIR, f"{INSTANCE}: gate {blocked_phase} overridden by {actor} → continue {nxt}")
+        lib.dispatch_continue(PID, INSTANCE, path=nxt)
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": f"override:continue:{nxt}"}))
         return
 
     # Not a blocked halt → give a precise message: exhausted vs simply not-halted.
@@ -407,13 +371,24 @@ def do_resolve_gate():
         gdata["gates"] = g
         lib.dump_yaml(sf, gdata)
         lib.set_check_run(cr_name, sha, "completed", "success", "Approved", f"Approved by @{actor}.")
-        nxt = lib.next_phase_id(proto_data, cursor)
+        nxt = paths.next_sibling(proto_data, [cursor])
         if nxt:
             note = f"✅ {cursor} gate approved by @{actor}; proceeding to {nxt}."
             if reason:
                 note += f"\n\n> {reason}"
             lib.post_pr_comment(pr, note)
-            seed_and_dispatch_phase(nxt, "approve")   # sets cursor, pushes, emits run action
+            # Advance the root cursor to `nxt` and dispatch a path-continue; the
+            # continue dispatch seeds+enters the next phase (fan-out, agent, or gate)
+            # via the NODE_PATH guard in next.py — path-based like the rest of the
+            # unified engine.
+            inst = lib.load_yaml(inf)
+            inst["phase"] = nxt
+            lib.dump_yaml(inf, inst)
+            lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, nxt)
+            lib.cas_push(DIR, f"{INSTANCE}: gate {cursor} approved by {actor} → continue {nxt}")
+            lib.dispatch_continue(PID, INSTANCE, path=nxt)
+            print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                              "reason": f"gate:approved:{cursor}:continue:{nxt}"}))
         else:
             lib.set_check_run(PID, sha, "completed", "success", "Complete", f"Approved by @{actor}.")
             note = f"✅ {cursor} gate approved by @{actor}; pipeline complete."
@@ -468,16 +443,6 @@ def do_resolve_gate():
     refuse(f"Unknown gate decision '{decision}'.", "gate: unknown decision")
 
 
-def _gate_phase(proto):
-    """Phase qualifier for sub-pipeline gate/cursor state files: the fanout phase
-    id in a multi-phase protocol, else None (single-phase → unqualified paths).
-    Kept for the do_resolve_gate / do_override paths that still use legacy coords."""
-    if lib.is_multiphase(proto):
-        fo = lib._fanout_state(proto)
-        return fo["id"] if fo else None
-    return None
-
-
 def _find_open_gate(proto, want=""):
     """Return the full tree-navigation path to the first open data-gate, or None.
     Follows LIVE cursors recursively: at each fanout branch, read its cursor
@@ -485,8 +450,24 @@ def _find_open_gate(proto, want=""):
     nested fanout, descend into that fanout's child-branch cursors. First open
     gate wins (at most one gate per branch lineage is open at a time). `want`
     restricts the TOP-level branch only. For a depth-3 gate the returned path is
-    byte-identical to the old (branch_id, gate_id) pair: [fanout_id, branch_id, gate_id]."""
-    fo = lib._fanout_state(proto)
+    byte-identical to the old (branch_id, gate_id) pair: [fanout_id, branch_id, gate_id].
+
+    Multi-phase cursor awareness (I1 fix): for multi-phase protocols, resolve the
+    fanout to scan from the _instance.yaml cursor phase, not the first fanout in
+    the states list. `lib._fanout_state` always returns the FIRST fanout; in a
+    protocol where the cursor is on a LATER fanout phase, that would scan the
+    wrong branches and find nothing. Mirrors the pattern in join.py main()."""
+    fo = None
+    if lib.is_multiphase(proto):
+        inf = lib.instance_file(DIR, PID, INSTANCE)
+        if os.path.isfile(inf):
+            cursor_phase = lib.load_yaml(inf).get("phase", "") or ""
+            if cursor_phase:
+                st = lib.state_by_id(proto, cursor_phase)
+                if st and st.get("kind") == "fanout":
+                    fo = st
+    if fo is None:
+        fo = lib._fanout_state(proto)
     if not fo:
         return None
     return _scan_fanout_for_open_gate(proto, [fo["id"]], fo, want, top=True)
@@ -565,14 +546,8 @@ def do_answer():
     branch = gate_path[-2]
     gate = gate_path[-1]
     branch_path = gate_path[:-1]
-    # ph is the phase qualifier for dispatch_continue (None in single-phase, fanout
-    # id in multi-phase) — derived from enclosing_fanout_id filtered by is_multiphase.
-    ph = (paths.enclosing_fanout_id(proto_data, gate_path)
-          if lib.is_multiphase(proto_data) else None)
-    # life is the leg's in-flight state value: the enclosing fanout id. This replaces
-    # the old hardcoded `lib._fanout_state(proto_data)["id"]` (which was already fixed
-    # in the prior task) and the old "_gate_phase"-based approach. For depth <=3 the
-    # value is identical: enclosing_fanout_id(["review","B","clarify"]) == "review".
+    # life is the leg's in-flight state value: the enclosing fanout id.
+    # enclosing_fanout_id(["review","B","clarify"]) == "review".
     life = paths.enclosing_fanout_id(proto_data, gate_path)
 
     # File paths all derived from the gate/branch tree paths via lib.state_path so
@@ -655,7 +630,12 @@ def do_answer():
                           "reason": "answer: complete (nested)"}))
         return
 
-    nxt_sub = lib.next_substate_id(proto_data, branch, gate)
+    # Use path.next_sibling directly from gate_path so the correct enclosing
+    # sequence is used regardless of which fanout phase the gate lives in.
+    # lib.next_substate_id calls _fanout_state (first fanout) — in a multi-phase
+    # protocol with the gate in a NON-first fanout phase it would pick the wrong
+    # fanout and fail to find the sibling. (I1 fix — top-level advance tail.)
+    nxt_sub = paths.next_sibling(proto_data, gate_path)
     cf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, branch_path))
     cur = lib.load_yaml(cf)
     sha = gdata.get("head_sha", "") or HEAD_SHA
@@ -671,7 +651,9 @@ def do_answer():
                           "Answered", f"Answered by @{actor}.")
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered -> {nxt_sub}")
         lib.post_pr_comment(pr, f"{gate} answered by @{actor}; continuing to {nxt_sub}.")
-        lib.dispatch_continue(PID, INSTANCE, branch, nxt_sub, phase=ph or "")
+        # Path-only dispatch: the unified `continue` handler requires NODE_PATH.
+        # nxt_path is the next sub-state's full tree path (e.g. recover.rationale.finalize).
+        lib.dispatch_continue(PID, INSTANCE, path=".".join(nxt_path))
     else:
         cur["state"] = "done"
         lib.dump_yaml(cf, cur)
@@ -697,36 +679,23 @@ if COMMAND == "resolve-gate":
     do_resolve_gate()
     sys.exit(0)
 
-if lib.is_multiphase(proto_data) and not PHASE and not BRANCH:
-    # Multi-phase protocol, unbranched/unphased entry → seed the FIRST phase.
-    if COMMAND in ("start", "reset"):
-        first = lib.phase_states(proto_data)[0]["id"]
-        pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
-        lib.apply_setup_label(proto_data, pr)
-        # Fresh entry → restart: wipe any prior run's state for this instance.
-        seed_and_dispatch_phase(first, COMMAND, reset_instance=True)
-        sys.exit(0)
-    else:
-        sys.stderr.write(f"[next] multi-phase '{COMMAND}' needs a PHASE\n")
-        sys.exit(2)
-
-if lib.is_multiphase(proto_data) and PHASE and COMMAND == "advance-phase":
-    # Phase transition (advance.py already set the cursor to PHASE) → seed+dispatch it.
-    seed_and_dispatch_phase(PHASE, COMMAND)
+if COMMAND in ("start", "reset"):
+    # Unified entry for EVERY protocol shape (single-agent, single-phase fanout,
+    # multi-phase). enter_root seeds the first top-level node via the recursive
+    # sequencer, creates _instance.yaml, applies labels, CAS-pushes, and emits.
+    enter_root(COMMAND, HEAD_SHA)
     sys.exit(0)
 
 # A `continue` whose tree path resolves to a fanout node dispatches that fanout's
-# children matrix (nested fanouts are entered as their own engine invocation).
-# Sits before the legacy BRANCH/PHASE/SUBSTATE single-agent resolution so the
-# flat/leaf continue path stays untouched.
+# children matrix (nested fanouts are entered as their own engine invocation). A
+# continue MUST carry NODE_PATH — it is the sole coordinate of the unified engine.
 if COMMAND == "continue" and NODE_PATH:
     _p = NODE_PATH.split(".")
     _kind = paths.node_kind(proto_data, _p)
     if _kind == "fanout":
-        # Match the established seed(emit=False)→cas_push→emit ordering of
-        # start_fanout / seed_and_dispatch_phase: enter_node seeds the leg files +
-        # nested __join.yaml marker locally, cas_push publishes them to origin so
-        # the matrix legs (which re-checkout state) find them, THEN emit.
+        # The established seed(emit=False)→cas_push→emit ordering: enter_node seeds
+        # the leg files + nested __join.yaml marker locally, cas_push publishes them
+        # to origin so the matrix legs (which re-checkout state) find them, THEN emit.
         branches = enter_node(proto_data, _p, "continue", emit=False)
         lib.cas_push(DIR, f"{PID}/{INSTANCE}: enter nested fanout {NODE_PATH} (continue)")
         print(json.dumps(_fanout_action(proto_data, _p, branches)))
@@ -761,125 +730,33 @@ if COMMAND == "continue" and NODE_PATH:
         print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
                           "reason": f"gate-open:{NODE_PATH}"}))
         sys.exit(0)
-
-if not BRANCH and is_fanout() and not PHASE:
-    if COMMAND in ("start", "reset"):
+    if _kind == "merge":
+        # A `continue` onto a MERGE state (dispatched by the top join via path-continue).
+        # Run the reduce hook, finalize the instance, update comment + label.
+        node = paths.node_at_path(proto_data, _p)
+        res = lib.run_merge_hook(DIR, PID, INSTANCE, PROTO, node)
+        inf = lib.instance_file(DIR, PID, INSTANCE)
+        inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+        inst["phase"] = _p[-1]
+        inst["joined"] = True
+        lib.dump_yaml(inf, inst)
         pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
-        lib.apply_setup_label(proto_data, pr)
-        start_fanout()
+        lib.set_check_run(PID, HEAD_SHA, "completed", res.get("conclusion", "neutral"),
+                          "Combined", res.get("summary", ""))
+        lib.post_pr_comment(pr, f"🧬 **{_p[-1]}**: {res.get('summary', '')}")
+        lib.upsert_status_comment(inf, pr, lib.render_instance_status_body(DIR, PID, INSTANCE, PROTO))
+        lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, "done")
+        lib.cas_push(DIR, f"{INSTANCE}: merge {_p[-1]} → done")
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": f"merge:{_p[-1]}"}))
         sys.exit(0)
-    elif COMMAND == "continue":
-        sys.stderr.write("[next] fanout 'continue' requires a BRANCH\n")
-        sys.exit(2)
-    else:
-        sys.stderr.write(f"[next] unknown command: {COMMAND}\n")
-        sys.exit(2)
 
-# The "agent unit" (its id + max_iterations + life_state) comes from
-# lib.resolve_agent_unit: PHASE-first → BRANCH → single-agent.
-# Single-agent path is the regression-guarded baseline and must stay byte-for-byte
-# identical. Error messages are mapped back to the original next.py / engine prefixes.
-try:
-    _unit = lib.resolve_agent_unit(proto_data, PHASE, BRANCH, SUBSTATE)
-except ValueError as e:
-    _msg = str(e)
-    if _msg.startswith("no phase") or _msg.startswith("PHASE=") or "in phase '" in _msg:
-        sys.stderr.write(f"[next] {_msg}\n")
-    else:
-        sys.stderr.write(f"[engine] {_msg}\n")
-    sys.exit(1)
-AGENT_STATE = _unit["agent_state"]
-MAX = _unit["max_iterations"]
-LIFE_STATE = _unit["life_state"]
-
-if MAX is None:
-    sys.stderr.write(f"[engine] agent unit '{AGENT_STATE}' has no max_iterations\n")
-    sys.exit(1)
-
-# BRANCH/PHASE empty → single-agent path (branch=None, phase=None)
-SF = lib.state_file(DIR, PID, INSTANCE,
-                    branch=(BRANCH if BRANCH else None),
-                    phase=(PHASE if PHASE else None),
-                    substate=(SUBSTATE if SUBSTATE else None))
-
-
-def write_fresh_state():
-    os.makedirs(os.path.dirname(SF), exist_ok=True)
-    lib.dump_yaml(SF, {
-        "protocol": PID,
-        "instance": INSTANCE,
-        "state": LIFE_STATE,
-        "iteration": 1,
-        "gates": {},
-        "head_sha": HEAD_SHA,
-        "history": [],
-    })
-
-
-def emit_run_agent(iteration, feedback, reason):
-    action = {"action": "run-agent", "iteration": iteration, "feedback": feedback, "reason": reason}
-    if PHASE:
-        action["phase"] = PHASE
-    if SUBSTATE:
-        action["substate"] = SUBSTATE
-    declared = lib.state_inputs(proto_data, AGENT_STATE)
-    if declared:
-        action["inputs"] = lib.resolve_inputs(
-            proto_data, DIR, PID, INSTANCE,
-            consuming_branch=(BRANCH or None), consuming_phase=(PHASE or None),
-            inputs=declared)
-    print(json.dumps(action))
-
-
-def emit_halt(reason):
-    print(json.dumps({"action": "halt", "iteration": 0, "feedback": "", "reason": reason}))
-
-
-def start_fresh():
-    write_fresh_state()
-    lib.cas_push(DIR, f"{PID}/{INSTANCE}: fresh review ({COMMAND})")
-    emit_run_agent(1, "", COMMAND)
-
-
-# Determine the instance lifecycle from the (optional) state file. Defensive reads
-# (// fallbacks) keep a malformed/partial state file from aborting under set -e.
-# Literal equality, NOT a case pattern: a case glob would treat metacharacters in
-# LIFE_STATE (if a future protocol used any) as wildcards.
-LIFECYCLE = "absent"
-ITER = 0
-
-if os.path.isfile(SF):
-    sf_data = lib.load_yaml(SF)
-    STATE = sf_data.get("state") or ""
-    ITER = sf_data.get("iteration") or 0
-    if STATE == LIFE_STATE:
-        # iterations 1..MAX are all valid attempts; > MAX means the loop is spent.
-        if ITER > MAX:
-            LIFECYCLE = "terminal"
-        else:
-            LIFECYCLE = "active"
-    else:
-        LIFECYCLE = "terminal"  # done / failed / any non-agent terminal
-
-if COMMAND == "reset":
-    start_fresh()
-elif COMMAND == "start":
-    if LIFECYCLE in ("absent", "terminal"):
-        start_fresh()
-    else:  # active
-        emit_halt(f"review already in flight at iteration {ITER}")
-elif COMMAND == "continue":
-    if LIFECYCLE == "absent":
-        start_fresh()
-    elif LIFECYCLE == "active":
-        sf_data = lib.load_yaml(SF)
-        history = sf_data.get("history") or []
-        FB = ""
-        if history:
-            FB = history[-1].get("feedback") or ""
-        emit_run_agent(ITER, FB, "resume")
-    else:  # terminal
-        emit_halt("instance is terminal")
-else:
-    sys.stderr.write(f"[next] unknown command: {COMMAND}\n")
+# A `continue` reaching here carried no resolvable NODE_PATH coordinate. The
+# unified engine has a single coordinate (NODE_PATH); start/reset routed to
+# enter_root above and a continue must name the node it resumes.
+if COMMAND == "continue":
+    sys.stderr.write("[next] 'continue' requires a NODE_PATH\n")
     sys.exit(2)
+
+sys.stderr.write(f"[next] unknown command: {COMMAND}\n")
+sys.exit(2)

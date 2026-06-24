@@ -21,16 +21,6 @@ sys.path.insert(0, str(ENGINE))
 import lib  # noqa: E402
 
 
-def test_next_phase_id_returns_gate_kind():
-    proto = {"states": [
-        {"id": "a", "kind": "agent", "next": "g"},
-        {"id": "g", "kind": "gate", "next": "done"},
-    ]}
-    assert lib.next_phase_id(proto, "a") == "g"
-    # a gate whose next is a terminal → None (finalize)
-    assert lib.next_phase_id(proto, "g") is None
-
-
 def test_pipeline_states_includes_gate_in_order():
     proto = {"states": [
         {"id": "a", "kind": "agent"},
@@ -196,11 +186,22 @@ def _seed_review_all_done(state_origin, work, instance, *, head_sha="js"):
 
 
 def test_join_opens_following_gate(state_origin, tmp_path):
+    """join(next=approval) now dispatches protocol-continue path=approval;
+    next.py continue NODE_PATH=approval opens the gate. Migrated from the old
+    inline-gate-open behavior (Task 5: top join → .next via path-continue)."""
     inst = "pr-21"
     _seed_review_all_done(state_origin, tmp_path / "seed", inst)
     env = _env(state_origin, PR="21", PR_HEAD_SHA="js")
+    # Step 1: join dispatches protocol-continue path=approval + sets phase
     out, err, rc = _run(JOIN_PY, [tmp_path / "w", inst, PIPELINE_PROTO], env)
     assert rc == 0, err
+    assert "event_type=protocol-continue" in err, f"Expected protocol-continue dispatch:\n{err}"
+    assert "client_payload[path]=approval" in err, f"Expected path=approval:\n{err}"
+    # Step 2: next.py continue NODE_PATH=approval opens the gate
+    env2 = _env(state_origin, PR="21", PR_HEAD_SHA="js", NODE_PATH="approval")
+    NEXT_PY = ENGINE / "next.py"
+    out2, err2, rc2 = _run(NEXT_PY, [tmp_path / "w2", inst, PIPELINE_PROTO, "continue", "js"], env2)
+    assert rc2 == 0, f"next.py continue gate failed:\n{err2}"
     _clone(state_origin, tmp_path / "verify")
     base = tmp_path / "verify" / PID / inst
     inf = yaml.safe_load((base / "_instance.yaml").read_text())
@@ -208,15 +209,18 @@ def test_join_opens_following_gate(state_origin, tmp_path):
     gate = yaml.safe_load((base / "approval.yaml").read_text())
     assert gate["gates"]["state"] == "open"
     # the aggregate pid check-run is NOT completed at the gate (still in_progress)
-    assert "check-run code-review sha=js status=completed" not in err
+    assert "check-run code-review sha=js status=completed" not in err + err2
 
 
-def test_advance_phase_into_gate_opens_it(state_origin, tmp_path):
+def test_continue_into_gate_opens_it(state_origin, tmp_path):
+    """A continue NODE_PATH=approval onto a top-level gate phase opens the gate
+    (replaces the deleted advance-phase entry; advance.py / join.py advance the
+    root cursor to the gate then dispatch protocol-continue path=approval)."""
     inst = "pr-20"
-    _seed_cursor(state_origin, tmp_path / "seed", inst, "review")
-    env = _env(state_origin, PHASE="approval")
+    _seed_cursor(state_origin, tmp_path / "seed", inst, "approval")
+    env = _env(state_origin, NODE_PATH="approval")
     out, err, rc = _run(NEXT_PY, [tmp_path / "w", inst, PIPELINE_PROTO,
-                                  "advance-phase", "s"], env)
+                                  "continue", "s"], env)
     assert rc == 0, err
     assert json.loads(out)["action"] == "noop"
     assert json.loads(out)["reason"] == "gate-open:approval"

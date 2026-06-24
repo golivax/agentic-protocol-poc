@@ -78,10 +78,15 @@ from conftest import FIXTURES, PROTOCOLS, ENGINE as ENGINE_CONST, run_engine
 # Paths
 # ---------------------------------------------------------------------------
 
-GRUMPY_PROTO = FIXTURES / "single-agent/protocol.json"
-MULTI_GRUMPY_PROTO = FIXTURES / "fanout-mini/protocol.json"
-GRUMPY_CHECKS_DIR = FIXTURES / "single-agent/checks"
-GRUMPY_PDIR = FIXTURES / "single-agent"
+# The single-agent / fanout-mini fixtures were deleted with the legacy engine; the
+# code-review protocol carries the identical schema-valid / rubric-coverage /
+# traces-exist-in-diff checks under its `review` fanout (grumpy: all three;
+# security: schema-valid + traces). run-checks.py resolves the `review` fanout's
+# grumpy branch checks, so the resolution tests pass branch="grumpy".
+GRUMPY_PROTO = PROTOCOLS / "code-review/protocol.json"
+MULTI_GRUMPY_PROTO = PROTOCOLS / "code-review/protocol.json"
+GRUMPY_CHECKS_DIR = PROTOCOLS / "code-review/checks"
+GRUMPY_PDIR = PROTOCOLS / "code-review"
 
 EV_COMPLETE = FIXTURES / "evidence-complete.json"
 EV_LAZY = FIXTURES / "evidence-lazy.json"
@@ -108,19 +113,19 @@ def run_checks(proto, state_id, evidence, diff, files, branch=None, substate=Non
 # 1
 def test_runner_three_results():
     """Bash assertion 1: 3 checks configured → 3 results."""
-    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1, branch="grumpy")
     assert len(out["results"]) == 3
 
 # 2
 def test_runner_all_pass_on_complete():
     """Bash assertion 2: all checks pass with evidence-complete."""
-    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1, branch="grumpy")
     assert all(r["pass"] for r in out["results"])
 
 # 3
 def test_runner_includes_rubric_coverage():
     """Bash assertion 3: rubric-coverage check is present in results."""
-    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1, branch="grumpy")
     names = {r["check"] for r in out["results"]}
     assert "rubric-coverage" in names
 
@@ -132,14 +137,14 @@ def test_runner_includes_rubric_coverage():
 # 4
 def test_runner_lazy_rubric_coverage_fails():
     """Bash assertion 4: lazy evidence → rubric-coverage check fails."""
-    out = run_checks(GRUMPY_PROTO, "review", EV_LAZY, DIFF_PR1, FILES_PR1)
+    out = run_checks(GRUMPY_PROTO, "review", EV_LAZY, DIFF_PR1, FILES_PR1, branch="grumpy")
     rc_result = next(r for r in out["results"] if r["check"] == "rubric-coverage")
     assert rc_result["pass"] is False
 
 # 5
 def test_runner_lazy_schema_valid_passes():
     """Bash assertion 5: lazy evidence → schema-valid check passes."""
-    out = run_checks(GRUMPY_PROTO, "review", EV_LAZY, DIFF_PR1, FILES_PR1)
+    out = run_checks(GRUMPY_PROTO, "review", EV_LAZY, DIFF_PR1, FILES_PR1, branch="grumpy")
     sv_result = next(r for r in out["results"] if r["check"] == "schema-valid")
     assert sv_result["pass"] is True
 
@@ -152,31 +157,41 @@ def test_runner_lazy_schema_valid_passes():
 
 @pytest.fixture
 def temp_proto_in_grumpy(tmp_path):
-    """Write a temp protocol.json inside the grumpy protocol dir; clean up after."""
+    """Write a temp protocol.json inside the code-review protocol dir (so the
+    resolver finds checks/ relative to it); clean up after. The returned object
+    is a (path, write) pair — `write(checks)` writes a minimal single-`review`-
+    agent protocol carrying the given check entries."""
     tp = GRUMPY_PDIR / ".test-proto.json"
-    yield tp
-    if tp.exists():
-        tp.unlink()
+
+    def write(checks):
+        tp.write_text(json.dumps({
+            "name": "rc-test",
+            "states": [{"id": "review", "kind": "agent", "workflow": "x",
+                        "params": {"categories": ["naming", "error-handling",
+                                                  "performance", "duplication", "security"]},
+                        "checks": checks}],
+        }))
+    try:
+        yield tp, write
+    finally:
+        if tp.exists():
+            tp.unlink()
 
 
 # 6
 def test_runner_unknown_check_fail_verdict(temp_proto_in_grumpy):
     """Bash assertion 6: unknown check name → pass=false."""
-    proto_content = json.loads(GRUMPY_PROTO.read_text())
-    proto_content["states"][0]["checks"] = [{"run": "does-not-exist", "on_fail": "iterate"}]
-    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
-
-    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    tp, write = temp_proto_in_grumpy
+    write([{"run": "does-not-exist", "on_fail": "iterate"}])
+    out = run_checks(tp, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
     assert out["results"][0]["pass"] is False
 
 # 7
 def test_runner_unknown_check_useful_feedback(temp_proto_in_grumpy):
     """Bash assertion 7: unknown check → feedback contains 'no executable found'."""
-    proto_content = json.loads(GRUMPY_PROTO.read_text())
-    proto_content["states"][0]["checks"] = [{"run": "does-not-exist", "on_fail": "iterate"}]
-    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
-
-    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    tp, write = temp_proto_in_grumpy
+    write([{"run": "does-not-exist", "on_fail": "iterate"}])
+    out = run_checks(tp, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
     assert "no executable found" in out["results"][0]["feedback"]
 
 
@@ -187,13 +202,10 @@ def test_runner_unknown_check_useful_feedback(temp_proto_in_grumpy):
 # 8
 def test_runner_exec_override(temp_proto_in_grumpy):
     """Bash assertion 8: exec override runs the named file → pass=true."""
-    proto_content = json.loads(GRUMPY_PROTO.read_text())
-    proto_content["states"][0]["checks"] = [
-        {"run": "sv", "exec": "checks/schema-valid.py", "on_fail": "iterate"}
-    ]
-    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
+    tp, write = temp_proto_in_grumpy
+    write([{"run": "sv", "exec": "checks/schema-valid.py", "on_fail": "iterate"}])
 
-    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    out = run_checks(tp, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
     assert out["results"][0]["pass"] is True
 
 
@@ -352,7 +364,7 @@ def test_params_branch_scoped_overrides_state(params_sandbox):
 
 def test_runner_stamps_default_on_fail_iterate():
     """Every verdict carries on_fail; absent in protocol.json ⇒ 'iterate'."""
-    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    out = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1, branch="grumpy")
     results = out["results"]
     assert results, "expected verdicts"
     assert all(v.get("on_fail") == "iterate" for v in results), results
@@ -360,22 +372,18 @@ def test_runner_stamps_default_on_fail_iterate():
 
 def test_runner_stamps_declared_on_fail_on_failure_verdict(temp_proto_in_grumpy):
     """A failure verdict is stamped with the entry's DECLARED on_fail (not the default)."""
-    proto_content = json.loads(GRUMPY_PROTO.read_text())
-    proto_content["states"][0]["checks"] = [{"run": "does-not-exist", "on_fail": "block"}]
-    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
-    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    tp, write = temp_proto_in_grumpy
+    write([{"run": "does-not-exist", "on_fail": "block"}])
+    out = run_checks(tp, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
     assert out["results"][0]["pass"] is False
     assert out["results"][0]["on_fail"] == "block"
 
 
 def test_runner_stamps_declared_on_fail_on_passing_verdict(temp_proto_in_grumpy):
     """A declared non-default on_fail is stamped onto a PASSING verdict too."""
-    proto_content = json.loads(GRUMPY_PROTO.read_text())
-    proto_content["states"][0]["checks"] = [
-        {"run": "schema-valid", "on_fail": "advisory"}
-    ]
-    temp_proto_in_grumpy.write_text(json.dumps(proto_content))
-    out = run_checks(temp_proto_in_grumpy, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
+    tp, write = temp_proto_in_grumpy
+    write([{"run": "schema-valid", "on_fail": "advisory"}])
+    out = run_checks(tp, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1)
     assert out["results"][0]["pass"] is True
     assert out["results"][0]["on_fail"] == "advisory"
 
@@ -385,7 +393,7 @@ def test_runner_stamps_declared_on_fail_on_passing_verdict(temp_proto_in_grumpy)
 # Tests written BEFORE implementation (TDD RED).
 # ===========================================================================
 
-SUBPIPE_PROTO_PATH = FIXTURES / "subpipeline-mini/protocol.json"
+SUBPIPE_PROTO_PATH = PROTOCOLS / "recover-mental-model-stub/protocol.json"
 EV_EMPTY = FIXTURES / "diff-pr1.txt"   # reuse as a stand-in; we just need a valid file path
 # Use /dev/null as a minimal empty evidence file
 import tempfile as _tempfile
@@ -430,22 +438,135 @@ def _empty_files(tmp_path_local=None):
 
 
 # 20
-def test_substate_draft_runs_always_pass(tmp_path):
-    """BRANCH=B SUBSTATE=draft → sub-state 'draft' has always-pass check → 1 passing result."""
+def test_substate_draft_runs_its_check(tmp_path):
+    """BRANCH=rationale SUBSTATE=draft → sub-state 'draft' has the questions-present
+    check → 1 result (recover-mental-model-stub sub-pipeline leg)."""
     ev = _empty_evidence(tmp_path)
     diff = _empty_diff(tmp_path)
     files = _empty_files(tmp_path)
-    out = run_checks(SUBPIPE_PROTO_PATH, "review", ev, diff, files, branch="B", substate="draft")
+    out = run_checks(SUBPIPE_PROTO_PATH, "recover", ev, diff, files,
+                     branch="rationale", substate="draft")
     assert len(out["results"]) == 1
-    assert out["results"][0]["check"] == "always-pass"
-    assert out["results"][0]["pass"] is True
+    assert out["results"][0]["check"] == "questions-present"
 
 
 # 21
 def test_substate_branch_only_no_checks(tmp_path):
-    """BRANCH=B with NO SUBSTATE → the branch node itself has no 'checks' → empty results."""
+    """BRANCH=rationale with NO SUBSTATE → the branch node itself has no 'checks'
+    → empty results."""
     ev = _empty_evidence(tmp_path)
     diff = _empty_diff(tmp_path)
     files = _empty_files(tmp_path)
-    out = run_checks(SUBPIPE_PROTO_PATH, "review", ev, diff, files, branch="B")
+    out = run_checks(SUBPIPE_PROTO_PATH, "recover", ev, diff, files, branch="rationale")
     assert out["results"] == []
+
+
+# ===========================================================================
+# NODE_PATH mode (Stage 4b) — the unified single-coordinate path.
+# run-checks.py navigates the protocol tree via paths.node_at_path when NODE_PATH
+# is set (no BRANCH/SUBSTATE). These lock the NODE_PATH branch added in Task 2:
+#   (a) it resolves the SAME check list + node-scoped CHECK_PARAMS the legacy
+#       BRANCH path would for the same node, and
+#   (b) an UNRESOLVABLE NODE_PATH errors loudly (non-zero exit) instead of
+#       silently emitting {"results":[]} — which would let advance.py see zero
+#       failing verdicts and proceed as a false success.
+# ===========================================================================
+
+def _run_checks_node_path(proto, state_id, evidence, diff, files, node_path, env=None):
+    """Invoke run-checks.py with NODE_PATH set (no BRANCH/SUBSTATE).
+    Returns (parsed_dict_or_None, returncode)."""
+    e = dict(env or os.environ)
+    e["NODE_PATH"] = node_path
+    # Ensure no legacy coords leak in from the ambient env.
+    e.pop("BRANCH", None)
+    e.pop("SUBSTATE", None)
+    stdout, stderr, rc = run_engine(
+        "run-checks.py", proto, state_id, evidence, diff, files, env=e,
+    )
+    parsed = None
+    try:
+        parsed = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        parsed = None
+    return parsed, rc, stderr
+
+
+# 22
+def test_node_path_review_grumpy_resolves_same_checks_as_legacy():
+    """NODE_PATH=review.grumpy resolves the grumpy fanout leg's 3 checks — the
+    SAME list the legacy branch='grumpy' path resolves (assertion 15)."""
+    out, rc, _ = _run_checks_node_path(
+        GRUMPY_PROTO, "review.grumpy", EV_COMPLETE, DIFF_PR1, FILES_PR1,
+        node_path="review.grumpy",
+    )
+    assert rc == 0
+    assert out is not None
+    legacy = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1,
+                        branch="grumpy")
+    assert [r["check"] for r in out["results"]] == [r["check"] for r in legacy["results"]]
+    assert len(out["results"]) == 3
+
+
+# 23
+def test_node_path_review_security_resolves_security_leg_checks():
+    """NODE_PATH=review.security resolves the security leg's 2 checks (no
+    rubric-coverage) — matching the legacy branch='security' path (assertion 16)."""
+    out, rc, _ = _run_checks_node_path(
+        GRUMPY_PROTO, "review.security", EV_COMPLETE, DIFF_PR1, FILES_PR1,
+        node_path="review.security",
+    )
+    assert rc == 0
+    assert len(out["results"]) == 2
+    assert "rubric-coverage" not in {r["check"] for r in out["results"]}
+
+
+# 24
+def test_node_path_forwards_node_scoped_params(tmp_path):
+    """NODE_PATH forwards the leaf node's node-scoped params as CHECK_PARAMS — the
+    SAME params the legacy branch path resolves. Built on a real fanout protocol
+    (kind:'fanout') with an echo-params.sh leg check so we can read CHECK_PARAMS
+    back out of the verdict feedback."""
+    checks_dir = tmp_path / "checks"
+    checks_dir.mkdir()
+    echo_script = checks_dir / "echo-params.sh"
+    echo_script.write_text(
+        '#!/usr/bin/env bash\n'
+        'jq -nc --arg f "${CHECK_PARAMS:-MISSING}" \'{check:"echo-params",pass:true,feedback:$f}\'\n'
+    )
+    echo_script.chmod(echo_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    proto = tmp_path / "protocol.json"
+    proto.write_text(json.dumps({
+        "name": "p",
+        "states": [{
+            "id": "review",
+            "kind": "fanout",
+            "params": {"categories": ["state-default"]},
+            "branches": [{
+                "id": "bx",
+                "params": {"categories": ["only-b"]},
+                "checks": [{"run": "echo-params"}],
+            }],
+        }],
+    }))
+    out, rc, _ = _run_checks_node_path(
+        proto, "review.bx", EV_COMPLETE, DIFF_PR1, FILES_PR1, node_path="review.bx",
+    )
+    assert rc == 0
+    feedback_parsed = json.loads(out["results"][0]["feedback"])
+    assert feedback_parsed["categories"] == ["only-b"]
+
+
+# 25
+def test_node_path_unresolvable_errors_not_silent_empty():
+    """A NODE_PATH that does not resolve to a node MUST error (non-zero exit), NOT
+    silently print {"results":[]}. Zero verdicts would make advance.py see no
+    failing checks and proceed — a dangerous false success."""
+    out, rc, stderr = _run_checks_node_path(
+        GRUMPY_PROTO, "review.bogus", EV_COMPLETE, DIFF_PR1, FILES_PR1,
+        node_path="review.bogus",
+    )
+    assert rc != 0, f"expected non-zero exit for unresolvable NODE_PATH, got rc={rc}, out={out}"
+    # And it must NOT have printed an empty-but-valid verdict set on stdout.
+    assert not (out and out.get("results") == []), \
+        "unresolvable NODE_PATH silently produced empty verdicts"
+    assert "does not resolve" in stderr

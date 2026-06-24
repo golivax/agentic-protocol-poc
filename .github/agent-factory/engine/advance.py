@@ -168,31 +168,22 @@ def advance_node(ctx, process):
         return
 
     # process == "done"
-    if tree_path is not None:
-        import paths as _paths
-        parent = _paths.parent_path(tree_path)
-        nxt_sub = _paths.next_sibling(proto, tree_path)
-    else:
-        nxt_sub = lib.next_substate_id(proto, branch, substate)
+    import paths as _paths
+    parent = _paths.parent_path(tree_path)
+    nxt_sub = _paths.next_sibling(proto, tree_path)
     # Mark this sub-state's own file done (already set above), then move on.
     lib.set_check_run(ctx.cr_name, sha, "completed", "success",
                       f"{substate} complete", "")
     cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
     if nxt_sub:
-        nxt_kind = None
+        nxt_kind = _paths.node_kind(proto, parent + [nxt_sub])
         nxt_state = None
-        if tree_path is not None:
-            nxt_kind = _paths.node_kind(proto, parent + [nxt_sub])
-        else:
-            nxt_state = lib.state_by_id(
-                {"states": lib.branch_substates(proto, branch)}, nxt_sub)
-            nxt_kind = (nxt_state or {}).get("kind")
 
         # --- Next sibling is a FANOUT → enter it via protocol-continue. ---
         # The leg stays in-flight; we move the cursor onto the fanout id and let
         # next.py's `continue` (NODE_PATH=<fanout path>) seed the fanout's child
         # legs + nested __join.yaml. We deliberately do NOT seed a leg file here.
-        if nxt_kind == "fanout" and tree_path is not None:
+        if nxt_kind == "fanout":
             cur["sub_state"] = nxt_sub
             cur["state"] = life_state         # leg stays in flight
             lib.dump_yaml(cursor_sf, cur)
@@ -211,50 +202,43 @@ def advance_node(ctx, process):
         cur["state"] = life_state         # leg stays in flight
         lib.dump_yaml(cursor_sf, cur)
         if nxt_kind == "gate":
-            # Open the gate (scoped to this branch); read questions from
-            # the source sub-state's persisted evidence.
+            # Open the gate; read questions from the source sub-state's persisted
+            # evidence.  Use path-aware file resolution (via lib.state_path) so
+            # multi-phase protocols produce the correct filename (e.g.
+            # review.B.clarify.yaml, not the legacy single-phase B.clarify.yaml).
             questions = []
-            qfrom = (nxt_state or {}).get("questions_from") if nxt_state is not None \
-                else (_paths.node_at_path(proto, parent + [nxt_sub]) or {}).get("questions_from")
+            qfrom = (_paths.node_at_path(proto, parent + [nxt_sub]) or {}).get("questions_from")
             if qfrom:
                 qpath = lib.output_artifact_path(dir_, pid, instance,
-                                                 branch=branch, phase=(phase or None),
-                                                 substate=qfrom, kind="evidence")
+                                                 path=lib.state_path(proto, parent + [qfrom]),
+                                                 kind="evidence")
                 if os.path.isfile(qpath):
                     try:
                         questions = json.load(open(qpath)).get("questions", []) or []
                     except (json.JSONDecodeError, ValueError):
                         questions = []
             lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
-                          branch=branch, questions=questions,
-                          phase=(phase if phase else None))
+                          questions=questions,
+                          path=lib.state_path(proto, parent + [nxt_sub]))
             lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → gate {nxt_sub} open")
             return
         # Otherwise: an agent sub-state → seed + dispatch (Plan 1 behaviour).
-        if tree_path is not None:
-            nsf = lib.state_file(dir_, pid, instance,
-                                 path=lib.state_path(proto, parent + [nxt_sub]))
-        else:
-            nsf = lib.state_file(dir_, pid, instance, branch=branch,
-                                 phase=(phase if phase else None), substate=nxt_sub)
+        nsf = lib.state_file(dir_, pid, instance,
+                             path=lib.state_path(proto, parent + [nxt_sub]))
         lib.dump_yaml(nsf, {
             "protocol": pid, "instance": instance, "state": life_state,
             "iteration": 1, "gates": {}, "head_sha": sha, "history": [],
         })
         lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → {nxt_sub}")
-        redispatch = [
+        gh_api(
             f"repos/{github_repository}/dispatches",
             "-f", "event_type=protocol-continue",
             "-F", f"client_payload[protocol]={pid}",
             "-F", f"client_payload[instance]={instance}",
             "-F", f"client_payload[branch]={branch}",
             "-F", f"client_payload[substate]={nxt_sub}",
-        ]
-        if phase:
-            redispatch += ["-F", f"client_payload[phase]={phase}"]
-        if tree_path is not None:
-            redispatch += ["-F", f"client_payload[path]={'.'.join(parent + [nxt_sub])}"]
-        gh_api(*redispatch)
+            "-F", f"client_payload[path]={'.'.join(parent + [nxt_sub])}",
+        )
     else:
         complete_sequence(ctx, cur)
 
@@ -442,65 +426,32 @@ def main():
     tree_path = None        # carried into advance_node only in NODE_PATH mode
     file_path = None        # file-naming path (state_path-converted)
 
-    if node_path_env:
-        # ---- NODE_PATH (depth-N) coordinate derivation ----
-        tree_path = node_path_env.split(".")
-        try:
-            _unit = lib.resolve_agent_unit_path(proto, tree_path)
-        except ValueError as e:
-            sys.stderr.write(f"[advance] {e}\n")
-            sys.exit(1)
-        agent_state = _unit["agent_state"]
-        max_iter = _unit["max_iterations"]
-        life_state = _unit["life_state"]
-        # Surface legacy-style branch/substate so the `if branch and substate:`
-        # sub-pipeline gates in main() fire; these are the leg's immediate
-        # parent + own ids (advance_node uses tree_path for real navigation).
-        branch = tree_path[-2] if len(tree_path) >= 2 else ""
-        substate = tree_path[-1]
-        phase = ""
-        file_path = lib.state_path(proto, tree_path)
-        sf = lib.state_file(dir_, pid, instance, path=file_path)
-        cr_name = pid + "/" + "/".join(tree_path[1:])
-    else:
-        # Resolve the agent unit (agent_state, max_iterations, life_state) via the
-        # shared ladder. Error messages mapped back to the original advance.py / engine
-        # prefixes. The "no branch in fanout phase" message keeps its [advance] prefix
-        # and "fanout phase" wording to preserve the original advance.py error text.
-        try:
-            _unit = lib.resolve_agent_unit(proto, phase, branch, substate)
-        except ValueError as e:
-            _msg = str(e)
-            if "in phase '" in _msg:
-                # "no branch '<b>' in phase '<p>'" → [advance] prefix + "fanout phase" wording
-                sys.stderr.write(f"[advance] no branch '{branch}' in fanout phase '{phase}'\n")
-            elif _msg.startswith("no phase") or _msg.startswith("PHASE="):
-                sys.stderr.write(f"[advance] {_msg}\n")
-            else:
-                sys.stderr.write(f"[engine] {_msg}\n")
-            sys.exit(1)
-        agent_state = _unit["agent_state"]
-        max_iter = _unit["max_iterations"]
-        life_state = _unit["life_state"]
+    if not node_path_env:
+        # NODE_PATH is the SOLE coordinate of the unified engine. Every advance
+        # carries the canonical tree path of the leg being advanced; the legacy
+        # BRANCH/PHASE/SUBSTATE derivation has been removed.
+        sys.stderr.write("[advance] NODE_PATH is required\n")
+        sys.exit(1)
 
-        # State file and check-run name
-        sf = lib.state_file(dir_, pid, instance,
-                            branch=(branch if branch else None),
-                            phase=(phase if phase else None),
-                            substate=(substate if substate else None))
-        if phase and branch:
-            cr_name = f"{pid}/{phase}/{branch}"
-        elif phase:
-            cr_name = f"{pid}/{phase}"
-        elif branch:
-            cr_name = f"{pid}/{branch}"
-        else:
-            cr_name = pid
-
-        # A sub-pipeline leg gets a per-sub-state check-run so draft/finalize don't
-        # collide on one GitHub check-run.
-        if substate:
-            cr_name = f"{cr_name}/{substate}"
+    # ---- NODE_PATH (depth-N) coordinate derivation ----
+    tree_path = node_path_env.split(".")
+    try:
+        _unit = lib.resolve_agent_unit_path(proto, tree_path)
+    except ValueError as e:
+        sys.stderr.write(f"[advance] {e}\n")
+        sys.exit(1)
+    agent_state = _unit["agent_state"]
+    max_iter = _unit["max_iterations"]
+    life_state = _unit["life_state"]
+    # Surface branch/substate so the `if branch and substate:` sub-pipeline gates
+    # in main() fire; these are the leg's immediate parent + own ids (advance_node
+    # uses tree_path for real navigation).
+    branch = tree_path[-2] if len(tree_path) >= 2 else ""
+    substate = tree_path[-1]
+    phase = ""
+    file_path = lib.state_path(proto, tree_path)
+    sf = lib.state_file(dir_, pid, instance, path=file_path)
+    cr_name = pid + "/" + "/".join(tree_path[1:])
 
     # Checkout state
     lib.state_checkout(dir_)
@@ -589,7 +540,7 @@ def main():
         # fanout's per-leg files + __join.yaml). Mark this leg's own sf done and
         # fire the enclosing fanout's path-keyed join — DO NOT write a cursor
         # file at the parent (that would prematurely mark the whole fanout done).
-        if tree_path is not None and _paths.is_fanout(proto, _paths.parent_path(tree_path)):
+        if _paths.is_fanout(proto, _paths.parent_path(tree_path)):
             lib.set_check_run(cr_name, sha, "completed", "success",
                               f"{substate} complete", "")
             update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
@@ -600,101 +551,96 @@ def main():
 
         # --- Sub-pipeline branch leg: advance the BRANCH CURSOR, not the phase. ---
         if branch and substate:
-            if tree_path is not None:
-                ctx.cursor_sf = lib.state_file(
-                    dir_, pid, instance,
-                    path=lib.state_path(proto, _paths.parent_path(tree_path)))
-            else:
-                ctx.cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
-                                               phase=(phase if phase else None))
+            ctx.cursor_sf = lib.state_file(
+                dir_, pid, instance,
+                path=lib.state_path(proto, _paths.parent_path(tree_path)))
             advance_node(ctx, process="done")
             return
 
-        this_state = lib.state_by_id(proto, agent_state)
-        is_agent_phase = phase and this_state and this_state.get("kind") == "agent"
-        conclude = run_conclude_hook(proto_path, proto, agent_state, evid, instance, blocking) if is_agent_phase else None
-
-        # Always run publish for side-effects (e.g. post the review). For an agent
-        # phase with a `conclude` hook, conclude overrides only the verdict axis
-        # (conclusion/summary); publish still fires.
-        hook = run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid)
-        if conclude is not None:
-            concl = conclude.get("conclusion", "neutral")
-            csum = conclude.get("summary", "")
-        else:
-            concl = hook.get("conclusion", "neutral")
-            csum = hook.get("summary", "")
-
-        if is_agent_phase and conclude is not None and conclude.get("blocked") and (this_state.get("on_blocked") == "halt"):
-            # GATE BLOCKED → terminate the pipeline before the next phase.
-            state_data = lib.load_yaml(sf)
-            state_data["state"] = "failed"
-            lib.dump_yaml(sf, state_data)
-            lib.set_check_run(pid, sha, "completed", "failure", "Gate blocked",
-                              csum or "A required gate did not pass; pipeline halted.")
-            lib.set_check_run(cr_name, sha, "completed", "failure", "Gate blocked", csum)
-            # Stamp a durable marker distinguishing this BLOCK from an exhaustion
-            # (both write state:failed). The HITL /override command (next.py) reads
-            # this to know there is a blocked gate to force past, and which phase.
-            inst_data = lib.load_yaml(inf) if os.path.isfile(inf) else {}
-            inst_data["halted"] = {"phase": phase, "reason": "blocked", "sha": sha}
-            lib.dump_yaml(inf, inst_data)
-            # Tell the PR author on BOTH surfaces (bug iii): refresh the
-            # protocol-level status comment (now rendered blocked) AND post a
-            # one-off timeline notice naming the gate + the /override escape hatch.
-            update_status_comment(
-                sf, inf, branch, pr, pid, instance, proto_path, dir_,
-                "⛔ blocked", max_iter, github_repository
-            )
-            notice = (f"⛔ **{phase}** gate blocked: {csum or 'a required gate did not pass'}. "
-                      f"A write-access user can comment `/override <reason>` to proceed past this gate.")
-            lib.post_pr_comment(pr, notice)
-            lib.ensure_phase_label(dir_, pid, instance, proto, pr, "blocked")
-            lib.cas_push(dir_, f"{instance}: phase {phase} blocked → pipeline halted")
-        elif is_agent_phase:
-            # GATE CLEAR → advance the cursor and launch the next phase.
-            nxt = lib.next_phase_id(proto, agent_state)
-            lib.set_check_run(cr_name, sha, "completed",
-                              "success" if concl != "blocked" else "failure",
-                              "Gate complete", csum)
-            inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
-            if nxt:
-                inst["phase"] = nxt
-                lib.dump_yaml(inf, inst)
-                # Refresh the protocol-level comment: this gate now reads clear,
-                # the next phase's legs render pending until it seeds + runs.
-                update_status_comment(
-                    sf, inf, branch, pr, pid, instance, proto_path, dir_,
-                    "⏳ advancing", max_iter, github_repository
-                )
-                lib.ensure_phase_label(dir_, pid, instance, proto, pr, nxt)
-                lib.cas_push(dir_, f"{instance}: phase {phase} clear → advancing to {nxt}")
-                gh_api(
-                    f"repos/{github_repository}/dispatches",
-                    "-f", "event_type=protocol-advance",
-                    "-F", f"client_payload[protocol]={pid}",
-                    "-F", f"client_payload[instance]={instance}",
-                    "-F", f"client_payload[phase]={nxt}",
-                )
+        # --- Depth-1 AGENT phase (root child) clear tail. ---
+        # When the node is a root-level agent phase (e.g. code-review's
+        # `preflight`), advance the root cursor via path-continue.
+        if (_paths.is_root_child(proto, tree_path)
+                and _paths.node_kind(proto, tree_path) == "agent"):
+            _this_state = lib.state_by_id(proto, agent_state)
+            _conclude = run_conclude_hook(proto_path, proto, agent_state, evid, instance, blocking)
+            hook = run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid)
+            if _conclude is not None:
+                concl = _conclude.get("conclusion", "neutral")
+                csum = _conclude.get("summary", "")
             else:
-                # No further phase → close the pipeline-level (aggregate) check-run.
-                lib.set_check_run(pid, sha, "completed", "success", "Complete", csum)
+                concl = hook.get("conclusion", "neutral")
+                csum = hook.get("summary", "")
+            _phase_id = tree_path[-1]
+            if (_conclude is not None and _conclude.get("blocked")
+                    and (_this_state or {}).get("on_blocked") == "halt"):
+                # GATE BLOCKED → terminate the pipeline before the next phase.
+                state_data = lib.load_yaml(sf)
+                state_data["state"] = "failed"
+                lib.dump_yaml(sf, state_data)
+                lib.set_check_run(pid, sha, "completed", "failure", "Gate blocked",
+                                  csum or "A required gate did not pass; pipeline halted.")
+                lib.set_check_run(cr_name, sha, "completed", "failure", "Gate blocked", csum)
+                inst_data = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+                inst_data["halted"] = {"phase": _phase_id, "reason": "blocked", "sha": sha}
+                lib.dump_yaml(inf, inst_data)
                 update_status_comment(
                     sf, inf, branch, pr, pid, instance, proto_path, dir_,
-                    "✅ complete", max_iter, github_repository
+                    "⛔ blocked", max_iter, github_repository
                 )
-                lib.ensure_phase_label(dir_, pid, instance, proto, pr, "done")
-                lib.cas_push(dir_, f"{instance}: phase {phase} clear → done (no further phase)")
-        else:
-            # Single-agent or fan-out leg → today's behavior unchanged.
-            lib.set_check_run(cr_name, sha, "completed", concl, "Review complete", csum)
-            update_status_comment(
-                sf, inf, branch, pr, pid, instance, proto_path, dir_,
-                "✅ done — published.",
-                max_iter, github_repository
-            )
-            lib.cas_push(dir_, f"{instance}: checks passed at iteration {iter_} → published, done")
-            fire_join(pid, instance, branch)
+                notice = (f"⛔ **{_phase_id}** gate blocked: "
+                          f"{csum or 'a required gate did not pass'}. "
+                          f"A write-access user can comment `/override <reason>` "
+                          f"to proceed past this gate.")
+                lib.post_pr_comment(pr, notice)
+                lib.ensure_phase_label(dir_, pid, instance, proto, pr, "blocked")
+                lib.cas_push(dir_, f"{instance}: phase {_phase_id} blocked → pipeline halted")
+            else:
+                # GATE CLEAR → advance root cursor via path-continue.
+                # `concl` is never "blocked" here: a blocked conclude goes to
+                # the halt arm above; this arm only runs on a clear gate.
+                nxt = _paths.next_sibling(proto, tree_path)
+                lib.set_check_run(cr_name, sha, "completed", "success",
+                                  "Gate complete", csum)
+                inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+                if nxt:
+                    inst["phase"] = nxt
+                    lib.dump_yaml(inf, inst)
+                    update_status_comment(
+                        sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                        "⏳ advancing", max_iter, github_repository
+                    )
+                    lib.ensure_phase_label(dir_, pid, instance, proto, pr, nxt)
+                    lib.cas_push(dir_, f"{instance}: phase {_phase_id} clear → advancing to {nxt}")
+                    lib.dispatch_continue(pid, instance, path=nxt)
+                else:
+                    # No further sibling → pipeline complete.
+                    lib.set_check_run(pid, sha, "completed", "success", "Complete", csum)
+                    update_status_comment(
+                        sf, inf, branch, pr, pid, instance, proto_path, dir_,
+                        "✅ complete", max_iter, github_repository
+                    )
+                    lib.ensure_phase_label(dir_, pid, instance, proto, pr, "done")
+                    lib.cas_push(dir_, f"{instance}: phase {_phase_id} clear → done (no further phase)")
+            return
+
+        # Remaining done case: a fan-out leg whose parent is the TOP fanout (the
+        # flat_fanout_child block above handles nested fanouts; root-child agents,
+        # sub-pipeline legs, and nested-fanout children all returned earlier). Run
+        # publish for side-effects, mark the leg done, and fire the (path-less) top
+        # join. Root-level agent phases advance via the NODE_PATH root-child block
+        # above (path-continue).
+        hook = run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid)
+        concl = hook.get("conclusion", "neutral")
+        csum = hook.get("summary", "")
+        lib.set_check_run(cr_name, sha, "completed", concl, "Review complete", csum)
+        update_status_comment(
+            sf, inf, branch, pr, pid, instance, proto_path, dir_,
+            "✅ done — published.",
+            max_iter, github_repository
+        )
+        lib.cas_push(dir_, f"{instance}: checks passed at iteration {iter_} → published, done")
+        fire_join(pid, instance, branch)
 
     elif process == "iterate":
         next_iter = iter_ + 1
@@ -714,25 +660,18 @@ def main():
         )
         lib.cas_push(dir_, f"{instance}: iteration {iter_} failed checks → iteration {next_iter}")
 
-        # Re-dispatch. Carry `phase` so a multi-phase agent/fan-out phase resumes
-        # in the SAME phase on re-entry (the orchestrator relays payload.phase ->
-        # PHASE). Empty/absent for single-phase protocols → byte-identical payload.
-        redispatch = [
+        # Re-dispatch carrying the full tree path so the re-dispatched continue
+        # resumes the same depth-N leg (next.py reads NODE_PATH). branch/substate
+        # ride along for the depth-<=3 GHA relay; they are derived from the tree path.
+        gh_api(
             f"repos/{github_repository}/dispatches",
             "-f", "event_type=protocol-continue",
             "-F", f"client_payload[protocol]={pid}",
             "-F", f"client_payload[instance]={instance}",
             "-F", f"client_payload[branch]={branch}",
-        ]
-        if substate:
-            redispatch += ["-F", f"client_payload[substate]={substate}"]
-        if phase:
-            redispatch += ["-F", f"client_payload[phase]={phase}"]
-        # NODE_PATH mode: carry the full tree path so the re-dispatched continue
-        # resumes the same depth-N leg (next.py reads NODE_PATH).
-        if tree_path is not None:
-            redispatch += ["-F", f"client_payload[path]={'.'.join(tree_path)}"]
-        gh_api(*redispatch)
+            "-F", f"client_payload[substate]={substate}",
+            "-F", f"client_payload[path]={'.'.join(tree_path)}",
+        )
 
     else:  # process == "failed"
         # Exhausted
@@ -744,23 +683,18 @@ def main():
         # sf is already marked failed above; there is no leg-cursor to advance, so
         # we must NOT write the parent fanout file. Only a sub-pipeline SEQUENCE
         # leg has a cursor (advance_node marks the branch file failed).
-        flat_fanout_child = (tree_path is not None
-                             and _paths.is_fanout(proto, _paths.parent_path(tree_path)))
+        flat_fanout_child = _paths.is_fanout(proto, _paths.parent_path(tree_path))
         if branch and substate and not flat_fanout_child:
-            if tree_path is not None:
-                ctx.cursor_sf = lib.state_file(
-                    dir_, pid, instance,
-                    path=lib.state_path(proto, _paths.parent_path(tree_path)))
-            else:
-                ctx.cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
-                                               phase=(phase if phase else None))
+            ctx.cursor_sf = lib.state_file(
+                dir_, pid, instance,
+                path=lib.state_path(proto, _paths.parent_path(tree_path)))
             advance_node(ctx, process="failed")
 
-        # An agent PHASE that exhausts its iterations is a terminal phase failure
-        # (label it). A fan-out leg / single-agent v1 reaching here is NOT a phase
-        # terminal — join.py (fan-out) owns that, and v1 has no instance label.
-        _failed_state = lib.state_by_id(proto, agent_state)
-        if phase and _failed_state and _failed_state.get("kind") == "agent":
+        # A root-level agent phase that exhausts its iterations is a terminal phase
+        # failure (label it). A fan-out leg reaching here is NOT a phase terminal —
+        # join.py (fan-out) owns that.
+        if (_paths.is_root_child(proto, tree_path)
+                and _paths.node_kind(proto, tree_path) == "agent"):
             lib.ensure_phase_label(dir_, pid, instance, proto, pr, "failed")
 
         lib.set_check_run(

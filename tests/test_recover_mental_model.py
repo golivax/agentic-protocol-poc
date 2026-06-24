@@ -111,11 +111,12 @@ def test_full_pipeline(tmp_path, engine_env):
         ev = tmp_path / f"{branch}-{substate or 'flat'}.json"
         ev.write_text(json.dumps(evidence_dict))
         e = dict(engine_env)
-        e["BRANCH"] = branch
         e["PR_HEAD_SHA"] = "abc123"
         e["AGENT_RUN_ID"] = "r"
-        if substate:
-            e["SUBSTATE"] = substate
+        # Unified NODE_PATH coordinate: recover-mental-model-stub is single-phase
+        # (fanout `recover`), so the tree path is recover.<branch>[.<substate>].
+        node = "recover." + branch + (f".{substate}" if substate else "")
+        e["NODE_PATH"] = node
         # Each advance.py call needs its own workdir (git-clone into non-empty fails).
         out, err, rc = run_engine(
             "advance.py",
@@ -155,6 +156,13 @@ def test_full_pipeline(tmp_path, engine_env):
     out, err, rc = run_engine("next.py", tmp_path / "dir-answer", "pr-1", PROTO, "answer",
                               env=ea)
     assert rc == 0, f"answer command failed:\n{err}"
+    # CONTRACT: do_answer's follow-on dispatch for a TOP-LEVEL (depth-3) sub-pipeline
+    # gate-with-next-substate must be PATH-form (the unified `continue` handler
+    # requires NODE_PATH and rejects a path-less branch/substate-only continue).
+    # Assert on what do_answer actually EMITTED (its ENGINE_LOCAL stderr), not on a
+    # manually-set NODE_PATH for the follow-on step.
+    assert "client_payload[path]=recover.rationale.finalize" in err, (
+        f"do_answer must emit a path-form continue, got:\n{err}")
 
     # Verify cursor advanced to finalize.
     w2 = clone()
@@ -164,18 +172,44 @@ def test_full_pipeline(tmp_path, engine_env):
     # 5. Advance rationale/finalize to done.
     adv("rationale", "finalize", {"rationale": "Because reasons, the change is safe."})
 
-    # 6. Run join.py — both legs done.
+    # 6. Run join.py — both legs done. Join sets the cursor to combine and
+    # dispatches protocol-continue path=combine (it does NOT run the merge inline).
     ej = dict(engine_env)
     ej["PR_HEAD_SHA"] = "abc123"
     ej["PR"] = "1"
     out, err, rc = run_engine("join.py", tmp_path / "dir-join", "pr-1", PROTO, env=ej)
     assert rc == 0, f"join failed:\n{err}"
+    jcombined = out + err
+    assert "event_type=protocol-continue" in jcombined and \
+        "client_payload[path]=combine" in jcombined, \
+        f"expected join to dispatch protocol-continue path=combine, got:\n{jcombined}"
 
-    # 7. Assert _instance.yaml shows joined=True and phase="combine".
+    # 7. Join side: _instance.yaml shows joined=True and the cursor parked at combine
+    #    (the merge has NOT executed yet — only the dispatch has happened).
     w3 = clone()
     inst = read_state_yaml(w3 / "recover-mental-model-stub/pr-1/_instance.yaml")
     assert inst.get("joined") is True, f"expected joined=True, got {inst}"
     assert inst.get("phase") == "combine", f"expected phase=combine, got {inst.get('phase')!r}"
+
+    # 8. next.py continue NODE_PATH=combine ACTUALLY runs the merge reduce hook
+    #    (append-rationale) which posts the combined summary + rationale → done.
+    ec = dict(engine_env)
+    ec["PR_HEAD_SHA"] = "abc123"
+    ec["PR"] = "1"
+    ec["NODE_PATH"] = "combine"
+    out2, err2, rc2 = run_engine("next.py", tmp_path / "dir-merge", "pr-1", PROTO, "continue", env=ec)
+    assert rc2 == 0, f"merge continue failed:\n{err2}"
+    mcombined = out2 + err2
+    # The reduce hook actually executed: its returned summary rides the Combined
+    # check-run + the 🧬 combine comment. (The hook's own leg-text comment is run in
+    # a captured subprocess inside run_merge_hook, so only its verdict surfaces here.)
+    assert json.loads(out2).get("reason") == "merge:combine"
+    assert "title=Combined" in mcombined and \
+        "Recovered mental model: summary + rationale posted." in mcombined, (
+        f"expected merge reduce hook to run + finalize, got:\n{mcombined}"
+    )
+    # Cursor finalized to done after the merge.
+    assert "Combine → ✅ done" in mcombined or "→ ✅ done" in mcombined
 
 
 def test_run_merge_hook(tmp_path, engine_env):
@@ -230,18 +264,18 @@ def test_answer_then_continue_dispatches_finalize(tmp_path, engine_env):
     ev = tmp_path / "draft.json"
     ev.write_text(json.dumps({"questions": [{"id": "q1", "text": "Why?"}]}))
     e = dict(engine_env)
-    e.update(BRANCH="rationale", SUBSTATE="draft", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
+    e.update(NODE_PATH="recover.rationale.draft", PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
     run_engine("advance.py", tmp_path / "dir-adv", "pr-1", PROTO, passv, ev, env=e)
     ea = dict(engine_env)
     ea.update(ANSWER_BODY="/answer q1: yes", ANSWER_ACTOR="al", PR_HEAD_SHA="abc123")
     run_engine("next.py", tmp_path / "dir-answer", "pr-1", PROTO, "answer", env=ea)
 
     ec = dict(engine_env)
-    ec.update(BRANCH="rationale", SUBSTATE="finalize")
+    ec.update(NODE_PATH="recover.rationale.finalize")
     out, err, rc = run_engine("next.py", tmp_path / "dir-cont", "pr-1", PROTO, "continue", env=ec)
     assert rc == 0, err
     action = json.loads(out)
     assert action["action"] == "run-agent", f"expected run-agent, got {action}"
-    assert action.get("substate") == "finalize"
+    assert action.get("path") == "recover.rationale.finalize"
     names = {i["as"] for i in action.get("inputs", [])}
     assert {"answers", "draft"} <= names, f"inputs missing: {names}"

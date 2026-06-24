@@ -1,5 +1,5 @@
-import importlib, json, subprocess, sys
-from conftest import ENGINE, FIXTURES, run_engine
+import importlib, sys
+from conftest import ENGINE
 sys.path.insert(0, str(ENGINE))
 lib = importlib.import_module("lib")
 
@@ -37,28 +37,15 @@ def test_output_artifact_path_answers_kind():
     assert p == "/s/rev/pr-1/B.clarify.answers.json"
 
 
-def _clone(tmp_path, engine_env):
-    work = tmp_path / "work"
-    subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(work)], check=True)
-    return work
-
-
-def test_evidence_persisted_on_done(tmp_path, engine_env):
-    proto = FIXTURES / "subpipeline-mini/protocol.json"
-    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
-    verdicts = tmp_path / "v.json"
-    verdicts.write_text(json.dumps({"results": [
-        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
-    evid = tmp_path / "evidence.json"
-    evid.write_text(json.dumps({"summary": "draft output", "questions": []}))
-    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
-                                   PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
-    out, err, rc = run_engine("advance.py", tmp_path / "dir-adv", "pr-1", proto, verdicts, evid, env=e)
-    assert rc == 0, err
-    work = _clone(tmp_path, engine_env)
-    persisted = work / "subpipeline-mini/pr-1/B.draft.evidence.json"
-    assert persisted.exists()
-    assert json.loads(persisted.read_text())["summary"] == "draft output"
+# The engine-walk inputs tests (evidence persisted on done; draft output flows to
+# finalize's resolved inputs; run-agent action carries resolved inputs) drove the
+# legacy subpipeline-mini fixture via BRANCH/SUBSTATE coords. They are covered by
+# the NODE_PATH suite over recover-mental-model-stub:
+#   - test_recover_mental_model.test_full_pipeline persists each leg's evidence and
+#     walks draft → gate → finalize;
+#   - test_recover_mental_model.test_answer_then_continue_dispatches_finalize asserts
+#     the resolved inputs ({answers, draft}) ride the finalize run-agent action.
+# The pure lib unit tests below (over the inline SUBPIPE dict) stay.
 
 
 def test_branch_output_substate():
@@ -100,46 +87,3 @@ def test_materialize_inputs(tmp_path):
     assert (tmp_path / "agentwork/inputs/draft.json").read_text() == '{"k": 1}'
 
 
-def test_run_agent_action_carries_inputs(tmp_path, engine_env):
-    proto = FIXTURES / "subpipeline-mini/protocol.json"
-    # Start a fresh review in pr-1
-    dir1 = tmp_path / "dir1"
-    run_engine("next.py", dir1, "pr-1", proto, "start", "abc123", env=engine_env)
-    # Resume finalize → its action should carry resolved inputs.
-    # Needs a fresh directory to avoid state_checkout clone conflict
-    dir2 = tmp_path / "dir2"
-    out, err, rc = run_engine("next.py", dir2, "pr-1", proto, "continue",
-                              env=engine_env, branch="B", substate="finalize")
-    assert rc == 0, err
-    action = json.loads(out)
-    assert action["action"] == "run-agent"
-    names = {i["as"]: i for i in action.get("inputs", [])}
-    assert "draft" in names
-    assert names["draft"]["path"].endswith("B.draft.evidence.json")
-
-
-def test_draft_output_flows_to_finalize_inputs(tmp_path, engine_env):
-    proto = FIXTURES / "subpipeline-mini/protocol.json"
-    run_engine("next.py", tmp_path / "dir", "pr-1", proto, "start", "abc123", env=engine_env)
-
-    # draft → done, persisting evidence with a distinctive payload.
-    v = tmp_path / "v.json"
-    v.write_text(json.dumps({"results": [
-        {"check": "always-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
-    ev = tmp_path / "draft-evidence.json"
-    ev.write_text(json.dumps({"summary": "DRAFT-PAYLOAD"}))
-    e = dict(engine_env); e.update(BRANCH="B", SUBSTATE="draft",
-                                   PR_HEAD_SHA="abc123", AGENT_RUN_ID="r")
-    run_engine("advance.py", tmp_path / "dir-adv", "pr-1", proto, v, ev, env=e)
-
-    # Resolve finalize's inputs from the freshly pushed state, then materialize.
-    work = _clone(tmp_path, engine_env)
-    declared = lib.state_inputs(json.loads(proto.read_text()), "finalize")
-    resolved = lib.resolve_inputs(json.loads(proto.read_text()), str(work),
-                                  "subpipeline-mini", "pr-1",
-                                  consuming_branch="B", consuming_phase=None,
-                                  inputs=declared)
-    manifest = lib.materialize_inputs(resolved, tmp_path / "agentwork")
-    staged = (tmp_path / "agentwork/inputs/draft.json")
-    assert staged.exists()
-    assert json.loads(staged.read_text())["summary"] == "DRAFT-PAYLOAD"

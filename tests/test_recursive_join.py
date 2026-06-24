@@ -65,18 +65,18 @@ def test_join_marker_two_paths_independent(tmp_path):
 def test_two_protocols_seed_into_disjoint_paths(engine_env, tmp_path):
     """Two different protocols seeded for the same instance key produce disjoint state paths.
 
-    subpipeline-mini (single-phase fanout) and multiphase-subpipeline (multi-phase)
+    recover-mental-model-stub (single-phase fanout) and code-review (multi-phase)
     both use instance key 'pr-1' but write into separate <protocol-id>/pr-1/ subtrees
     under the shared STATE_REMOTE origin — no path collision possible.
     """
     import subprocess as _sp
 
     NEXT_PY = ROOT / ".github/agent-factory/engine/next.py"
-    fixtures = ROOT / "tests/fixtures"
+    protocols_dir = ROOT / ".github/agent-factory/protocols"
 
     protocols = [
-        ("subpipeline-mini", fixtures / "subpipeline-mini/protocol.json"),
-        ("multiphase-subpipeline", fixtures / "multiphase-subpipeline/protocol.json"),
+        ("recover-mental-model-stub", protocols_dir / "recover-mental-model-stub/protocol.json"),
+        ("code-review", protocols_dir / "code-review/protocol.json"),
     ]
 
     # Each next.py call needs its own local checkout dir; they share the same
@@ -100,10 +100,10 @@ def test_two_protocols_seed_into_disjoint_paths(engine_env, tmp_path):
     )
 
     # Both protocol dirs must exist and be non-empty (each seeded independently).
-    a = {x.name for x in (view / "subpipeline-mini" / "pr-1").iterdir()}
-    b = {x.name for x in (view / "multiphase-subpipeline" / "pr-1").iterdir()}
+    a = {x.name for x in (view / "recover-mental-model-stub" / "pr-1").iterdir()}
+    b = {x.name for x in (view / "code-review" / "pr-1").iterdir()}
 
-    assert (view / "subpipeline-mini").exists() and (view / "multiphase-subpipeline").exists()
+    assert (view / "recover-mental-model-stub").exists() and (view / "code-review").exists()
     assert a and b  # both seeded independently
     # The two dirs are disjoint namespaces — no shared file path can exist.
-    assert (view / "subpipeline-mini" / "pr-1") != (view / "multiphase-subpipeline" / "pr-1")
+    assert (view / "recover-mental-model-stub" / "pr-1") != (view / "code-review" / "pr-1")

@@ -168,3 +168,11 @@ def max_static_depth(proto):
         for lp in _leg_paths(proto, [s["id"]], s):
             depths.append(len(lp))
     return max(depths)
+
+
+def root_ids(proto):
+    return [c["id"] for c in _root_children(proto)]
+
+
+def is_root_child(proto, path):
+    return len(path) == 1 and path[0] in root_ids(proto)

@@ -86,7 +86,7 @@ def test_block_halt_stamps_halted_marker(state_origin, tmp_path):
     seed_preflight(state_origin, tmp_path / "seed", inst, state="preflight", iteration=1, head_sha="sha-block")
     v = write_json(tmp_path, "verdicts.json", VERDICTS_BLOCK)
     ev = write_json(tmp_path, "evidence.json", EVIDENCE_MIN)
-    env = _env(state_origin, PHASE="preflight", PR="1", PR_HEAD_SHA="sha-block")
+    env = _env(state_origin, NODE_PATH="preflight", PR="1", PR_HEAD_SHA="sha-block")
     _run(ADVANCE_PY, [tmp_path / "adv", inst, PIPELINE_PROTO, v, ev], env)
 
     _clone(state_origin, tmp_path / "verify")
@@ -104,7 +104,7 @@ def test_block_posts_oneoff_notice_and_updates_comment(state_origin, tmp_path):
     seed_preflight(state_origin, tmp_path / "seed", inst, state="preflight", iteration=1, head_sha="sha-blk")
     v = write_json(tmp_path, "verdicts.json", VERDICTS_BLOCK)
     ev = write_json(tmp_path, "evidence.json", EVIDENCE_MIN)
-    env = _env(state_origin, PHASE="preflight", PR="3", PR_HEAD_SHA="sha-blk")
+    env = _env(state_origin, NODE_PATH="preflight", PR="3", PR_HEAD_SHA="sha-blk")
     _, err, _ = _run(ADVANCE_PY, [tmp_path / "adv", inst, PIPELINE_PROTO, v, ev], env)
 
     # one-off timeline notice naming the gate + the override escape hatch
@@ -120,7 +120,7 @@ def test_exhaustion_writes_no_halted_marker(state_origin, tmp_path):
     seed_preflight(state_origin, tmp_path / "seed", inst, state="preflight", iteration=2, head_sha="sha-exh")
     v = write_json(tmp_path, "verdicts.json", VERDICTS_ITER_FAIL)
     ev = write_json(tmp_path, "evidence.json", EVIDENCE_MIN)
-    env = _env(state_origin, PHASE="preflight", PR="2", PR_HEAD_SHA="sha-exh")
+    env = _env(state_origin, NODE_PATH="preflight", PR="2", PR_HEAD_SHA="sha-exh")
     _run(ADVANCE_PY, [tmp_path / "adv", inst, PIPELINE_PROTO, v, ev], env)
 
     _clone(state_origin, tmp_path / "verify")
@@ -145,7 +145,7 @@ def _seed_blocked(state_origin, tmp_path, inst, head_sha="sha-blk"):
     seed_preflight(state_origin, tmp_path / "seed", inst, state="preflight", iteration=1, head_sha=head_sha)
     v = write_json(tmp_path, "v.json", VERDICTS_BLOCK)
     ev = write_json(tmp_path, "ev.json", EVIDENCE_MIN)
-    env = _env(state_origin, PHASE="preflight", PR=inst[3:], PR_HEAD_SHA=head_sha)
+    env = _env(state_origin, NODE_PATH="preflight", PR=inst[3:], PR_HEAD_SHA=head_sha)
     _run(ADVANCE_PY, [tmp_path / "adv", inst, PIPELINE_PROTO, v, ev], env)
 
 
@@ -155,9 +155,14 @@ def test_override_advances_one_phase(state_origin, tmp_path):
     env = _env(state_origin, OVERRIDE_ACTOR="alice", OVERRIDE_REASON="ship it")
     out, err, rc = _run(NEXT_PY, [tmp_path / "ovr", inst, PIPELINE_PROTO, "override", "sha-blk"], env)
     assert rc == 0, err
+    # Task 7: override now dispatches protocol-continue(path=review) instead of seeding
+    # the fan-out inline. The emitted action is noop + reason=override:continue:review.
     action = json.loads(out)
-    assert action["action"] == "run-fanout"
-    assert action["phase"] == "review"
+    assert action["action"] == "noop"
+    assert "override:continue:review" in action["reason"]
+    # The dispatch appears in ENGINE_LOCAL stderr
+    assert "event_type=protocol-continue" in err
+    assert "client_payload[path]=review" in err
 
     _clone(state_origin, tmp_path / "verify")
     base = tmp_path / "verify" / PID / inst
@@ -167,9 +172,10 @@ def test_override_advances_one_phase(state_origin, tmp_path):
     assert inf["overrides"] == [{"phase": "preflight", "actor": "alice", "reason": "ship it"}]
     # The blocked gate's verdict is preserved — never rewritten.
     assert yaml.safe_load((base / "preflight.yaml").read_text())["state"] == "failed"
-    # The next phase (review fan-out) was seeded.
+    # Fan-out leg seeding is deferred to the protocol-continue dispatch (NODE_PATH=review
+    # triggers enter_node(["review"]) in the next next.py invocation).
     for b in REVIEW_BRANCHES:
-        assert (base / f"review.{b}.yaml").is_file()
+        assert not (base / f"review.{b}.yaml").is_file()
 
 
 def test_override_announcement_names_actor(state_origin, tmp_path):

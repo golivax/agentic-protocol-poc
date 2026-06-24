@@ -167,9 +167,14 @@ def test_dispatcher_multiphase_uses_pipeline(tmp_path):
 
 
 def test_ensure_status_comment_noop_for_single_agent(tmp_path, monkeypatch):
-    """grumpy (single-agent) has no shared comment → ensure must be a no-op."""
-    grumpy = ROOT / "tests/fixtures/single-agent/protocol.json"
+    """A single-agent (non-multiphase) protocol has no shared pipeline comment, so
+    lib.ensure_status_comment must be a no-op (the pipeline status comment is a
+    multiphase-only concern). Uses the kept cap-single-agent fixture (name:
+    single-agent)."""
+    solo = ROOT / "tests/fixtures/cap-single-agent/protocol.json"
     monkeypatch.setenv("ENGINE_LOCAL", "1")
-    # Should not raise and should not create an _instance.yaml.
-    lib.ensure_status_comment(str(tmp_path), "single-agent", "pr-1", str(grumpy), "1")
+    # ensure_status_comment itself must not create an _instance.yaml for a
+    # non-multiphase protocol (enter_root creates it during a real start; this is
+    # the lib-level helper, which only acts for multiphase protocols).
+    lib.ensure_status_comment(str(tmp_path), "single-agent", "pr-1", str(solo), "1")
     assert not (tmp_path / "single-agent" / "pr-1" / "_instance.yaml").exists()
