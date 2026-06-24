@@ -96,32 +96,49 @@ mid-run when this branch deploys will have state in the old `(BRANCH, PHASE, SUB
 layout, which the new engine cannot resume. A fresh `/review`, `/recover`, or
 equivalent trigger is required after deploy to start a clean run.
 
-**Test count.** 401 tests across all modules, all green. The capability suite on
-this branch covers: single-agent, simple fanout, multi-phase, sub-pipeline,
+**Test count.** 417 tests across all modules, all green (401 after Stage 4a; +16
+from Stage 4b's emit + workflow-contract + run-checks-NODE_PATH tests). The
+capability suite covers: single-agent, simple fanout, multi-phase, sub-pipeline,
 depth-4/5 deep trees, data-carrying and approval gates, `/override`, restart/reset,
 inputs channel, merge/combine, `max_depth` guard, authoring-error validation, and
 security (agent-derived string injection paths).
 
-> **⚠️ DO NOT MERGE STAGE 4a TO `main` WITHOUT STAGE 4b.**
->
-> The workflows on `main` thread `BRANCH/PHASE/SUBSTATE` and never set
-> `NODE_PATH`.  The unified engine introduced in Stage 4a **requires** `NODE_PATH`
-> on every `advance` and `continue` dispatch — `NODE_PATH` is the sole coordinate
-> of the new engine and the old `(BRANCH, PHASE, SUBSTATE)` derivation has been
-> deleted.  Merging Stage 4a without Stage 4b will silently break every live
-> `/review` and `/recover` run: `advance.py` will exit 1 immediately ("NODE_PATH
-> is required"), and `next.py continue` will exit 2 ("requires a NODE_PATH").
-> **Land Stage 4a and Stage 4b together, or keep Stage 4a on an integration
-> branch until Stage 4b is ready.**
+### Stage 4b — GitHub Actions NODE_PATH wiring (DONE, merged to `main`)
 
-**Pending — Stage 4b and 4c.** The GitHub-Actions wiring for the `NODE_PATH` axis
-is **not yet done**: matrix `leg:{path}`, orchestrator/ctx parsing of
-`client_payload.path`, path-keyed artifacts, orchestrator and join concurrency
-groups keyed on path rather than branch name, and dropping `protocol-advance` from
-the orchestrator's `on:` triggers. A live `deep-review-stub` protocol with
-gh-aw agents and an end-to-end live PR verification are also pending. These are
-separate follow-on stages (4b/4c), tracked in
-`docs/superpowers/plans/stage4b-gha-wiring.md` (to be written).
+The three workflows now drive the engine on the single `NODE_PATH` coordinate:
+`agentic-engine.yml` matrix axis is `leg:{path,workflow}` fed from `action.legs`
+(each leg carries its leaf agent path + workflow); `NODE_PATH` is threaded into
+dispatch/checks/advance; the `ctx` step parses `client_payload.path`; artifacts are
+path-keyed; the `(BRANCH, PHASE, SUBSTATE)` env wiring and `lib.agent-workflow`
+leg-resolution are gone. `protocol-join.yml` threads `NODE_PATH` + path-aware
+concurrency; `agentic-orchestrator.yml` is path-concurrency-keyed and dropped
+`protocol-advance` from `on:`. `run-checks.py` gained a `NODE_PATH` mode (fail-loud
+on an unresolvable path). A `lint.yml` runs `actionlint` (shellcheck capped at
+error severity) on the hand-written workflows. Spec/plan:
+`docs/superpowers/{specs,plans}/2026-06-24-stage4b-gha-wiring*`.
+
+### Stage 4c — live verification (DONE, on `main`, pushed to origin)
+
+A live depth-4 `deep-review-stub` protocol (mirrors `deep-fanout`) + 5 gh-aw stub
+agents were added and **walked end-to-end on real GitHub Actions** (PR #88):
+preflight fanout → `deep` sub-pipeline → nested `analyze` fanout → bubbling joins →
+`report` → done, with path-named check-runs. `code-review` (PR #62) and
+`recover-mental-model-stub` (PR #82) were **re-verified live** on the unified
+engine (code-review → approval gate + self-approve guard; recover → fanout +
+sub-pipeline `/answer` data-gate + merge → done, including recovery from a
+transient agent failure via the iterate loop). Spec/plan:
+`docs/superpowers/{specs,plans}/2026-06-24-stage4c-*`.
+
+**Three live-only bugs found + fixed during 4c** (the offline layers could not
+catch these): (1) the `lint.yml` actionlint gate was red on pre-existing
+shellcheck style nits → capped at error severity; (2) `protocol-join.yml` lacked
+`GH_TOKEN` — the unified `join.py` now *dispatches* `protocol-continue`/`-join`
+(pre-4a it ran inline), which the default token cannot do → added the dispatch
+PAT; (3) `do_answer`'s top-level data-gate arm pre-seeded the next sub-state's
+file, which the continue then re-seeded → empty-commit `cas_push` failure → it now
+advances the cursor only and lets the continue seed. **Backlog (cosmetic):** a
+depth-1 agent-phase check-run is named `<pid>/` (trailing slash) because
+`cr_name = pid + "/" + "/".join(tree_path[1:])` is empty at depth 1.
 
 ## Proven end-to-end (real GitHub Actions)
 
