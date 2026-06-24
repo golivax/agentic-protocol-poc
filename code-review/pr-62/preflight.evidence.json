@@ -1,0 +1,38 @@
+{
+  "checks": [
+    {
+      "id": "spec-adherence",
+      "status": "pass",
+      "summary": "The diff implements `add(a, b)` returning `a + b`, which is exactly what the spec requires: 'The `add` function must return the arithmetic sum of its two integer arguments.'",
+      "evidence": [
+        {
+          "label": "calc.py implementation",
+          "detail": "def add(a, b): return a + b — directly satisfies the requirement of returning the arithmetic sum."
+        }
+      ],
+      "remediation": ""
+    },
+    {
+      "id": "plan-adherence",
+      "status": "pass",
+      "summary": "Both plan steps are fulfilled: step 1 (implement `add(a, b)`) is done in calc.py; step 2 (add a unit test) is done in tests/test_calc.py with `assert add(2, 3) == 5`.",
+      "evidence": [
+        {
+          "label": "Plan step 1 — implementation",
+          "detail": "examples/m3-clear/calc.py introduces `def add(a, b): return a + b`."
+        },
+        {
+          "label": "Plan step 2 — unit test",
+          "detail": "examples/m3-clear/tests/test_calc.py adds `def test_add(): assert add(2, 3) == 5`."
+        }
+      ],
+      "remediation": ""
+    }
+  ],
+  "examined": [
+    "examples/m3-clear/calc.py",
+    "examples/m3-clear/tests/test_calc.py",
+    "examples/m3-clear/REQUIREMENTS.md",
+    "examples/m3-clear/PLAN.md"
+  ]
+}
