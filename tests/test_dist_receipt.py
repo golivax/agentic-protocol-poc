@@ -43,3 +43,24 @@ def test_drift_detects_local_edits(tmp_path):
     assert receipt.drifted(rec, str(tmp_path)) == []
     (tmp_path / "a").write_bytes(b"edited")
     assert receipt.drifted(rec, str(tmp_path)) == ["a"]
+
+
+import subprocess  # noqa: E402
+
+
+def test_version_compat():
+    assert receipt.is_compatible("1.0.0", None) is True
+    assert receipt.is_compatible("1.0.0", "1.0.0") is True
+    assert receipt.is_compatible("1.2.0", "1.0.0") is True
+    assert receipt.is_compatible("1.0.0", "2.0.0") is False
+
+
+def test_breaking_bump():
+    assert receipt.is_breaking_bump("1.4.0", "2.0.0") is True
+    assert receipt.is_breaking_bump("1.0.0", "1.9.0") is False
+
+
+def test_compat_cli_exit_codes():
+    ok = subprocess.run([sys.executable, str(DIST / "receipt.py"), "compat", "1.0.0", "1.0.0"])
+    bad = subprocess.run([sys.executable, str(DIST / "receipt.py"), "compat", "1.0.0", "2.0.0"])
+    assert ok.returncode == 0 and bad.returncode == 1

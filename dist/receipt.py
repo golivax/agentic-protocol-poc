@@ -49,6 +49,21 @@ def drifted(old_receipt, root):
     return sorted(out)
 
 
+def parse_version(v):
+    return tuple(int(x) for x in str(v).split(".") if x.isdigit())
+
+
+def is_compatible(engine_version, min_engine_version):
+    if not min_engine_version:
+        return True
+    return parse_version(engine_version) >= parse_version(min_engine_version)
+
+
+def is_breaking_bump(old, new):
+    po, pn = parse_version(old), parse_version(new)
+    return bool(pn) and bool(po) and pn[0] > po[0]
+
+
 def main(argv):
     if len(argv) >= 8 and argv[1] == "write":
         out, source, ref, ev, protos_json, root = argv[2:8]
@@ -66,6 +81,8 @@ def main(argv):
         for p in drifted(old, argv[3]):
             print(p)
         return 0
+    if len(argv) == 4 and argv[1] == "compat":
+        return 0 if is_compatible(argv[2], argv[3]) else 1
     sys.stderr.write("usage: receipt.py write <out> <source> <ref> <engine_version> <protocols-json> <root> <file>...\n")
     return 2
 
