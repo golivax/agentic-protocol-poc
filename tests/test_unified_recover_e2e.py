@@ -140,6 +140,15 @@ def test_recover_unified_e2e(engine_env, tmp_path):
     assert gate4["gates"]["state"] == "answered", (
         f"clarify gate should be answered: {gate4}"
     )
+    # do_answer must advance the cursor ONLY — it must NOT pre-seed the next
+    # sub-state's file. The dispatched `continue` seeds it (Step 5). If do_answer
+    # pre-seeded it, the continue's enter_node would re-write identical content and
+    # its cas_push would refuse an empty commit — the live recover answer→finalize
+    # stall. (Regression guard for that fix.)
+    assert not (fdir4 / "rationale.finalize.yaml").is_file(), (
+        "do_answer must not pre-seed the next sub-state (the continue seeds it); "
+        "pre-seeding causes an empty-commit cas_push failure on the follow-on continue"
+    )
 
     # --- Step 5: continue NODE_PATH=recover.rationale.finalize → seeds finalize, run-agent ---
     r5 = run(NEXT, tmp_path / "s5", "pr-1", PROTO, "continue",

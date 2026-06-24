@@ -644,9 +644,11 @@ def do_answer():
         cur["sub_state"] = nxt_sub
         cur["state"] = life
         lib.dump_yaml(cf, cur)
-        nsf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, nxt_path))
-        lib.dump_yaml(nsf, {"protocol": PID, "instance": INSTANCE, "state": life,
-                            "iteration": 1, "gates": {}, "head_sha": sha, "history": []})
+        # Advance the cursor ONLY — do NOT pre-seed the next sub-state's file here.
+        # The dispatched `continue` (continue-at-NODE_PATH agent arm) seeds it; if we
+        # also seeded it, that arm would write identical content and its cas_push would
+        # refuse an empty commit (live-found: recover rationale answer→finalize stalled).
+        # This matches the NESTED arm above, which advances the cursor + dispatches only.
         lib.set_check_run(f"{PID}/{branch}/{gate}", sha, "completed", "success",
                           "Answered", f"Answered by @{actor}.")
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered -> {nxt_sub}")
