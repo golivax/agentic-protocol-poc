@@ -584,34 +584,30 @@ git add .github/agent-factory/engine/next.py tests/test_unified_gate_resolve.py 
 git commit -m "feat(next): gate approve + override advance root cursor via path-continue"
 ```
 
-### Task 8: Delete legacy machinery + add full e2e oracle walks
+### Task 8: Full e2e oracle walks (unified path, green)
+
+> Legacy deletion was moved OUT of this task into Task 16 (all deletions happen after every replacement exists). This task ADDS the two integration oracle walks proving the unified `NODE_PATH` path end-to-end. They pass green against the post-Task-7 engine (legacy still present but unused by these tests).
 
 **Files:**
-- Modify: `.github/agent-factory/engine/next.py`, `advance.py`, `join.py`
-- Test: `tests/test_unified_codereview_e2e.py`, `tests/test_unified_recover_e2e.py` (new — the integration oracles, GREEN)
+- Test: `tests/test_unified_codereview_e2e.py`, `tests/test_unified_recover_e2e.py` (new — integration oracles, GREEN)
 
 **Interfaces:**
-- Produces: removal of `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` command branch, the **advance.py legacy coordinate-derivation `else:` block** (so `NODE_PATH` becomes required, with a clear error if unset), the single-agent bespoke planner/advancer paths, and any now-dead `lib` helper (`next_phase_id` if unreferenced). `protocol-advance` appears nowhere in the engine. Two full e2e walks prove the unified path end-to-end.
-- **Test migration (interlocked with the deletion):** deleting the legacy engine machinery breaks every test that drives the engine via legacy coords (no `NODE_PATH`) — `test_multiphase`, `test_phase_relay`, and the legacy-coord `advance.py` invocations in `test_join` / `test_subpipeline` / `test_recover_mental_model`. Remove or migrate each in THIS task so the suite is green at commit. The replacement coverage is the two unified e2e oracles (added here) plus the kept `NODE_PATH` fixtures (`deep-fanout`, `gate-deep`); granular capability coverage (approval/override/restart) is restored in Tasks 11-13. If this task proves too large in practice, split it (engine-delete + test-migrate) and tell the controller.
+- Produces: two full e2e walks driven entirely via `NODE_PATH` (like `tests/test_deep_fanout_e2e.py::test_deep_fanout_walks_to_done`), proving the multi-phase (code-review) and sub-pipeline+merge (recover) unified flows. No engine change in this task.
 
-- [ ] **Step 1: Write the integration oracle walks (expected GREEN)**
+- [ ] **Step 1: Write the integration oracle walks**
 
-`tests/test_unified_codereview_e2e.py`: the full `_drive_to_gate` walk from Task 7 + approve → assert final `approval.yaml` gates `approved`, aggregate complete, `_instance.joined`. `tests/test_unified_recover_e2e.py`: `start` → advance `summary` leg + drive `rationale` sub-pipeline (`recover.rationale.draft` → gate `/answer` → `recover.rationale.finalize`) → `join` → continue `combine` (merge) → `_instance.joined:true, phase=combine`. Model the `/answer` step on `tests/test_gate_data.py`. Read both protocol.json files for exact sub-state ids.
+`tests/test_unified_codereview_e2e.py`: the full walk — `start` → advance `preflight` (NODE_PATH) → continue `review` fanout → advance both legs → `join` → continue `approval` (gate opens) → `resolve-gate` approve → assert final `approval.yaml` gates `approved`, aggregate complete, `_instance.joined`. (Reuse the `_drive_to_gate` shape from Task 7.)
+`tests/test_unified_recover_e2e.py`: `start` → advance `summary` leg → drive `rationale` sub-pipeline (`recover.rationale.draft` → gate `/answer` → `recover.rationale.finalize`) via `NODE_PATH=recover.rationale.<sub>` → `join` → continue `combine` (merge) → assert `_instance.joined:true`, `phase=combine`, merge ran. Model the `/answer` step on `tests/test_gate_data.py`. Read both protocol.json files for exact sub-state ids.
 
 - [ ] **Step 2: Run to confirm they pass** — `pytest tests/test_unified_codereview_e2e.py tests/test_unified_recover_e2e.py -v` PASS (the unified path is complete after Tasks 2-7).
 
-- [ ] **Step 3: Delete dead code + migrate legacy tests** — remove `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` branch, the advance.py legacy coord-derivation `else:` block (make `NODE_PATH` required), and the single-agent bespoke paths in `next.py`/`advance.py`. Then remove/migrate the legacy-coord tests named in the Interfaces block so the suite stays green. Confirm:
+- [ ] **Step 3: Full suite** — `pytest tests/ -q` green (baseline 471; +2 walks).
 
-Run: `grep -rn "protocol-advance\|seed_and_dispatch_phase\|start_fanout\|advance-phase" .github/agent-factory/engine/`
-Expected: zero hits.
-
-- [ ] **Step 4: Run full suite** — `pytest tests/ -q` ALL PASS (legacy-coord tests removed/migrated in Step 3; the kept `deep-fanout`/`gate-deep` NODE_PATH walks + the two unified oracles are green).
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add .github/agent-factory/engine/ tests/test_unified_codereview_e2e.py tests/test_unified_recover_e2e.py
-git commit -m "refactor(engine): delete legacy phase machinery; add full unified e2e oracle walks"
+git add tests/test_unified_codereview_e2e.py tests/test_unified_recover_e2e.py
+git commit -m "test(oracle): full unified NODE_PATH e2e walks for code-review + recover"
 ```
 
 ---
@@ -709,17 +705,32 @@ git commit -m "refactor(engine): delete legacy phase machinery; add full unified
 
 ## Phase D — Cleanup + status
 
-### Task 16: Remove legacy byte-identity fixtures + tests
+### Task 16: Delete ALL legacy machinery + superseded fixtures/tests
+
+> This is the single deletion task — it runs LAST (after every replacement exists: the Task 8 oracles + the Tasks 9-15 capability suite). It removes the legacy engine code paths, the legacy-coord tests they served, and the legacy byte-identity fixtures. After this, the engine has ONE code path (`NODE_PATH`).
 
 **Files:**
-- Delete: `tests/fixtures/{fanout-mini,pipeline-mini,multiphase-subpipeline,subpipeline-mini}/`; legacy assertions/modules superseded by the unified suite.
+- Modify: `.github/agent-factory/engine/next.py`, `advance.py`, `join.py`, `lib.py`
+- Delete: `tests/fixtures/{fanout-mini,pipeline-mini,multiphase-subpipeline,subpipeline-mini}/`
+- Delete/migrate: legacy-coord test modules superseded by the unified suite
 
 **Interfaces:**
-- Produces: a green suite with NO references to retired mechanisms or deleted fixtures.
+- Produces: removal of `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` command branch, the **advance.py legacy coordinate-derivation `else:` block** (so `NODE_PATH` becomes REQUIRED — clear error if unset), the single-agent bespoke planner/advancer paths, and any now-dead `lib` helper (`next_phase_id`/`resolve_agent_unit` legacy-coord variant if unreferenced). `protocol-advance` appears nowhere in the engine. The suite has ONE engine code path and NO references to retired mechanisms.
 
-- [ ] **Step 1:** `grep -rln "fanout-mini\|pipeline-mini\|multiphase-subpipeline\|subpipeline-mini\|protocol-advance" tests/` → for each, delete the fixture/test or rewrite onto a capability fixture (Tasks 9-15 cover the real capabilities). Keep `deep-fanout`, `gate-deep`, `too-deep`.
-- [ ] **Step 2: Run full suite** — `pytest tests/ -q` ALL PASS, no skips for retired behavior.
-- [ ] **Step 3: Commit** — `test: remove legacy byte-identity fixtures + tests (superseded by capability suite)`
+- [ ] **Step 1: Delete the legacy engine code** — remove the items above from `next.py`/`advance.py`/`join.py`/`lib.py`. Confirm:
+
+Run: `grep -rn "protocol-advance\|seed_and_dispatch_phase\|start_fanout\|advance-phase" .github/agent-factory/engine/`
+Expected: zero hits.
+
+- [ ] **Step 2: Remove/migrate the now-broken legacy-coord tests** — deleting the legacy paths breaks every test that drives the engine via legacy coords (no `NODE_PATH`): `test_multiphase`, `test_phase_relay`, and legacy-coord invocations in `test_join`, `test_subpipeline`, `test_recover_mental_model`, plus `test_conclude_preflight`, `test_pipeline_status`, `test_pipeline_check_resolution`, `test_pr_body_env`, `test_preflight_checks`, `test_preflight_coverage`, `test_phase_labels`, `test_status_comment` (grep for them). For each: DELETE if its behavior is now covered by a Task 8 oracle or a Task 9-15 capability test; otherwise MIGRATE its driving calls to `NODE_PATH`. Be explicit in the report about each module's disposition (deleted-as-superseded vs migrated) and which replacement covers it.
+
+Run: `grep -rln "protocol-advance" tests/` and `grep -rln "fanout-mini\|pipeline-mini\|multiphase-subpipeline\|subpipeline-mini" tests/` → resolve each hit.
+
+- [ ] **Step 3: Delete legacy byte-identity fixtures** — `tests/fixtures/{fanout-mini,pipeline-mini,multiphase-subpipeline,subpipeline-mini}/`. Keep `deep-fanout`, `gate-deep`, `too-deep`, and the Task 9-10 capability fixtures (`single-agent`, `simple-fanout`). Repoint any remaining reference (e.g. the Task 1 `test_paths` assertion that used `subpipeline-mini` — point it at `code-review` or a kept fixture).
+
+- [ ] **Step 4: Run full suite** — `pytest tests/ -q` ALL PASS, no skips for retired behavior, no `protocol-advance`/legacy-fixture references anywhere.
+
+- [ ] **Step 5: Commit** — `refactor(engine): delete legacy phase machinery + superseded fixtures/tests (single NODE_PATH path)`
 
 ### Task 17: Update `docs/STATUS.md`
 
