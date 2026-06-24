@@ -1,7 +1,12 @@
 protocol: recover-mental-model-stub
 instance: pr-82
 state: recover
-iteration: 1
+iteration: 2
 gates: {}
 head_sha: 4ceeafe4f82fb62bedc9c092225a53b83986bec6
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28111520923'
+  checks:
+    questions-present: fail
+  feedback: questions list is empty or missing
