@@ -1,6 +1,11 @@
 protocol: deep-review-stub
 instance: pr-88
-state: analyze
+state: done
 iteration: 1
 gates: {}
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28108960176'
+  checks:
+    finding-present: pass
+  feedback: ''
