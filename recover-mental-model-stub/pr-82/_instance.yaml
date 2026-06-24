@@ -1,7 +1,7 @@
 protocol: recover-mental-model-stub
 instance: pr-82
 head_sha: 4ceeafe4f82fb62bedc9c092225a53b83986bec6
-phase: recover
-joined: false
-phase_label: recover
+phase: combine
+joined: true
+phase_label: Combine
 status_comment_id: 4791184010
