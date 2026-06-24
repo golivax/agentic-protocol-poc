@@ -45,30 +45,43 @@ def main():
     with open(proto) as f:
         protocol = json.load(f)
 
-    branch = os.environ.get("BRANCH", "")
-    substate = os.environ.get("SUBSTATE", "")
+    node_path_env = os.environ.get("NODE_PATH", "")
 
-    # Find the state node
-    state_node = None
-    for s in protocol.get("states", []):
-        if s.get("id") == state_id:
-            state_node = s
-            break
-
-    # Resolve the config node: the branch node when BRANCH is set, else the state node.
-    # When BRANCH and SUBSTATE are both set and the branch is a sub-pipeline branch,
-    # descend into the branch's sub-states to find the config node for that sub-state.
-    # CHECK_PARAMS (sub-state-scoped, branch-scoped, or state-scoped) and the check list
-    # both come from this one node.
-    if branch:
-        node = next(
-            (b for b in (state_node or {}).get("branches", []) if b.get("id") == branch),
-            None,
-        )
-        if substate and node:
-            node = next((s for s in node.get("states", []) if s.get("id") == substate), None)
+    if node_path_env:
+        # NODE_PATH mode (Stage 4b+): the env var carries the full dot-joined tree
+        # path (e.g. "review.grumpy" or "review.B.draft"). Use paths.node_at_path
+        # to navigate the protocol tree directly — no flat state_id lookup needed.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as _paths
+        tree_path = node_path_env.split(".")
+        node = _paths.node_at_path(protocol, tree_path)
     else:
-        node = state_node
+        # Legacy BRANCH/SUBSTATE mode (backward-compat for tests that call run-checks.py
+        # with BRANCH/SUBSTATE env and a flat state_id positional arg).
+        branch = os.environ.get("BRANCH", "")
+        substate = os.environ.get("SUBSTATE", "")
+
+        # Find the state node
+        state_node = None
+        for s in protocol.get("states", []):
+            if s.get("id") == state_id:
+                state_node = s
+                break
+
+        # Resolve the config node: the branch node when BRANCH is set, else the state node.
+        # When BRANCH and SUBSTATE are both set and the branch is a sub-pipeline branch,
+        # descend into the branch's sub-states to find the config node for that sub-state.
+        # CHECK_PARAMS (sub-state-scoped, branch-scoped, or state-scoped) and the check list
+        # both come from this one node.
+        if branch:
+            node = next(
+                (b for b in (state_node or {}).get("branches", []) if b.get("id") == branch),
+                None,
+            )
+            if substate and node:
+                node = next((s for s in node.get("states", []) if s.get("id") == substate), None)
+        else:
+            node = state_node
 
     params = (node or {}).get("params", {})
     params_json = json.dumps(params, separators=(",", ":"))

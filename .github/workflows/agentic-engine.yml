@@ -42,10 +42,8 @@ jobs:
       sabotage: ${{ steps.sabotage.outputs.sabotage }}
       instance: ${{ steps.ctx.outputs.instance }}
       command: ${{ steps.ctx.outputs.command }}
-      phase: ${{ steps.plan.outputs.phase }}
-      branches: ${{ steps.plan.outputs.branches }}
+      legs: ${{ steps.plan.outputs.legs }}
       inputs_json: ${{ steps.plan.outputs.inputs_json }}
-      branch: ${{ steps.ctx.outputs.branch }}
       override_actor: ${{ steps.ctx.outputs.override_actor }}
       override_reason: ${{ steps.ctx.outputs.override_reason }}
     steps:
@@ -54,31 +52,26 @@ jobs:
         env:
           PROTO: ${{ inputs.protocol }}
           DISPATCH_INSTANCE: ${{ github.event.client_payload.instance }}
-          DISPATCH_BRANCH: ${{ github.event.client_payload.branch }}
-          DISPATCH_PHASE: ${{ github.event.client_payload.phase }}
+          DISPATCH_PATH: ${{ github.event.client_payload.path }}
           DISPATCH_TYPE: ${{ github.event.action }}
           PR_EVENT_ACTION: ${{ github.event.action }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENTER_LOGIN: ${{ github.event.comment.user.login }}
-          DISPATCH_SUBSTATE: ${{ github.event.client_payload.substate }}
           GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
         run: |
-          # Derive (instance, command, branch, phase). Agent-derived strings
+          # Derive (instance, command, node_path). Agent-derived strings
           # (payload fields, comment body) are read via env, never interpolated.
           # Entry events (pull_request/issue_comment) map through the protocol's
           # `triggers` block; internal repository_dispatch types are generic.
-          BRANCH=""
-          PHASE=""
+          NODE_PATH=""
           CMD=""
-          SUBSTATE=""
           case "${{ github.event_name }}" in
             repository_dispatch)
               INSTANCE="$DISPATCH_INSTANCE"
               [ -n "$INSTANCE" ] || { echo "[ctx] repository_dispatch with empty instance" >&2; exit 1; }
               PR="${INSTANCE#pr-}"
               case "$DISPATCH_TYPE" in
-                protocol-continue) CMD="continue";      BRANCH="$DISPATCH_BRANCH"; PHASE="$DISPATCH_PHASE"; SUBSTATE="$DISPATCH_SUBSTATE" ;;
-                protocol-advance)  CMD="advance-phase";  BRANCH="";                 PHASE="$DISPATCH_PHASE" ;;
+                protocol-continue) CMD="continue"; NODE_PATH="$DISPATCH_PATH" ;;
                 *) echo "[ctx] unknown repository_dispatch type: $DISPATCH_TYPE" >&2; exit 1 ;;
               esac ;;
             pull_request)
@@ -153,9 +146,7 @@ jobs:
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
           echo "instance=$INSTANCE" >> "$GITHUB_OUTPUT"
           echo "command=$CMD" >> "$GITHUB_OUTPUT"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          echo "phase=$PHASE" >> "$GITHUB_OUTPUT"
-          echo "substate=$SUBSTATE" >> "$GITHUB_OUTPUT"
+          echo "node_path=$NODE_PATH" >> "$GITHUB_OUTPUT"
       - id: head
         if: steps.ctx.outputs.command != ''
         env:
@@ -178,43 +169,37 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ steps.head.outputs.sha }}
           PROTO: ${{ inputs.protocol }}
-          BRANCH: ${{ steps.ctx.outputs.branch }}
-          PHASE: ${{ steps.ctx.outputs.phase }}
+          NODE_PATH: ${{ steps.ctx.outputs.node_path }}
           OVERRIDE_ACTOR: ${{ steps.ctx.outputs.override_actor }}
           OVERRIDE_REASON: ${{ steps.ctx.outputs.override_reason }}
           GATE_DECISION: ${{ steps.ctx.outputs.gate_decision }}
           GATE_ACTOR: ${{ steps.ctx.outputs.gate_actor }}
           GATE_REASON: ${{ steps.ctx.outputs.gate_reason }}
           GATE_PR_AUTHOR: ${{ steps.ctx.outputs.gate_pr_author }}
-          SUBSTATE: ${{ steps.ctx.outputs.substate }}
           ANSWER_BODY: ${{ steps.ctx.outputs.answer_body }}
           ANSWER_ACTOR: ${{ steps.ctx.outputs.answer_actor }}
         run: |
-          # next.py reads BRANCH/PHASE from env. Empty BRANCH+PHASE → the v1/v2
-          # legacy path; PHASE set → multi-phase; advance-phase seeds the cursor's phase.
+          # next.py reads NODE_PATH from env (the dot-joined tree path of the leg
+          # being continued). Empty NODE_PATH → a fresh start (start/reset command).
           .github/agent-factory/engine/next.py /tmp/state "${{ steps.ctx.outputs.instance }}" \
             "$PROTO" "${{ steps.ctx.outputs.command }}" "$HEAD_SHA" > /tmp/action.json
           cat /tmp/action.json
           ACTION=$(jq -r .action /tmp/action.json)
           echo "action=$ACTION" >> "$GITHUB_OUTPUT"
           echo "iteration=$(jq -r .iteration /tmp/action.json)" >> "$GITHUB_OUTPUT"
-          echo "phase=$(jq -r '.phase // ""' /tmp/action.json)" >> "$GITHUB_OUTPUT"
           { echo "feedback<<GH_EOF"; jq -r .feedback /tmp/action.json; echo "GH_EOF"; } >> "$GITHUB_OUTPUT"
-          # Legs (matrix axis):
-          #   run-fanout            → all branch ids
-          #   run-agent + branched  → [that branch]      (a fan-out branch's own continue)
-          #   run-agent otherwise   → [""]               (single-agent OR agent phase: one sentinel leg)
-          #   halt/other            → []                 (downstream jobs skip)
+          # Legs (matrix axis — NODE_PATH coordinate, replaces legacy branch/substate):
+          #   run-fanout  → legs[] from action (each carries {path, workflow})
+          #   run-agent   → one-element [{path, workflow}] from the action
+          #   halt/other  → []  (downstream jobs skip)
           if [ "$ACTION" = "run-fanout" ]; then
-            BRANCHES=$(jq -c '[.branches[] | {branch: .id, substate: (.substate // "")}]' /tmp/action.json)
-          elif [ "$ACTION" = "run-agent" ] && [ -n "${{ steps.ctx.outputs.branch }}" ]; then
-            BRANCHES=$(jq -cn --arg b "${{ steps.ctx.outputs.branch }}" --arg s "${{ steps.ctx.outputs.substate }}" '[{branch: $b, substate: $s}]')
+            LEGS=$(jq -c '.legs' /tmp/action.json)
           elif [ "$ACTION" = "run-agent" ]; then
-            BRANCHES='[{"branch":"","substate":""}]'
+            LEGS=$(jq -c '[{path: .path, workflow: .workflow}]' /tmp/action.json)
           else
-            BRANCHES='[]'
+            LEGS='[]'
           fi
-          echo "branches=$BRANCHES" >> "$GITHUB_OUTPUT"
+          echo "legs=$LEGS" >> "$GITHUB_OUTPUT"
           # Inline this leg's resolved inputs (if the action declares any) so the
           # agent reads them from aw_context (.inputs). action.inputs[].path are
           # absolute paths inside the state checkout (/tmp/state). "{}" if none.
@@ -246,7 +231,7 @@ jobs:
             echo "sabotage=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Mark pipeline in progress (aggregate check run)
-        if: steps.plan.outputs.branches != '[]' && steps.plan.outputs.branches != ''
+        if: steps.plan.outputs.legs != '[]' && steps.plan.outputs.legs != ''
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -278,12 +263,12 @@ jobs:
   # ── Zone 2: the sandboxed agents, one matrix leg per branch/sentinel. ──
   dispatch:
     needs: plan
-    if: ${{ needs.plan.outputs.branches != '[]' && needs.plan.outputs.branches != '' }}
+    if: ${{ needs.plan.outputs.legs != '[]' && needs.plan.outputs.legs != '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        leg: ${{ fromJSON(needs.plan.outputs.branches) }}
+        leg: ${{ fromJSON(needs.plan.outputs.legs) }}
     steps:
       - uses: actions/checkout@v5
       - id: wait
@@ -295,16 +280,14 @@ jobs:
           SABOTAGE: ${{ needs.plan.outputs.sabotage }}
           REPO: ${{ github.repository }}
           PROTO: ${{ inputs.protocol }}
-          PHASE: ${{ needs.plan.outputs.phase }}
-          LEG: ${{ matrix.leg.branch }}
-          SUBSTATE: ${{ matrix.leg.substate }}
+          NODE_PATH: ${{ matrix.leg.path }}
+          LEG_WORKFLOW: ${{ matrix.leg.workflow }}
           INPUTS_JSON: ${{ needs.plan.outputs.inputs_json }}
         run: |
-          # Correlation id: unique per dispatch (run id + attempt + leg). The leg
-          # is the branch id, or "agent" for the single-agent/agent-phase sentinel
-          # (an empty string would make a "…-" suffix; use a stable token instead).
-          LEGTOK="${LEG:-agent}"
-          [ -n "$SUBSTATE" ] && LEGTOK="$LEGTOK-$SUBSTATE"
+          # Correlation id: unique per dispatch (run id + attempt + leg path).
+          # The leg token is derived from the dot-path (dots → dashes for readability).
+          LEGTOK=$(printf '%s' "$NODE_PATH" | tr '.' '-')
+          [ -n "$LEGTOK" ] || LEGTOK="agent"
           CID="${{ github.run_id }}-${{ github.run_attempt }}-${LEGTOK}"
           INPUTS="$INPUTS_JSON"; [ -n "$INPUTS" ] || INPUTS='{}'
           CTX=$(jq -nc \
@@ -312,10 +295,10 @@ jobs:
             --argjson sabotage "$SABOTAGE" --arg cid "$CID" \
             --argjson inputs "$INPUTS" \
             '{pr: $pr, iteration: $iteration, feedback: $feedback, sabotage: $sabotage, cid: $cid, inputs: $inputs}')
-          # Resolve the agent workflow for this leg from the protocol (NOT from the
-          # branch name — an agent phase's workflow lives on the phase state).
-          NAME=$(python3 .github/agent-factory/engine/lib.py agent-workflow "$PROTO" "$PHASE" "$LEG" "$SUBSTATE")
-          [ -n "$NAME" ] || { echo "no agent workflow resolved for phase='$PHASE' leg='$LEG' substate='$SUBSTATE'" >&2; exit 1; }
+          # Workflow comes from the matrix leg (next.py emits it in legs[]); read
+          # via env var (never interpolated) to keep the security invariant.
+          NAME="$LEG_WORKFLOW"
+          [ -n "$NAME" ] || { echo "no agent workflow in matrix leg for NODE_PATH='$NODE_PATH'" >&2; exit 1; }
           WF="$NAME.lock.yml"
           mkdir -p /tmp/meta
           T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -338,18 +321,18 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: runmeta-${{ matrix.leg.branch || 'agent' }}-${{ matrix.leg.substate || 'none' }}
+          name: runmeta-${{ matrix.leg.path }}
           path: /tmp/meta
 
   # ── Zone 3: checks. No secrets beyond the default read token. ──
   checks:
     needs: [plan, dispatch]
-    if: always() && needs.plan.outputs.branches != '[]' && needs.plan.outputs.branches != '' && needs.dispatch.result != 'skipped'
+    if: always() && needs.plan.outputs.legs != '[]' && needs.plan.outputs.legs != '' && needs.dispatch.result != 'skipped'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        leg: ${{ fromJSON(needs.plan.outputs.branches) }}
+        leg: ${{ fromJSON(needs.plan.outputs.legs) }}
     permissions:
       contents: read
       actions: read
@@ -361,7 +344,7 @@ jobs:
       - name: Download run meta
         uses: actions/download-artifact@v7
         with:
-          name: runmeta-${{ matrix.leg.branch || 'agent' }}-${{ matrix.leg.substate || 'none' }}
+          name: runmeta-${{ matrix.leg.path }}
           path: /tmp/meta
       - id: meta
         run: |
@@ -384,20 +367,20 @@ jobs:
         env:
           RID: ${{ steps.meta.outputs.rid }}
           OK: ${{ steps.meta.outputs.ok }}
-          BRANCH: ${{ matrix.leg.branch }}
-          SUBSTATE: ${{ matrix.leg.substate }}
-          PHASE: ${{ needs.plan.outputs.phase }}
+          NODE_PATH: ${{ matrix.leg.path }}
           PROTO: ${{ inputs.protocol }}
         run: |
           # run-checks.py resolves the check LIST + node-scoped params from the
-          # protocol given BRANCH/PHASE. The state node id is the phase id when
-          # PHASE is set, else the legacy "review".
+          # protocol given NODE_PATH. NODE_PATH is the dot-joined tree path of the
+          # leg (e.g. "review.grumpy"); run-checks.py reads it from env.
           EV=/tmp/agent/evidence.json
           if [ ! -f "$EV" ]; then
             echo "WARNING: no evidence artifact (agent run $RID, ok=$OK); checks will report it" >&2
             echo '{}' > "$EV"
           fi
-          NODE="${PHASE:-$(jq -r '[.states[] | select(.kind=="fanout" or .kind=="agent")] | .[0].id // "review"' "$PROTO")}"
+          # NODE is derived from NODE_PATH (the full dot-path passed as the state-id
+          # positional arg; run-checks.py reads NODE_PATH env to navigate the tree).
+          NODE="$NODE_PATH"
           # Make the PR description + title available to checks (env, never
           # interpolated into this run: block). Fetched from GitHub by this
           # trusted job — not from agent output. Multiline body stays in a shell
@@ -413,18 +396,18 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: verdicts-${{ matrix.leg.branch || 'agent' }}-${{ matrix.leg.substate || 'none' }}
+          name: verdicts-${{ matrix.leg.path }}
           path: /tmp/verdicts
 
   # ── Zone 4: engine-post. Reads check verdicts only; sole writer of state. ──
   advance:
     needs: [plan, dispatch, checks]
-    if: always() && needs.plan.outputs.branches != '[]' && needs.plan.outputs.branches != '' && needs.dispatch.result != 'skipped' && (needs.checks.result == 'success' || needs.checks.result == 'failure')
+    if: always() && needs.plan.outputs.legs != '[]' && needs.plan.outputs.legs != '' && needs.dispatch.result != 'skipped' && (needs.checks.result == 'success' || needs.checks.result == 'failure')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        leg: ${{ fromJSON(needs.plan.outputs.branches) }}
+        leg: ${{ fromJSON(needs.plan.outputs.legs) }}
     permissions:
       contents: read
       pull-requests: write
@@ -436,12 +419,12 @@ jobs:
       - name: Download run meta
         uses: actions/download-artifact@v7
         with:
-          name: runmeta-${{ matrix.leg.branch || 'agent' }}-${{ matrix.leg.substate || 'none' }}
+          name: runmeta-${{ matrix.leg.path }}
           path: /tmp/meta
       - name: Download verdicts
         uses: actions/download-artifact@v7
         with:
-          name: verdicts-${{ matrix.leg.branch || 'agent' }}-${{ matrix.leg.substate || 'none' }}
+          name: verdicts-${{ matrix.leg.path }}
           path: /tmp/verdicts
       - name: Re-download evidence (for publication only)
         env:
@@ -461,9 +444,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR: ${{ needs.plan.outputs.pr }}
           PR_HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
-          BRANCH: ${{ matrix.leg.branch }}
-          SUBSTATE: ${{ matrix.leg.substate }}
-          PHASE: ${{ needs.plan.outputs.phase }}
+          NODE_PATH: ${{ matrix.leg.path }}
           PROTO: ${{ inputs.protocol }}
         run: |
           export AGENT_RUN_ID=$(cat /tmp/meta/run_id 2>/dev/null || echo "")
