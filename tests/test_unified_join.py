@@ -140,6 +140,17 @@ def test_top_join_advances_to_combine_via_continue(engine_env, tmp_path):
     inst = _yaml(inst_dir / "_instance.yaml")
     assert inst["phase"] == "combine", f"Expected phase=combine, got {inst.get('phase')!r}"
 
+    # Step 2: next.py continue NODE_PATH=combine runs the merge reduce hook + finalizes.
+    rm = run("next.py", tmp_path / "m", "pr-1", PROTO_SP, "continue", NODE_PATH="combine")
+    mcombined = rm.stdout + rm.stderr
+    # append-outputs concatenated both leg outputs → merge actually executed.
+    assert "FROM-A" in mcombined and "FROM-B" in mcombined, (
+        f"Expected merge hook to combine both leg outputs, got:\n{mcombined}"
+    )
+    assert json.loads(rm.stdout).get("reason") == "merge:combine"
+    inst2 = _yaml((_rc(engine_env, tmp_path, "m") / "subpipeline-mini" / "pr-1") / "_instance.yaml")
+    assert inst2.get("joined") is True and inst2.get("phase") == "combine"
+
 
 def test_join_sentinel_next_does_not_dispatch_continue(engine_env, tmp_path):
     """join.next=done (sentinel not a real state) → plain finalize, no protocol-continue."""

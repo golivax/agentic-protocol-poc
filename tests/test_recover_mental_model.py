@@ -164,18 +164,44 @@ def test_full_pipeline(tmp_path, engine_env):
     # 5. Advance rationale/finalize to done.
     adv("rationale", "finalize", {"rationale": "Because reasons, the change is safe."})
 
-    # 6. Run join.py — both legs done.
+    # 6. Run join.py — both legs done. Join sets the cursor to combine and
+    # dispatches protocol-continue path=combine (it does NOT run the merge inline).
     ej = dict(engine_env)
     ej["PR_HEAD_SHA"] = "abc123"
     ej["PR"] = "1"
     out, err, rc = run_engine("join.py", tmp_path / "dir-join", "pr-1", PROTO, env=ej)
     assert rc == 0, f"join failed:\n{err}"
+    jcombined = out + err
+    assert "event_type=protocol-continue" in jcombined and \
+        "client_payload[path]=combine" in jcombined, \
+        f"expected join to dispatch protocol-continue path=combine, got:\n{jcombined}"
 
-    # 7. Assert _instance.yaml shows joined=True and phase="combine".
+    # 7. Join side: _instance.yaml shows joined=True and the cursor parked at combine
+    #    (the merge has NOT executed yet — only the dispatch has happened).
     w3 = clone()
     inst = read_state_yaml(w3 / "recover-mental-model-stub/pr-1/_instance.yaml")
     assert inst.get("joined") is True, f"expected joined=True, got {inst}"
     assert inst.get("phase") == "combine", f"expected phase=combine, got {inst.get('phase')!r}"
+
+    # 8. next.py continue NODE_PATH=combine ACTUALLY runs the merge reduce hook
+    #    (append-rationale) which posts the combined summary + rationale → done.
+    ec = dict(engine_env)
+    ec["PR_HEAD_SHA"] = "abc123"
+    ec["PR"] = "1"
+    ec["NODE_PATH"] = "combine"
+    out2, err2, rc2 = run_engine("next.py", tmp_path / "dir-merge", "pr-1", PROTO, "continue", env=ec)
+    assert rc2 == 0, f"merge continue failed:\n{err2}"
+    mcombined = out2 + err2
+    # The reduce hook actually executed: its returned summary rides the Combined
+    # check-run + the 🧬 combine comment. (The hook's own leg-text comment is run in
+    # a captured subprocess inside run_merge_hook, so only its verdict surfaces here.)
+    assert json.loads(out2).get("reason") == "merge:combine"
+    assert "title=Combined" in mcombined and \
+        "Recovered mental model: summary + rationale posted." in mcombined, (
+        f"expected merge reduce hook to run + finalize, got:\n{mcombined}"
+    )
+    # Cursor finalized to done after the merge.
+    assert "Combine → ✅ done" in mcombined or "→ ✅ done" in mcombined
 
 
 def test_run_merge_hook(tmp_path, engine_env):

@@ -62,15 +62,36 @@ def test_join_runs_merge_then_finalizes(tmp_path, engine_env):
     run_engine("next.py", tmp_path / "dir-answer", "pr-1", proto, "answer", env=ea)
     adv("B", "finalize", "FROM-B")
 
-    # Now both legs done → run join.
+    # Now both legs done → run join. Join sets the cursor + dispatches a
+    # protocol-continue carrying path=combine (it no longer runs the merge inline).
     ej = dict(engine_env); ej["PR_HEAD_SHA"] = "abc123"
     out, err, rc = run_engine("join.py", tmp_path / "dir-join", "pr-1", proto, env=ej)
     assert rc == 0, err
+    jcombined = out + err
+    assert "event_type=protocol-continue" in jcombined and \
+        "client_payload[path]=combine" in jcombined, \
+        f"Expected join to dispatch protocol-continue path=combine, got:\n{jcombined}"
     work = tmp_path / "work"; subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(work)], check=True)
     inst = read_state_yaml(work / "subpipeline-mini/pr-1/_instance.yaml")
+    # Join side: cursor parked at the merge state; merge has NOT run yet.
     assert inst.get("joined") is True
-    # The merge ran: instance cursor parked at the merge state.
     assert inst.get("phase") == "combine"
+
+    # Step 2: next.py continue NODE_PATH=combine ACTUALLY runs the merge reduce hook
+    # (the unified merge arm) and finalizes. Mirrors how the gate test drives
+    # join → next.py continue NODE_PATH=approval.
+    ec = dict(engine_env); ec["PR_HEAD_SHA"] = "abc123"; ec["NODE_PATH"] = "combine"
+    out2, err2, rc2 = run_engine("next.py", tmp_path / "dir-merge", "pr-1", proto, "continue", env=ec)
+    assert rc2 == 0, err2
+    mcombined = out2 + err2
+    # The append-outputs reduce hook concatenated both leg outputs (merge truly ran).
+    assert "FROM-A" in mcombined and "FROM-B" in mcombined, (
+        f"Expected merge hook to combine both leg outputs, got:\n{mcombined}"
+    )
+    assert json.loads(out2).get("reason") == "merge:combine"
+    work2 = tmp_path / "work2"; subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(work2)], check=True)
+    inst2 = read_state_yaml(work2 / "subpipeline-mini/pr-1/_instance.yaml")
+    assert inst2.get("joined") is True and inst2.get("phase") == "combine"
 
 
 def test_full_pipeline_with_merge(tmp_path, engine_env):
@@ -94,14 +115,30 @@ def test_full_pipeline_with_merge(tmp_path, engine_env):
     run_engine("next.py", tmp_path / "dir-answer", "pr-1", proto, "answer", env=ea)
     adv("B", "finalize", "BETA")
 
+    # Join sets the cursor to combine + dispatches protocol-continue path=combine
+    # (the merge runs in the SECOND step below, not inline in join).
     ej = dict(engine_env); ej["PR_HEAD_SHA"] = "abc123"
     out, err, rc = run_engine("join.py", tmp_path / "dir-join", "pr-1", proto, env=ej)
     assert rc == 0, err
+    jcombined = out + err
+    assert "event_type=protocol-continue" in jcombined and \
+        "client_payload[path]=combine" in jcombined, \
+        f"Expected join to dispatch protocol-continue path=combine, got:\n{jcombined}"
 
     work = tmp_path / "work"; subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(work)], check=True)
     inst = read_state_yaml(work / "subpipeline-mini/pr-1/_instance.yaml")
     assert inst.get("joined") is True
     assert inst.get("phase") == "combine"
+
+    # Step 2: next.py continue NODE_PATH=combine runs the merge reduce hook → done.
+    ec = dict(engine_env); ec["PR_HEAD_SHA"] = "abc123"; ec["NODE_PATH"] = "combine"
+    out2, err2, rc2 = run_engine("next.py", tmp_path / "dir-merge", "pr-1", proto, "continue", env=ec)
+    assert rc2 == 0, err2
+    mcombined = out2 + err2
+    assert "ALPHA" in mcombined and "BETA" in mcombined, (
+        f"Expected merge hook to combine both leg outputs, got:\n{mcombined}"
+    )
+    assert json.loads(out2).get("reason") == "merge:combine"
 
 
 def _make_flat_protocol(tmp_path: Path, join_next: str, extra_states=None) -> Path:
@@ -221,6 +258,17 @@ def test_join_dispatches_agent_combine(tmp_path, engine_env):
     ej["PR_HEAD_SHA"] = "abc123"
     out, err, rc = run_engine("join.py", tmp_path / "dir-join", "pr-1", pf, env=ej)
     assert rc == 0, f"join failed:\n{err}"
+
+    # Assert the DISPATCH contract: join advances the cursor to the agent-combine
+    # state AND fires a protocol-continue carrying its path (the unified .next
+    # dispatch). next.py's continue agent arm picks that up to run the combine agent.
+    combined = out + err
+    assert "event_type=protocol-continue" in combined, (
+        f"Expected join to dispatch protocol-continue, got:\n{combined}"
+    )
+    assert "client_payload[path]=combine2" in combined, (
+        f"Expected dispatch path=combine2, got:\n{combined}"
+    )
 
     # Assert: instance cursor advanced to the agent-combine state.
     work = tmp_path / "work-m2"
