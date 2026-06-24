@@ -115,8 +115,8 @@ def test_recover_unified_e2e(engine_env, tmp_path):
     assert cursor3["sub_state"] == "clarify", (
         f"rationale cursor should be at clarify after draft done: {cursor3}"
     )
-    assert cursor3["state"] in ("recover", "preflight"), (
-        f"rationale leg state should be the fanout life-state: {cursor3}"
+    assert cursor3["state"] == "recover", (
+        f"rationale leg state should be the fanout life-state 'recover': {cursor3}"
     )
     gate3 = _yaml(fdir3 / "rationale.clarify.yaml")
     assert gate3["gates"]["state"] == "open", (
@@ -195,9 +195,10 @@ def test_recover_unified_e2e(engine_env, tmp_path):
         f"Expected reason=merge:combine, got: {act8}"
     )
     combined8 = r8.stdout + r8.stderr
-    # The append-rationale hook ran and produced its output
-    assert "Recovered mental model" in combined8 or "combine" in combined8.lower(), (
-        f"Expected merge hook output in:\n{combined8}"
+    # The append-rationale reduce hook actually ran: its real summary string surfaces
+    # in the captured output (mirrors test_recover_mental_model.py::test_full_pipeline).
+    assert "Recovered mental model: summary + rationale posted." in combined8, (
+        f"Expected append-rationale hook output in:\n{combined8}"
     )
 
     # --- FINAL: assert persisted state ---

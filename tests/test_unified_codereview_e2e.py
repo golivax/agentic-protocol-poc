@@ -70,8 +70,8 @@ def test_codereview_unified_e2e(engine_env, tmp_path):
     # --- Step 1: start → seeds preflight.yaml ---
     r1 = run(NEXT, tmp_path / "s1", "pr-1", PROTO, "start", "sha1")
     act1 = json.loads(r1.stdout)
-    # multi-phase start seeds the first phase (preflight agent), not a fanout
-    assert act1["action"] in ("run-agent", "noop", "run-fanout"), act1
+    # multi-phase start seeds the first phase (preflight agent) → must emit run-agent
+    assert act1["action"] == "run-agent", act1
     fdir = reclone("1")
     # preflight.yaml seeded
     assert (fdir / "preflight.yaml").is_file(), "preflight.yaml not seeded after start"
