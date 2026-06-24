@@ -310,9 +310,9 @@ def test_preflight_clear_advances_via_path_continue(engine_env, tmp_path):
 Run: `pytest tests/test_unified_advance.py -v`
 Expected: FAIL — today fires `protocol-advance`, not a path-continue.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Implement (incremental — DO NOT delete the legacy block yet)**
 
-Delete the legacy coordinate-derivation `else:` block (~465–504); make `node_path_env` required (clear error if unset). In the `is_agent_phase` clear branch, replace the `protocol-advance` `gh_api(...)` with:
+**Keep the suite green:** many existing tests still invoke `advance.py` with legacy `BRANCH`/`PHASE`/`SUBSTATE` coords (`test_multiphase`, `test_phase_relay`, `test_join`, `test_subpipeline`, `test_recover_mental_model`). Do **NOT** delete the legacy coordinate-derivation `else:` block and do **NOT** make `node_path_env` required in this task — that deletion + the legacy-test migration is **deferred to Task 8**. In this task, change ONLY the **NODE_PATH-mode** `is_agent_phase` clear tail: where it currently fires `protocol-advance`, replace that `gh_api(...)` with the path-continue below. Leave the legacy-mode agent-phase-clear (which still fires `protocol-advance`) untouched so legacy-coord tests stay green.
 
 ```python
 nxt = _paths.next_sibling(proto, tree_path)   # tree_path is depth-1 (a root phase)
@@ -330,27 +330,30 @@ else:
     ...
 ```
 
-Derive `is_agent_phase = paths.is_root_child(proto, tree_path) and node_kind(proto, tree_path)=="agent"`. Update `tests/test_phase_relay.py` / `tests/test_multiphase.py`: any assertion of `event_type=protocol-advance` / `client_payload[phase]=` for a phase clear becomes `protocol-continue` / `client_payload[path]=<next>`.
+Derive `is_agent_phase` in NODE_PATH mode as `paths.is_root_child(proto, tree_path) and node_kind(proto, tree_path)=="agent"`. Because the legacy path is untouched, **no existing test changes in this task** — only the new `tests/test_unified_advance.py` is added. (The legacy `protocol-advance` agent-phase-clear and its tests are removed/migrated in Task 8.)
 
-- [ ] **Step 4: Run** — `pytest tests/test_unified_advance.py tests/test_phase_relay.py tests/test_multiphase.py tests/test_conclude_preflight.py -v` PASS; then `pytest tests/ -q` green.
+- [ ] **Step 4: Run** — `pytest tests/test_unified_advance.py tests/test_phase_relay.py tests/test_multiphase.py tests/test_conclude_preflight.py -v` PASS (legacy tests still green, new test green); then `pytest tests/ -q` green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .github/agent-factory/engine/advance.py tests/test_unified_advance.py tests/test_phase_relay.py tests/test_multiphase.py
-git commit -m "feat(advance): agent-phase clear advances root cursor via path-continue (NODE_PATH-only); drop protocol-advance fire"
+git add .github/agent-factory/engine/advance.py tests/test_unified_advance.py
+git commit -m "feat(advance): NODE_PATH agent-phase clear advances root cursor via path-continue"
 ```
 
-### Task 5: `join.py` top join → advance enclosing-seq cursor to `.next`
+### Task 5: `join.py` top join → advance to `.next` + continue `merge` arm
 
 **Files:**
 - Modify: `.github/agent-factory/engine/join.py` (all-done branch ~211–264; keep `_nested_join` unchanged)
-- Modify: `tests/test_join.py` (update bespoke-tail assertions)
+- Modify: `.github/agent-factory/engine/next.py` (add the `merge`-kind arm to the `continue`-at-`NODE_PATH` dispatch)
+- Modify: `tests/test_join.py`, `tests/test_merge.py`, `tests/test_recover_mental_model.py` (update old inline-tail assertions to the unified flow)
 - Test: `tests/test_unified_join.py` (new)
 
 **Interfaces:**
-- Produces: on all-done, the top join sets `_instance.yaml.phase = join_state.next` and `lib.dispatch_continue(pid, instance, path=join_state.next)`; the gate/agent/merge that follows is entered by the recursive `continue` (Tasks 6). No-`.next` → finalize aggregate success (unchanged). Not-all-done → finalize failure (unchanged).
-- Consumes: the join state's `.next`, `lib.dispatch_continue(path=…)`.
+- Produces: on all-done, the top join sets `_instance.yaml.phase = join_state.next` and `lib.dispatch_continue(pid, instance, path=join_state.next)`. The `continue`-at-`NODE_PATH` dispatch gains a `merge`-kind arm (code in Step 4) that runs `lib.run_merge_hook` + finalizes — so recover's `join → combine(merge)` chain works end-to-end and its tests stay green. (The depth-1 GATE case — code-review `join → approval` — is entered by the continue gate arm that already exists; Task 6 verifies/hardens it.) No-`.next` (or `.next` not a real state, e.g. deep-fanout `done`) → finalize aggregate success (unchanged). Not-all-done → finalize failure (unchanged).
+- Consumes: the join state's `.next`, `lib.dispatch_continue(path=…)`, `lib.run_merge_hook`, `lib.render_instance_status_body`.
+
+> **Why the merge arm is HERE (not Task 6):** the join change makes recover's top join dispatch `continue(path=combine)`; without the `merge` arm the merge would be un-run and `test_merge`/`test_recover_mental_model` would break. Folding the merge arm in keeps the suite green within this task. Task 6 covers the depth-1 GATE path + capability.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -417,26 +420,51 @@ if all_done and nxt:
 # else fall through to the existing finalize (success no-.next / failure) tail
 ```
 
-Keep the existing aggregate-check-run finalize for the no-`.next` and failure cases. Update `tests/test_join.py`: assertions that the join opens the gate / runs the merge inline become assertions of `protocol-continue` + `client_payload[path]=<next>` (the gate/merge now happen in the subsequent continue — Task 6).
+**Guard the `.next`-is-not-a-real-state case:** deep-fanout's `join-preflight` has `next: done`, where `done` is a sentinel, not a state. So gate the advance on the target existing: `if all_done and nxt and lib.state_by_id(proto, nxt):` — otherwise fall through to the finalize tail (aggregate success). Keep the existing aggregate-check-run finalize for the no-`.next`/sentinel and failure cases.
 
-- [ ] **Step 4: Run** — `pytest tests/test_unified_join.py tests/test_join.py tests/test_deep_fanout_e2e.py -v` PASS (deep-fanout join `.next`=done → no-`.next`-equivalent? NOTE: deep-fanout join-preflight `next: done` — `done` is not a real state, so treat a `.next` that is the literal `done`/absent as finalize. Add that guard: `if all_done and nxt and lib.state_by_id(proto, nxt):`). Then `pytest tests/ -q` green.
+Then add the **`merge` arm** to next.py's `continue`-at-`NODE_PATH` dispatch (so recover's `join → continue(path=combine)` runs the reduce hook + finalizes):
+
+```python
+if _kind == "merge":
+    node = paths.node_at_path(proto_data, _p)
+    res = lib.run_merge_hook(DIR, PID, INSTANCE, PROTO, node)
+    inf = lib.instance_file(DIR, PID, INSTANCE)
+    inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+    inst["phase"] = _p[-1]; inst["joined"] = True
+    lib.dump_yaml(inf, inst)
+    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    lib.set_check_run(PID, HEAD_SHA, "completed", res.get("conclusion","neutral"),
+                      "Combined", res.get("summary",""))
+    lib.post_pr_comment(pr, f"🧬 **{_p[-1]}**: {res.get('summary','')}")
+    lib.upsert_status_comment(inf, pr, lib.render_instance_status_body(DIR, PID, INSTANCE, PROTO))
+    lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, "done")
+    lib.cas_push(DIR, f"{INSTANCE}: merge {_p[-1]} → done")
+    print(json.dumps({"action":"noop","iteration":0,"feedback":"","reason":f"merge:{_p[-1]}"}))
+    sys.exit(0)
+```
+
+Update the affected tests to the unified flow: `tests/test_join.py` (join now dispatches `protocol-continue`+path instead of opening gate / running merge inline); `tests/test_merge.py` and `tests/test_recover_mental_model.py` (the merge runs via `join.py` → `next.py continue NODE_PATH=combine` rather than inline in join.py — drive both steps and assert the merge result). If a recover/merge test is a pure legacy-coord driver superseded by the Task 8 unified oracle, it may be deleted instead of migrated.
+
+- [ ] **Step 4: Run** — `pytest tests/test_unified_join.py tests/test_join.py tests/test_merge.py tests/test_recover_mental_model.py tests/test_deep_fanout_e2e.py -v` PASS; then `pytest tests/ -q` green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .github/agent-factory/engine/join.py tests/test_unified_join.py tests/test_join.py
-git commit -m "feat(join): top join advances enclosing-seq cursor to .next via path-continue"
+git add .github/agent-factory/engine/join.py .github/agent-factory/engine/next.py tests/test_unified_join.py tests/test_join.py tests/test_merge.py tests/test_recover_mental_model.py
+git commit -m "feat(join+next): top join advances to .next via path-continue; continue merge arm runs reduce hook"
 ```
 
-### Task 6: Recursive `continue` learns gate + merge at depth-1
+### Task 6: Recursive `continue` opens a depth-1 gate (approval)
+
+> The `merge` arm was folded into Task 5 (coupling with the join change). This task confirms+hardens the GATE path: `continue` with `NODE_PATH` at a depth-1 `gate` node (code-review's `approval`) opens the gate at the path `do_resolve_gate` reads, so the join → continue(approval) → `/approve` chain is coherent.
 
 **Files:**
-- Modify: `.github/agent-factory/engine/next.py` (the `continue`-at-`NODE_PATH` arms ~722–763)
+- Modify: `.github/agent-factory/engine/next.py` (the `continue`-at-`NODE_PATH` gate arm ~756–763) — only if a depth-1 gate is not already opened at the path `do_resolve_gate` reads (`lib.state_file(... phase=cursor)`); otherwise this task is test-only.
 - Test: `tests/test_unified_continue_kinds.py` (new)
 
 **Interfaces:**
-- Produces: `continue` with `NODE_PATH` at a `gate` node opens the gate (depth-1: the approval gate); at a `merge` node runs `lib.run_merge_hook` + finalizes the instance (aggregate check-run + status comment + done label) and emits `noop`.
-- Consumes: `lib.open_gate`, `lib.run_merge_hook`, `lib.render_instance_status_body`, `paths.node_at_path`.
+- Produces: `continue` with `NODE_PATH=<depth-1 gate>` opens the gate (gate file at the path `do_resolve_gate` will read; `gates.state == "open"`). The gate arm already exists for nested gates; the deliverable is proving (and fixing if needed) the depth-1 root-gate case.
+- Consumes: `lib.open_gate`, `paths.node_at_path`, the existing `enter_node` gate arm.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -467,54 +495,26 @@ def test_continue_at_approval_gate_opens_it(engine_env, tmp_path):
     g=_yaml(_rc(engine_env,tmp_path,"code-review","g")/"approval.yaml")
     assert g.get("gates",{}).get("state")=="open"
 
-def test_continue_at_merge_runs_hook_and_finalizes(engine_env, tmp_path):
-    proto = ROOT/".github/agent-factory/protocols/recover-mental-model-stub/protocol.json"
-    base=dict(engine_env); base["PR_HEAD_SHA"]="s1"
-    subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"s"),"pr-1",str(proto),
-                    "start","s1"],text=True,capture_output=True,env=base,check=True)
-    e=dict(base); e["NODE_PATH"]="combine"
-    r=subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"c"),"pr-1",str(proto),
-                      "continue"],text=True,capture_output=True,env=e)
-    assert r.returncode==0, r.stderr
-    assert json.loads(r.stdout)["reason"].startswith("merge")
-    assert _yaml(_rc(engine_env,tmp_path,"recover-mental-model-stub","m")/"_instance.yaml").get("joined") is True
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+Note: this test seeds via `start` (which lands at `preflight`), then drives `continue NODE_PATH=approval` directly to exercise the depth-1 gate-open in isolation — it does not require the full join walk (that is the Task 8 oracle). The `_instance.yaml.phase` is `preflight` from the `start`; the gate-open arm must still open the `approval` gate file at the path `do_resolve_gate` reads regardless of the cursor value.
+
+- [ ] **Step 2: Run to verify it fails (or passes)**
 
 Run: `pytest tests/test_unified_continue_kinds.py -v`
-Expected: FAIL — the gate arm may not handle a depth-1 root gate cursor write to `_instance`; the `merge` kind is unhandled (falls through).
+Expected: the gate arm may already handle this (it was built for nested gates). If it PASSES, this task is the test (a regression guard for the depth-1 root-gate case) + a one-line confirmation in the report. If it FAILS (e.g. the gate file lands at a path `do_resolve_gate` cannot read for a depth-1 multi-phase root gate), fix the gate arm in Step 3.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Implement (only if Step 2 failed)**
 
-The gate arm already calls `enter_node`'s gate arm (which opens the gate); confirm it works for a depth-1 root gate (uses `_instance.yaml.phase` already set). Add the `merge` arm to the `continue`-at-`NODE_PATH` dispatch:
+Ensure the `continue`-at-`NODE_PATH` gate arm opens a depth-1 root gate at the FILE path `do_resolve_gate` reads. `do_resolve_gate` reads `lib.state_file(DIR, PID, INSTANCE, phase=cursor)`; `enter_node`'s gate arm calls `lib.open_gate(..., gate_id, ..., phase=(path[-1] if is_multiphase else None))`. Confirm these resolve to the same file for a depth-1 multi-phase gate (`approval.yaml`). If they diverge, align the gate arm's `phase=`/`path=` so the written file matches `do_resolve_gate`'s read. Add a focused assertion that `do_resolve_gate` (approve) then finds the gate (this is fully exercised in Task 7; here just confirm the file location).
 
-```python
-if _kind == "merge":
-    node = paths.node_at_path(proto_data, _p)
-    res = lib.run_merge_hook(DIR, PID, INSTANCE, PROTO, node)
-    inf = lib.instance_file(DIR, PID, INSTANCE)
-    inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
-    inst["phase"] = _p[-1]; inst["joined"] = True
-    lib.dump_yaml(inf, inst)
-    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
-    lib.set_check_run(PID, HEAD_SHA, "completed", res.get("conclusion","neutral"),
-                      "Combined", res.get("summary",""))
-    lib.post_pr_comment(pr, f"🧬 **{_p[-1]}**: {res.get('summary','')}")
-    lib.upsert_status_comment(inf, pr, lib.render_instance_status_body(DIR, PID, INSTANCE, PROTO))
-    lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, "done")
-    lib.cas_push(DIR, f"{INSTANCE}: merge {_p[-1]} → done")
-    print(json.dumps({"action":"noop","iteration":0,"feedback":"","reason":f"merge:{_p[-1]}"}))
-    sys.exit(0)
-```
-
-- [ ] **Step 4: Run** — `pytest tests/test_unified_continue_kinds.py tests/test_merge.py tests/test_gate.py -v` PASS; `pytest tests/ -q` green.
+- [ ] **Step 4: Run** — `pytest tests/test_unified_continue_kinds.py tests/test_gate.py -v` PASS; `pytest tests/ -q` green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add .github/agent-factory/engine/next.py tests/test_unified_continue_kinds.py
-git commit -m "feat(next): continue handles depth-1 gate + merge kinds (reduce hook + finalize)"
+git commit -m "test(next): depth-1 root gate-open via continue (regression guard; fix if needed)"
 ```
 
 ### Task 7: Gate resolution + override tails → path-continue
@@ -591,7 +591,8 @@ git commit -m "feat(next): gate approve + override advance root cursor via path-
 - Test: `tests/test_unified_codereview_e2e.py`, `tests/test_unified_recover_e2e.py` (new — the integration oracles, GREEN)
 
 **Interfaces:**
-- Produces: removal of `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` command branch, the single-agent bespoke planner/advancer paths, and any now-dead `lib` helper (`next_phase_id` if unreferenced). `protocol-advance` appears nowhere in the engine. Two full e2e walks prove the unified path end-to-end.
+- Produces: removal of `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` command branch, the **advance.py legacy coordinate-derivation `else:` block** (so `NODE_PATH` becomes required, with a clear error if unset), the single-agent bespoke planner/advancer paths, and any now-dead `lib` helper (`next_phase_id` if unreferenced). `protocol-advance` appears nowhere in the engine. Two full e2e walks prove the unified path end-to-end.
+- **Test migration (interlocked with the deletion):** deleting the legacy engine machinery breaks every test that drives the engine via legacy coords (no `NODE_PATH`) — `test_multiphase`, `test_phase_relay`, and the legacy-coord `advance.py` invocations in `test_join` / `test_subpipeline` / `test_recover_mental_model`. Remove or migrate each in THIS task so the suite is green at commit. The replacement coverage is the two unified e2e oracles (added here) plus the kept `NODE_PATH` fixtures (`deep-fanout`, `gate-deep`); granular capability coverage (approval/override/restart) is restored in Tasks 11-13. If this task proves too large in practice, split it (engine-delete + test-migrate) and tell the controller.
 
 - [ ] **Step 1: Write the integration oracle walks (expected GREEN)**
 
@@ -599,12 +600,12 @@ git commit -m "feat(next): gate approve + override advance root cursor via path-
 
 - [ ] **Step 2: Run to confirm they pass** — `pytest tests/test_unified_codereview_e2e.py tests/test_unified_recover_e2e.py -v` PASS (the unified path is complete after Tasks 2-7).
 
-- [ ] **Step 3: Delete dead code** — remove `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` branch, the single-agent bespoke paths in `next.py`/`advance.py`. Confirm:
+- [ ] **Step 3: Delete dead code + migrate legacy tests** — remove `start_fanout`, `seed_and_dispatch_phase`, the `advance-phase` branch, the advance.py legacy coord-derivation `else:` block (make `NODE_PATH` required), and the single-agent bespoke paths in `next.py`/`advance.py`. Then remove/migrate the legacy-coord tests named in the Interfaces block so the suite stays green. Confirm:
 
 Run: `grep -rn "protocol-advance\|seed_and_dispatch_phase\|start_fanout\|advance-phase" .github/agent-factory/engine/`
 Expected: zero hits.
 
-- [ ] **Step 4: Run full suite** — `pytest tests/ -q` ALL PASS (failing legacy assertions, if any remain, are deleted in Task 16; but the suite must already be green here — if a non-legacy test breaks, fix it).
+- [ ] **Step 4: Run full suite** — `pytest tests/ -q` ALL PASS (legacy-coord tests removed/migrated in Step 3; the kept `deep-fanout`/`gate-deep` NODE_PATH walks + the two unified oracles are green).
 
 - [ ] **Step 5: Commit**
 
