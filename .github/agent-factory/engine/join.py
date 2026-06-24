@@ -209,7 +209,7 @@ def main():
         sys.exit(0)
 
     if all_done:
-        # If a human gate follows the join, OPEN it instead of finalizing.
+        # Find the join state for this fanout.
         join_state = None
         fo_id = fanout_state.get("id") if fanout_state else None
         for st in protocol.get("states", []):
@@ -221,43 +221,17 @@ def main():
                 if st.get("kind") == "join":
                     join_state = st
                     break
-        gate_next = (join_state or {}).get("next")
-        gns = lib.state_by_id(protocol, gate_next) if gate_next else None
-        if gns and gns.get("kind") == "gate":
+        nxt = (join_state or {}).get("next")
+        # Only advance when .next names a real state in this protocol.
+        # deep-fanout has `next: done` where "done" is a sentinel, not a real state —
+        # guard against that by checking state_by_id returns something.
+        if nxt and lib.state_by_id(protocol, nxt):
             instance_data["joined"] = True
-            instance_data["phase"] = gate_next
+            instance_data["phase"] = nxt
             lib.dump_yaml(inf, instance_data)
-            lib.open_gate(dir_, pid, instance, proto, gate_next, sha, pr)
-            lib.ensure_phase_label(dir_, pid, instance, protocol, pr, gate_next)
-            lib.cas_push(dir_, f"{instance}: join clear → gate {gate_next} open")
-            return
-
-        # If an AGENT state follows the join, advance + dispatch it (mode 2).
-        merge_next = (join_state or {}).get("next")
-        mns = lib.state_by_id(protocol, merge_next) if merge_next else None
-        if mns and mns.get("kind") == "agent":
-            instance_data["joined"] = True
-            instance_data["phase"] = merge_next
-            lib.dump_yaml(inf, instance_data)
-            lib.ensure_phase_label(dir_, pid, instance, protocol, pr, merge_next)
-            lib.cas_push(dir_, f"{instance}: join clear -> agent combine {merge_next}")
-            lib._gh_dispatch("protocol-advance",
-                             {"protocol": pid, "instance": instance, "phase": merge_next})
-            return
-
-        # If a MERGE state follows the join, run its reduce hook before finalizing.
-        if mns and mns.get("kind") == "merge":
-            result = lib.run_merge_hook(dir_, pid, instance, proto, mns)
-            instance_data["joined"] = True
-            instance_data["phase"] = merge_next
-            lib.dump_yaml(inf, instance_data)
-            lib.set_check_run(pid, sha, "completed", result.get("conclusion", "neutral"),
-                              "Combined", result.get("summary", ""))
-            lib.post_pr_comment(pr, f"🧬 **{merge_next}**: {result.get('summary','')}")
-            body = lib.render_instance_status_body(dir_, pid, instance, proto)
-            lib.upsert_status_comment(inf, pr, body)
-            lib.ensure_phase_label(dir_, pid, instance, protocol, pr, "done")
-            lib.cas_push(dir_, f"{instance}: join clear → merge {merge_next} → done")
+            lib.ensure_phase_label(dir_, pid, instance, protocol, pr, nxt)
+            lib.cas_push(dir_, f"{instance}: join clear → continue {nxt}")
+            lib.dispatch_continue(pid, instance, path=nxt)
             return
 
         concl = "success"

@@ -819,6 +819,26 @@ if COMMAND == "continue" and NODE_PATH:
         print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
                           "reason": f"gate-open:{NODE_PATH}"}))
         sys.exit(0)
+    if _kind == "merge":
+        # A `continue` onto a MERGE state (dispatched by the top join via path-continue).
+        # Run the reduce hook, finalize the instance, update comment + label.
+        node = paths.node_at_path(proto_data, _p)
+        res = lib.run_merge_hook(DIR, PID, INSTANCE, PROTO, node)
+        inf = lib.instance_file(DIR, PID, INSTANCE)
+        inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
+        inst["phase"] = _p[-1]
+        inst["joined"] = True
+        lib.dump_yaml(inf, inst)
+        pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+        lib.set_check_run(PID, HEAD_SHA, "completed", res.get("conclusion", "neutral"),
+                          "Combined", res.get("summary", ""))
+        lib.post_pr_comment(pr, f"🧬 **{_p[-1]}**: {res.get('summary', '')}")
+        lib.upsert_status_comment(inf, pr, lib.render_instance_status_body(DIR, PID, INSTANCE, PROTO))
+        lib.ensure_phase_label(DIR, PID, INSTANCE, proto_data, pr, "done")
+        lib.cas_push(DIR, f"{INSTANCE}: merge {_p[-1]} → done")
+        print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                          "reason": f"merge:{_p[-1]}"}))
+        sys.exit(0)
 
 if not BRANCH and is_fanout() and not PHASE:
     # start/reset were handled by enter_root above; only error-guard remains.
