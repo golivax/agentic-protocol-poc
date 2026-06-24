@@ -4,14 +4,12 @@ the workflow YAML files contain/exclude specific strings that encode the
 NODE_PATH wiring contract established in Stage 4b.
 """
 import pathlib
-import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WF = ROOT / ".github/workflows"
 
 
 def _load(name):
-    # GitHub 'on' parses to python True; that's fine, we read as text + yaml.
     return WF.joinpath(name).read_text()
 
 

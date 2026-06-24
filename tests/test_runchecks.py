@@ -459,3 +459,114 @@ def test_substate_branch_only_no_checks(tmp_path):
     files = _empty_files(tmp_path)
     out = run_checks(SUBPIPE_PROTO_PATH, "recover", ev, diff, files, branch="rationale")
     assert out["results"] == []
+
+
+# ===========================================================================
+# NODE_PATH mode (Stage 4b) — the unified single-coordinate path.
+# run-checks.py navigates the protocol tree via paths.node_at_path when NODE_PATH
+# is set (no BRANCH/SUBSTATE). These lock the NODE_PATH branch added in Task 2:
+#   (a) it resolves the SAME check list + node-scoped CHECK_PARAMS the legacy
+#       BRANCH path would for the same node, and
+#   (b) an UNRESOLVABLE NODE_PATH errors loudly (non-zero exit) instead of
+#       silently emitting {"results":[]} — which would let advance.py see zero
+#       failing verdicts and proceed as a false success.
+# ===========================================================================
+
+def _run_checks_node_path(proto, state_id, evidence, diff, files, node_path, env=None):
+    """Invoke run-checks.py with NODE_PATH set (no BRANCH/SUBSTATE).
+    Returns (parsed_dict_or_None, returncode)."""
+    e = dict(env or os.environ)
+    e["NODE_PATH"] = node_path
+    # Ensure no legacy coords leak in from the ambient env.
+    e.pop("BRANCH", None)
+    e.pop("SUBSTATE", None)
+    stdout, stderr, rc = run_engine(
+        "run-checks.py", proto, state_id, evidence, diff, files, env=e,
+    )
+    parsed = None
+    try:
+        parsed = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        parsed = None
+    return parsed, rc, stderr
+
+
+# 22
+def test_node_path_review_grumpy_resolves_same_checks_as_legacy():
+    """NODE_PATH=review.grumpy resolves the grumpy fanout leg's 3 checks — the
+    SAME list the legacy branch='grumpy' path resolves (assertion 15)."""
+    out, rc, _ = _run_checks_node_path(
+        GRUMPY_PROTO, "review.grumpy", EV_COMPLETE, DIFF_PR1, FILES_PR1,
+        node_path="review.grumpy",
+    )
+    assert rc == 0
+    assert out is not None
+    legacy = run_checks(GRUMPY_PROTO, "review", EV_COMPLETE, DIFF_PR1, FILES_PR1,
+                        branch="grumpy")
+    assert [r["check"] for r in out["results"]] == [r["check"] for r in legacy["results"]]
+    assert len(out["results"]) == 3
+
+
+# 23
+def test_node_path_review_security_resolves_security_leg_checks():
+    """NODE_PATH=review.security resolves the security leg's 2 checks (no
+    rubric-coverage) — matching the legacy branch='security' path (assertion 16)."""
+    out, rc, _ = _run_checks_node_path(
+        GRUMPY_PROTO, "review.security", EV_COMPLETE, DIFF_PR1, FILES_PR1,
+        node_path="review.security",
+    )
+    assert rc == 0
+    assert len(out["results"]) == 2
+    assert "rubric-coverage" not in {r["check"] for r in out["results"]}
+
+
+# 24
+def test_node_path_forwards_node_scoped_params(tmp_path):
+    """NODE_PATH forwards the leaf node's node-scoped params as CHECK_PARAMS — the
+    SAME params the legacy branch path resolves. Built on a real fanout protocol
+    (kind:'fanout') with an echo-params.sh leg check so we can read CHECK_PARAMS
+    back out of the verdict feedback."""
+    checks_dir = tmp_path / "checks"
+    checks_dir.mkdir()
+    echo_script = checks_dir / "echo-params.sh"
+    echo_script.write_text(
+        '#!/usr/bin/env bash\n'
+        'jq -nc --arg f "${CHECK_PARAMS:-MISSING}" \'{check:"echo-params",pass:true,feedback:$f}\'\n'
+    )
+    echo_script.chmod(echo_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    proto = tmp_path / "protocol.json"
+    proto.write_text(json.dumps({
+        "name": "p",
+        "states": [{
+            "id": "review",
+            "kind": "fanout",
+            "params": {"categories": ["state-default"]},
+            "branches": [{
+                "id": "bx",
+                "params": {"categories": ["only-b"]},
+                "checks": [{"run": "echo-params"}],
+            }],
+        }],
+    }))
+    out, rc, _ = _run_checks_node_path(
+        proto, "review.bx", EV_COMPLETE, DIFF_PR1, FILES_PR1, node_path="review.bx",
+    )
+    assert rc == 0
+    feedback_parsed = json.loads(out["results"][0]["feedback"])
+    assert feedback_parsed["categories"] == ["only-b"]
+
+
+# 25
+def test_node_path_unresolvable_errors_not_silent_empty():
+    """A NODE_PATH that does not resolve to a node MUST error (non-zero exit), NOT
+    silently print {"results":[]}. Zero verdicts would make advance.py see no
+    failing checks and proceed — a dangerous false success."""
+    out, rc, stderr = _run_checks_node_path(
+        GRUMPY_PROTO, "review.bogus", EV_COMPLETE, DIFF_PR1, FILES_PR1,
+        node_path="review.bogus",
+    )
+    assert rc != 0, f"expected non-zero exit for unresolvable NODE_PATH, got rc={rc}, out={out}"
+    # And it must NOT have printed an empty-but-valid verdict set on stdout.
+    assert not (out and out.get("results") == []), \
+        "unresolvable NODE_PATH silently produced empty verdicts"
+    assert "does not resolve" in stderr
