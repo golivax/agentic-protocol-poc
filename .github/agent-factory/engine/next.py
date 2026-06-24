@@ -69,11 +69,18 @@ def _fanout_action(proto, path, branches):
     if multi:
         act["phase"] = path[-1]
     act["branches"] = branches
-    # `legs` is the path-aware companion to `branches` (Stage 3): one entry per
-    # child carrying its full tree path. Additive — `branches` stays authoritative
-    # for the depth-<=3 GHA layer; `legs` carries the tree path the nested-fanout
-    # matrix needs. child_tree_path = fanout_tree_path + [branch_id].
-    act["legs"] = [{"path": ".".join(path + [b["id"]])} for b in branches]
+    # `legs` is the path-aware companion to `branches` (Stage 3/4b): one entry per
+    # child carrying its full LEAF tree path + agent workflow. Additive —
+    # `branches` stays authoritative for the depth-<=3 GHA layer; `legs` is the
+    # single uniform shape the GHA matrix reads for node path + workflow.
+    # Leaf path = fanout_path + branch_id for a FLAT branch;
+    #            fanout_path + branch_id + first_substate for a SUB-PIPELINE branch
+    # (`branches[]` dicts from _seed_child already carry `substate` for sub-pipelines).
+    legs = []
+    for b in branches:
+        leaf = path + [b["id"]] + ([b["substate"]] if b.get("substate") else [])
+        legs.append({"path": ".".join(leaf), "workflow": b.get("workflow")})
+    act["legs"] = legs
     return act
 
 
@@ -123,7 +130,8 @@ def enter_node(proto, path, command, emit=True):
                            "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []})
         if emit:
             act = {"action": "run-agent", "iteration": 1, "feedback": "",
-                   "reason": f"phase:{path[-1]}"}
+                   "reason": f"phase:{path[-1]}", "path": ".".join(path),
+                   "workflow": paths.node_at_path(proto, path).get("workflow")}
             if lib.is_multiphase(proto):
                 act["phase"] = path[-1]
             print(json.dumps(act))
@@ -210,6 +218,7 @@ def _emit_for_node(path, branches):
     node = paths.node_at_path(proto_data, path)
     act = {"action": "run-agent", "iteration": 1, "feedback": "",
            "reason": f"phase:{path[-1]}",
+           "path": ".".join(path),
            "workflow": node.get("workflow")}
     if lib.is_multiphase(proto_data):
         act["phase"] = path[-1]

@@ -47,7 +47,9 @@ def test_start_deepfanout_seeds_fanout(engine_env, tmp_path):
     proto = ROOT / "tests/fixtures/deep-fanout/protocol.json"
     act = _start(engine_env, tmp_path, proto)
     assert act["action"] == "run-fanout"
-    assert {l["path"] for l in act["legs"]} == {"preflight.quick", "preflight.deep"}
+    # preflight.quick is a flat agent → leaf path == branch path.
+    # preflight.deep is a sub-pipeline branch → leaf path is its first sub-state (triage).
+    assert {l["path"] for l in act["legs"]} == {"preflight.quick", "preflight.deep.triage"}
 
 
 def test_continue_review_phase_emits_fanout_legs(engine_env, tmp_path):
