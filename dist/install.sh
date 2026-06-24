@@ -194,12 +194,77 @@ PY
   gh aw compile
 }
 
+ensure_state_branch() {
+  local slug; slug="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+  if gh api "repos/${slug}/branches/agentic-state" >/dev/null 2>&1; then
+    log "agentic-state branch already exists — leaving it"
+    return 0
+  fi
+  log "creating orphan agentic-state branch"
+  local cur; cur="$(git rev-parse --abbrev-ref HEAD)"
+  git switch --orphan agentic-state
+  git commit --allow-empty -m "init agentic-state"
+  git push -u origin agentic-state
+  git switch "$cur"
+}
+
+ensure_dispatch_token() {
+  local slug; slug="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+  if gh secret list --repo "$slug" 2>/dev/null | grep -q '^POC_DISPATCH_TOKEN'; then
+    log "POC_DISPATCH_TOKEN already set"
+    return 0
+  fi
+  local tok; read -r -s -p "Enter POC_DISPATCH_TOKEN (PAT with repo+workflow scopes): " tok </dev/tty; echo >/dev/tty
+  [[ -n "$tok" ]] || die "POC_DISPATCH_TOKEN is required"
+  gh secret set POC_DISPATCH_TOKEN --repo "$slug" --body "$tok"
+}
+
+write_install_receipt() {
+  local protos_json files=() p ver
+  protos_json="{"
+  for p in "${PROTOCOLS[@]}"; do
+    ver="$(python3 - ".github/agent-factory/protocols/${p}/protocol.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1]))["version"])
+PY
+)"
+    protos_json="${protos_json}\"${p}\":\"${ver}\","
+  done
+  protos_json="${protos_json%,}}"
+  # the installed file set = everything we wrote/touched, tracked by git
+  mapfile -t files < <(git ls-files --others --modified --exclude-standard .github | sort -u)
+  mkdir -p .github/agent-factory
+  python3 "$WORKDIR/receipt.py" write \
+    .github/agent-factory/.install.json "$SOURCE" "$REF" "$ENGINE_VERSION" "$protos_json" "." "${files[@]}"
+}
+
+finalize_commit() {
+  git add -A .github
+  git commit -m "chore: install agentic protocol(s): ${PROTOCOLS[*]}"
+  git push
+}
+
 cmd_install() {
   [[ ${#PROTOCOLS[@]} -gt 0 ]] || die "name at least one protocol (see: install.sh list)"
   preflight
   bootstrap_helpers
   if [[ "$DRY_RUN" == 1 ]]; then print_plan; exit 0; fi
-  die "install not yet implemented past --dry-run"   # completed in Tasks 9–10
+  # compatibility guard (refuse before mutating)
+  local p minv
+  for p in "${PROTOCOLS[@]}"; do
+    minv="$(gh_raw ".github/agent-factory/protocols/${p}/protocol.json" \
+      | python3 -c "import json,sys;print(json.load(sys.stdin).get('min_engine_version',''))")"
+    python3 "$WORKDIR/receipt.py" compat "$ENGINE_VERSION" "$minv" \
+      || die "protocol ${p} needs engine ≥ ${minv}, but source ships ${ENGINE_VERSION}"
+  done
+  fetch_unit
+  for p in "${PROTOCOLS[@]}"; do install_agents "$p"; done
+  configure_endpoints
+  ensure_state_branch
+  ensure_dispatch_token
+  write_install_receipt
+  finalize_commit
+  log "done — open a PR or comment a trigger to run the protocol"
 }
 cmd_update() { die "not yet implemented"; }
 
