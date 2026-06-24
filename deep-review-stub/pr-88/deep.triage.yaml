@@ -1,0 +1,7 @@
+protocol: deep-review-stub
+instance: pr-88
+state: preflight
+iteration: 1
+gates: {}
+head_sha: 2af85ddf96c38e5be38a4accd4549b9e57279e65
+history: []
