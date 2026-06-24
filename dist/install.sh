@@ -9,6 +9,7 @@ FORCE=0
 BASE_URL=""
 SUBCMD=""
 PROTOCOLS=()
+declare -A AGENT_ENGINES=()
 
 die() { echo "error: $*" >&2; exit 1; }
 log() { echo "▸ $*" >&2; }
@@ -121,6 +122,76 @@ print_plan() {
     gh_raw ".github/agent-factory/protocols/${p}/protocol.json" \
       | python3 "$WORKDIR/resolve.py" agents /dev/stdin | sed 's/^/  /'
   done
+}
+
+fetch_one() {  # <repo-relative-path>
+  local path="$1"; mkdir -p "$(dirname "$path")"; gh_raw "$path" > "$path"
+}
+
+fetch_unit() {
+  local f
+  while read -r f; do [[ -n "$f" ]] && fetch_one "$f"; done < <(common_files)
+  local p
+  for p in "${PROTOCOLS[@]}"; do
+    while read -r f; do [[ -n "$f" ]] && fetch_one "$f"; done < <(protocol_files "$p")
+  done
+}
+
+# Prompt once per agent for an engine, then add it from source with that engine.
+install_agents() {
+  local p="$1" agent engine
+  while read -r agent; do
+    [[ -z "$agent" ]] && continue
+    read -r -p "Engine for ${agent} [claude/copilot/codex/gemini] (default claude): " engine </dev/tty || engine=""
+    engine="${engine:-claude}"
+    AGENT_ENGINES["$agent"]="$engine"
+    log "adding ${agent} (engine: ${engine})"
+    gh aw add "${SOURCE}/workflows/${agent}.md@${REF}" --engine "$engine" --force
+  done < <(gh_raw ".github/agent-factory/protocols/${p}/protocol.json" \
+            | python3 "$WORKDIR/resolve.py" agents /dev/stdin)
+}
+
+# Explicit, opt-in, previewed custom-endpoint configuration. NEVER silent.
+configure_endpoints() {
+  local any=0 agent engine
+  for agent in "${!AGENT_ENGINES[@]}"; do
+    [[ "${AGENT_ENGINES[$agent]}" == "claude" ]] && any=1
+  done
+  [[ "$any" == 1 ]] || return 0
+  local ans; read -r -p "Configure a custom Anthropic endpoint for the Claude workflows? [y/N]: " ans </dev/tty || ans="n"
+  [[ "$ans" == "y" || "$ans" == "Y" ]] || return 0
+  local url; read -r -p "  Base URL (default ${BASE_URL:-https://api.anthropic.com}): " url </dev/tty || url=""
+  url="${url:-${BASE_URL:-https://api.anthropic.com}}"
+  echo "  The following engine.env will be added to each Claude workflow and recompiled:"
+  echo "    env:"
+  echo "      ANTHROPIC_BASE_URL: ${url}"
+  echo "      ANTHROPIC_AUTH_TOKEN: \${{ secrets.ANTHROPIC_API_KEY }}"
+  local ok; read -r -p "  Apply? [y/N]: " ok </dev/tty || ok="n"
+  [[ "$ok" == "y" || "$ok" == "Y" ]] || { log "skipped endpoint config"; return 0; }
+  for agent in "${!AGENT_ENGINES[@]}"; do
+    [[ "${AGENT_ENGINES[$agent]}" == "claude" ]] || continue
+    BASE_URL_INJECT="$url" python3 - ".github/workflows/${agent}.md" <<'PY'
+import os, sys, re
+md = sys.argv[1]; url = os.environ["BASE_URL_INJECT"]
+text = open(md).read()
+authtok = "    ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}\n"
+baseurl = f"    ANTHROPIC_BASE_URL: {url}\n"
+# Idempotent: the source default may ALREADY carry engine.env. Never append a
+# second env: block (invalid YAML).
+if re.search(r"(?m)^    ANTHROPIC_BASE_URL:.*$", text):
+    # overwrite the existing base URL line in place
+    text = re.sub(r"(?m)^    ANTHROPIC_BASE_URL:.*$", baseurl.rstrip("\n"), text)
+elif re.search(r"(?m)^  env:\s*$", text):
+    # an env: block exists but no base URL — add our two lines under it
+    text = re.sub(r"(?m)^(  env:\s*\n)", lambda m: m.group(1) + baseurl + authtok, text, count=1)
+else:
+    # no env: at all — insert a fresh env: block right under engine:
+    block = "  env:\n" + baseurl + authtok
+    text = re.sub(r"(?m)^(engine:\n(?:[ \t].*\n)*?)", lambda m: m.group(1) + block, text, count=1)
+open(md, "w").write(text)
+PY
+  done
+  gh aw compile
 }
 
 cmd_install() {
