@@ -84,10 +84,12 @@ enter/advance/join stack.
 nested cursors live in `<seq>.yaml` (one per sequence node, keyed by path segment).
 
 **Authoring-error validation.** `lib.validate_protocol` checks common protocol
-authoring errors (missing `sequence`, unreachable nodes, unknown `kind` values,
-etc.) and emits **actionable error messages** with the specific node path. This is
-a release-bar requirement: protocol authors outside this PoC must get clear
-feedback on malformed protocols.
+authoring errors — a `join` whose `of` names no in-scope fanout, an `agent`
+node (or flat fanout branch) missing its `workflow`, and a `gate` whose
+`questions_from` names a non-existent sibling — and emits **actionable error
+messages** naming the offending node id plus a fix hint, failing fast (exit 2)
+before any state is written. This is a release-bar requirement: protocol authors
+outside this PoC must get clear feedback on malformed protocols.
 
 **Deploy requirement.** There is **no in-flight state migration.** Any PR that was
 mid-run when this branch deploys will have state in the old `(BRANCH, PHASE, SUBSTATE)`
