@@ -35,15 +35,12 @@
 - `tests/test_dist_install_cli.py` — bash CLI smoke (`list`, `--dry-run`) against a fake `gh`.
 - `docs/superpowers/runbooks/2026-06-24-distribution-acceptance.md` — manual e2e runbook.
 
+> Note: there is no source-`.md` strip task — see "Modified files" below. The original Task 7 (templatize) was removed once `--engine` override was confirmed.
+
 **Modified files:**
-- `.github/workflows/{preflight,grumpy,security,quick,triage,sec,perf,report,rmm-draft,rmm-finalize,rmm-summary}-agent.md` (11) — strip the hardcoded `engine:` block → engine-agnostic templates.
-- `.github/agent-factory/protocols/{code-review,deep-review-stub,recover-mental-model-stub}/protocol.json` (3) — add `min_engine_version`.
-- `.gitignore` — ignore `*-agent.lock.yml` (locks become install-time artifacts).
+- `.github/agent-factory/protocols/{code-review,deep-review-stub,recover-mental-model-stub}/protocol.json` (3) — add `min_engine_version`. **This is the only change to existing repo files.**
 
-**Deleted files:**
-- `.github/workflows/*-agent.lock.yml` (11) — stale once engines are stripped; regenerated at install.
-
-> **Consequence (accepted during brainstorming):** stripping engines + removing locks means the source repo's own agent workflows stop running until reconfigured. This is intentional — the `.md` become genuine engine-agnostic templates. The acceptance test runs on `throw-away-repo`, not the source, so this does not block it.
+> **The source `.md` and their committed locks are deliberately left UNTOUCHED.** `gh aw add`/`compile` both accept `--engine` to override the engine on the *target*, so per-workflow engine selection happens at install time without mutating the source. This keeps the repo a consistent, running deployment (valid locks, dogfooding intact) and avoids producing stock-endpoint locks this account can't use.
 
 ---
 
@@ -627,96 +624,7 @@ git commit -m "feat(dist): declare min_engine_version on shipped protocols"
 
 ---
 
-## Task 7: Templatize agent `.md` (strip engines) + drop locks
-
-**Files:**
-- Modify: 11 × `.github/workflows/*-agent.md`
-- Delete: 11 × `.github/workflows/*-agent.lock.yml`
-- Modify: `.gitignore`
-- Test: `tests/test_dist_templates.py`
-
-**Interfaces:**
-- Produces: agent `.md` files with NO `engine:` block and NO `ANTHROPIC_BASE_URL` literal — the engine is supplied at install time. `strict:`/`sandbox:`/`permissions:`/`tools:` and the body are untouched.
-
-- [ ] **Step 1: Write the failing test**
-
-`tests/test_dist_templates.py`:
-```python
-import glob
-from pathlib import Path
-
-WF = Path(__file__).resolve().parents[1] / ".github/workflows"
-AGENTS = sorted(glob.glob(str(WF / "*-agent.md")))
-
-
-def test_eleven_agents_present():
-    assert len(AGENTS) == 11
-
-
-def test_no_agent_md_hardcodes_engine_or_endpoint():
-    for md in AGENTS:
-        text = Path(md).read_text()
-        assert "ANTHROPIC_BASE_URL" not in text, md
-        assert "\nengine:\n" not in text and not text.startswith("engine:\n"), md
-
-
-def test_no_agent_locks_committed():
-    assert glob.glob(str(WF / "*-agent.lock.yml")) == []
-```
-
-- [ ] **Step 2: Run to verify failure**
-
-Run: `pytest tests/test_dist_templates.py -q`
-Expected: FAIL — engines/endpoints still present and locks still committed.
-
-- [ ] **Step 3: Strip the engine block from every agent `.md`**
-
-Run this one-off script (it removes the contiguous `engine:` mapping plus the trailing endpoint comment block, leaving everything else intact):
-```bash
-python3 - <<'PY'
-import glob, re
-for md in glob.glob(".github/workflows/*-agent.md"):
-    lines = open(md).read().splitlines(keepends=True)
-    out, i = [], 0
-    while i < len(lines):
-        if lines[i].startswith("engine:"):
-            i += 1
-            # skip indented engine children
-            while i < len(lines) and (lines[i].startswith(" ") or lines[i].strip() == ""):
-                i += 1
-            # skip the trailing endpoint explanation comment block
-            while i < len(lines) and lines[i].startswith("#"):
-                i += 1
-            continue
-        out.append(lines[i]); i += 1
-    open(md, "w").write("".join(out))
-    print("stripped", md)
-PY
-```
-
-- [ ] **Step 4: Remove the stale locks and ignore future ones**
-
-```bash
-git rm .github/workflows/*-agent.lock.yml
-printf '\n# Agent locks are install-time artifacts (compiled on the target after engine selection)\n.github/workflows/*-agent.lock.yml\n' >> .gitignore
-```
-
-- [ ] **Step 5: Run to verify pass**
-
-Run: `pytest tests/test_dist_templates.py -q`
-Expected: PASS (3 passed).
-Manual sanity: `grep -rl "ANTHROPIC_BASE_URL\|^engine:" .github/workflows/*.md` → no output.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add -A .github/workflows .gitignore tests/test_dist_templates.py
-git commit -m "feat(dist): templatize agent workflows (strip hardcoded engines); locks now install-time"
-```
-
----
-
-## Task 8: `install.sh` — skeleton, preflight, `list`
+## Task 7: `install.sh` — skeleton, preflight, `list`
 
 **Files:**
 - Create: `dist/install.sh`
@@ -853,7 +761,7 @@ git commit -m "feat(dist): install.sh skeleton (arg parse, preflight helpers, li
 
 ---
 
-## Task 9: `install.sh` — preflight checks + fetch + `--dry-run`
+## Task 8: `install.sh` — preflight checks + fetch + `--dry-run`
 
 **Files:**
 - Modify: `dist/install.sh`
@@ -935,7 +843,7 @@ cmd_install() {
   preflight
   bootstrap_helpers
   if [[ "$DRY_RUN" == 1 ]]; then print_plan; exit 0; fi
-  die "install not yet implemented past --dry-run"   # completed in Tasks 10–11
+  die "install not yet implemented past --dry-run"   # completed in Tasks 9–10
 }
 ```
 
@@ -956,7 +864,7 @@ git commit -m "feat(dist): preflight, helper bootstrap, and --dry-run fetch plan
 
 ---
 
-## Task 10: `install.sh` — fetch the unit + install agents + endpoint step
+## Task 9: `install.sh` — fetch the unit + install agents + endpoint step
 
 **Files:**
 - Modify: `dist/install.sh`
@@ -1019,11 +927,20 @@ configure_endpoints() {
 import os, sys, re
 md = sys.argv[1]; url = os.environ["BASE_URL_INJECT"]
 text = open(md).read()
-block = ("  env:\n"
-         f"    ANTHROPIC_BASE_URL: {url}\n"
-         "    ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}\n")
-# insert env under the engine: mapping the wizard wrote
-text = re.sub(r"(?m)^(engine:\n(?:[ \t].*\n)*?)", lambda m: m.group(1) + block, text, count=1)
+authtok = "    ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}\n"
+baseurl = f"    ANTHROPIC_BASE_URL: {url}\n"
+# Idempotent: the source default may ALREADY carry engine.env. Never append a
+# second env: block (invalid YAML).
+if re.search(r"(?m)^    ANTHROPIC_BASE_URL:.*$", text):
+    # overwrite the existing base URL line in place
+    text = re.sub(r"(?m)^    ANTHROPIC_BASE_URL:.*$", baseurl.rstrip("\n"), text)
+elif re.search(r"(?m)^  env:\s*$", text):
+    # an env: block exists but no base URL — add our two lines under it
+    text = re.sub(r"(?m)^(  env:\s*\n)", lambda m: m.group(1) + baseurl + authtok, text, count=1)
+else:
+    # no env: at all — insert a fresh env: block right under engine:
+    block = "  env:\n" + baseurl + authtok
+    text = re.sub(r"(?m)^(engine:\n(?:[ \t].*\n)*?)", lambda m: m.group(1) + block, text, count=1)
 open(md, "w").write(text)
 PY
   done
@@ -1047,13 +964,13 @@ git commit -m "feat(dist): fetch unit, per-workflow engine install, opt-in endpo
 
 ---
 
-## Task 11: `install.sh` — bootstrap (state branch + token) + finalize + receipt
+## Task 10: `install.sh` — bootstrap (state branch + token) + finalize + receipt
 
 **Files:**
 - Modify: `dist/install.sh`
 
 **Interfaces:**
-- Consumes: `receipt.py`, all of Task 10.
+- Consumes: `receipt.py`, all of Task 9.
 - Produces: `ensure_state_branch()`, `ensure_dispatch_token()`, `write_install_receipt()`, `finalize_commit()`, and a complete `cmd_install` that sequences fetch → agents → endpoints → bootstrap → receipt → finalize.
 
 - [ ] **Step 1: Implement bootstrap, receipt, finalize, and complete cmd_install**
@@ -1144,7 +1061,7 @@ git commit -m "feat(dist): state-branch + token bootstrap, receipt write, finali
 
 ---
 
-## Task 12: `install.sh` — `update` (re-sync via receipt)
+## Task 11: `install.sh` — `update` (re-sync via receipt)
 
 **Files:**
 - Modify: `dist/install.sh`
@@ -1208,7 +1125,7 @@ git commit -m "feat(dist): update subcommand (orphan cleanup, drift skip, breaki
 
 ---
 
-## Task 13: Acceptance runbook
+## Task 12: Acceptance runbook
 
 **Files:**
 - Create: `docs/superpowers/runbooks/2026-06-24-distribution-acceptance.md`
@@ -1269,7 +1186,7 @@ git commit -m "docs(dist): acceptance runbook for the distribution installer"
 
 ## Self-Review notes (for the implementer)
 
-- **Bash tasks (8–12) are validated by shellcheck + the fake-gh CLI smoke (Task 8) + the manual runbook (Task 13)**, not full unit tests — GitHub side effects can't be unit-tested offline. The genuinely logic-heavy parts (`resolve.py`, `receipt.py`) carry real pytest coverage (Tasks 2–5).
-- **gh-aw behavior to verify live:** that `gh aw add <src>/workflows/<name>.md@ref --engine <e> --force` accepts an engine-less template `.md` and writes the chosen engine. If it rejects an engine-less source, fall back to: fetch the `.md`, write `engine:\n  id: <e>\n` into the frontmatter, then `gh aw compile`. Note this in Task 10 during execution if observed.
-- **Endpoint injection regex (Task 10)** assumes the wizard/`--engine` writes a top-level `engine:` block. If gh-aw emits a different shape, adjust the `re.sub` anchor; the preview-then-confirm contract stays the same.
-- Run `pytest tests/ -q` after Task 6 and again after Task 7 to confirm no engine regressions from the protocol.json + template changes.
+- **Bash tasks (7–11) are validated by shellcheck + the fake-gh CLI smoke (Task 7) + the manual runbook (Task 12)**, not full unit tests — GitHub side effects can't be unit-tested offline. The genuinely logic-heavy parts (`resolve.py`, `receipt.py`) carry real pytest coverage (Tasks 2–5).
+- **gh-aw `--engine` override to verify live (Task 9):** `gh aw add <src>/workflows/<name>.md@ref --engine <e> --force` fetches a source `.md` that ALREADY has an `engine:` block (claude + the funnel `engine.env`). Confirm `--engine <e>` cleanly overrides that default on the target. Two sub-cases to watch: (a) if the override leaves the source's `engine.env` (funnel URL) in place, the chosen-Claude case already works — good; (b) if it strips the env, the opt-in endpoint step (below) re-adds it.
+- **Endpoint injection must be idempotent (Task 9):** because the source default may already carry `engine.env`, the `configure_endpoints` step must **replace** an existing `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` rather than append a second `env:` block (which would be invalid YAML). Adjust the `re.sub` to detect an existing `env:` under `engine:` and overwrite it; only insert a fresh `env:` when none exists. The preview-then-confirm contract stays the same.
+- Run `pytest tests/ -q` after Task 6 to confirm the `min_engine_version` field causes no engine regressions. (No source `.md`/lock changes are made, so there's nothing else to regress.)

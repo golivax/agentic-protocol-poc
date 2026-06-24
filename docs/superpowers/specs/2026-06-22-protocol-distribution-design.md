@@ -86,12 +86,17 @@ New `dist/` directory:
 
 Changes to existing files:
 
-- **Strip the hardcoded `engine:` block from all 11 agent `.md`** → engine-agnostic
-  templates. Engine is chosen per-workflow at install (see Engine selection). Recompile
-  the locks. (`strict:false` / `sandbox:false` frontmatter stays for the PoC.)
+- **The 11 agent `.md` and their committed locks are left UNTOUCHED.** They keep their
+  working default engine (`claude` + the funnel `engine.env`), so this repo stays a
+  consistent, running gh-aw deployment. Per-workflow engine selection for *distributed*
+  copies is achieved at install time via `gh aw add --engine` override (see Engine
+  selection) — not by mutating the source. (Earlier drafts proposed stripping the engine
+  blocks; that was dropped once `gh aw add`/`compile` were confirmed to support `--engine`
+  override, since stripping would delete the working locks and produce stock-endpoint
+  locks this account can't use.)
 - **`protocol.json` gains an optional `min_engine_version`** — a DSL addition (see
   Compatibility guard). *Flagged as a protocol-schema change; approved during
-  brainstorming.*
+  brainstorming.* This is the ONLY change to existing files.
 
 ## Install UX
 
@@ -134,17 +139,21 @@ one logic-heavy, side-effect-free seam — and the primary unit-test target.**
 
 ## Agent workflows + per-workflow engine selection
 
-Engine is **per-workflow, chosen at install time** — not hardcoded, not unified across a
-protocol. (Reversed from an earlier "uniform per protocol" idea: each gh-aw workflow must
-be able to pick its own engine, for flexibility.)
+Engine is **per-workflow, chosen at install time** — not unified across a protocol.
+(Reversed from an earlier "uniform per protocol" idea: each gh-aw workflow must be able to
+pick its own engine, for flexibility.) The source `.md` carry a working *default* engine;
+the installer **overrides it per workflow on the target** rather than mutating the source.
 
-1. For each agent the protocol names, run the gh-aw wizard so the user **selects the
-   engine + secret per workflow**. gh-aw **dedupes already-set secrets** (a second Claude
-   agent won't re-prompt) and the prereq check is idempotent.
-2. `gh aw compile` produces each `.lock.yml`.
+1. For each agent the protocol names, the installer prompts for an engine and runs
+   `gh aw add <source>/workflows/<agent>.md@<ref> --engine <pick>` — the `--engine` flag
+   (confirmed on both `gh aw add` and `gh aw compile`) overrides the source's default on
+   the target. gh-aw sets the engine's secret and **dedupes already-set secrets** (a
+   second Claude agent won't re-prompt); the prereq check is idempotent.
+2. `gh aw compile` produces each `.lock.yml` on the target.
 
-Because engines aren't hardcoded, the **set of distinct engines** across a protocol's
-agents drives which secrets get set — handled natively by the wizard per engine.
+The **set of distinct engines** the user picks across a protocol's agents drives which
+secrets get set — handled natively by gh-aw per engine. The source repo's own `.md` and
+locks are never touched.
 
 ## Custom endpoints — explicit, opt-in, no magic
 
