@@ -39,3 +39,12 @@ def test_join_yml_threads_node_path_and_path_concurrency():
     assert "NODE_PATH: ${{ github.event.client_payload.path }}" in t
     # concurrency group is path-aware so nested joins don't serialize against the top join
     assert "join-${{ github.event.client_payload.instance }}-${{ github.event.client_payload.path }}" in t
+
+
+def test_orchestrator_yml_path_concurrency_and_no_protocol_advance():
+    t = _load("agentic-orchestrator.yml")
+    assert "agentic-${{ github.event.client_payload.instance" in t
+    assert "github.event.client_payload.path }}" in t   # concurrency keyed on path
+    assert "protocol-advance" not in t                  # dropped from on: types
+    # protocol-continue is still accepted; protocol-join still owned by protocol-join.yml
+    assert "protocol-continue" in t

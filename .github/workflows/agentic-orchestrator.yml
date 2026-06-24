@@ -4,7 +4,7 @@ name: Agentic Orchestrator
 # runs a read-only `route` job to pick the matching protocol, then calls the
 # generic engine. run-name + concurrency live HERE (the caller), github.event-based,
 # never `inputs` (which would startup_failure a workflow_call workflow).
-run-name: "agentic · ${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}"
+run-name: "agentic · ${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }} @ ${{ github.event.client_payload.path || 'entry' }}"
 
 on:
   # No protocol auto-triggers on pull_request anymore — code-review is /review-only
@@ -13,7 +13,7 @@ on:
   issue_comment:
     types: [created]
   repository_dispatch:
-    types: [protocol-continue, protocol-advance]   # protocol-join owned by protocol-join.yml
+    types: [protocol-continue]   # (Stage 4a: the old advance type was retired); protocol-join owned by protocol-join.yml
 
 # The calling job's permissions are the CEILING for the reusable engine. Grant the
 # UNION the engine's jobs need; the engine's per-job permissions scope down within it.
@@ -26,10 +26,10 @@ permissions:
   actions: read
 
 concurrency:
-  # Static prefix + instance + branch. Protocol is unknown at concurrency-eval
+  # Static prefix + instance + path. Protocol is unknown at concurrency-eval
   # time, so all protocols share this namespace (fine for one-pipeline-per-repo).
-  # branch is empty for entry events / agent phases; set for fan-out branch continues.
-  group: agentic-${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}-${{ github.event.client_payload.branch }}
+  # path is the NODE_PATH coordinate (e.g. "review.grumpy"); empty for entry events.
+  group: agentic-${{ github.event.client_payload.instance || format('pr-{0}', github.event.issue.number || github.event.pull_request.number) }}-${{ github.event.client_payload.path }}
   cancel-in-progress: false
 
 jobs:
