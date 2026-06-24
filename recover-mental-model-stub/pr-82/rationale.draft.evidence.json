@@ -1,5 +1,0 @@
-{"questions": [
-  {"id": "q1", "text": "The dict has no eviction policy, so it grows unbounded for unique keys — is this intended for a fixed set of known keys, and if not, what is the expected memory ceiling or eviction strategy?"},
-  {"id": "q2", "text": "The implementation is documented as single-process only; if this is ever used behind a load balancer or multiple workers, state will diverge across processes — is there a plan to swap in a shared backend (e.g. Redis) later, or is single-process a permanent constraint?"},
-  {"id": "q3", "text": "Why is this placed under `examples/` rather than a library module or a dedicated `ratelimit/` package — is it intended purely as reference code, or will production paths import it directly?"}
-]}
