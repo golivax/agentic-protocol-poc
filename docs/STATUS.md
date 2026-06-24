@@ -96,7 +96,7 @@ mid-run when this branch deploys will have state in the old `(BRANCH, PHASE, SUB
 layout, which the new engine cannot resume. A fresh `/review`, `/recover`, or
 equivalent trigger is required after deploy to start a clean run.
 
-**Test count.** 400 tests across all modules, all green. The capability suite on
+**Test count.** 401 tests across all modules, all green. The capability suite on
 this branch covers: single-agent, simple fanout, multi-phase, sub-pipeline,
 depth-4/5 deep trees, data-carrying and approval gates, `/override`, restart/reset,
 inputs channel, merge/combine, `max_depth` guard, authoring-error validation, and
