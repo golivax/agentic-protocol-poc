@@ -441,8 +441,24 @@ def _find_open_gate(proto, want=""):
     nested fanout, descend into that fanout's child-branch cursors. First open
     gate wins (at most one gate per branch lineage is open at a time). `want`
     restricts the TOP-level branch only. For a depth-3 gate the returned path is
-    byte-identical to the old (branch_id, gate_id) pair: [fanout_id, branch_id, gate_id]."""
-    fo = lib._fanout_state(proto)
+    byte-identical to the old (branch_id, gate_id) pair: [fanout_id, branch_id, gate_id].
+
+    Multi-phase cursor awareness (I1 fix): for multi-phase protocols, resolve the
+    fanout to scan from the _instance.yaml cursor phase, not the first fanout in
+    the states list. `lib._fanout_state` always returns the FIRST fanout; in a
+    protocol where the cursor is on a LATER fanout phase, that would scan the
+    wrong branches and find nothing. Mirrors the pattern in join.py main()."""
+    fo = None
+    if lib.is_multiphase(proto):
+        inf = lib.instance_file(DIR, PID, INSTANCE)
+        if os.path.isfile(inf):
+            cursor_phase = lib.load_yaml(inf).get("phase", "") or ""
+            if cursor_phase:
+                st = lib.state_by_id(proto, cursor_phase)
+                if st and st.get("kind") == "fanout":
+                    fo = st
+    if fo is None:
+        fo = lib._fanout_state(proto)
     if not fo:
         return None
     return _scan_fanout_for_open_gate(proto, [fo["id"]], fo, want, top=True)
@@ -605,7 +621,12 @@ def do_answer():
                           "reason": "answer: complete (nested)"}))
         return
 
-    nxt_sub = lib.next_substate_id(proto_data, branch, gate)
+    # Use path.next_sibling directly from gate_path so the correct enclosing
+    # sequence is used regardless of which fanout phase the gate lives in.
+    # lib.next_substate_id calls _fanout_state (first fanout) — in a multi-phase
+    # protocol with the gate in a NON-first fanout phase it would pick the wrong
+    # fanout and fail to find the sibling. (I1 fix — top-level advance tail.)
+    nxt_sub = paths.next_sibling(proto_data, gate_path)
     cf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, branch_path))
     cur = lib.load_yaml(cf)
     sha = gdata.get("head_sha", "") or HEAD_SHA

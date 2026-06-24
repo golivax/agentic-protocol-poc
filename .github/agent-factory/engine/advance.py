@@ -202,22 +202,24 @@ def advance_node(ctx, process):
         cur["state"] = life_state         # leg stays in flight
         lib.dump_yaml(cursor_sf, cur)
         if nxt_kind == "gate":
-            # Open the gate (scoped to this branch); read questions from
-            # the source sub-state's persisted evidence.
+            # Open the gate; read questions from the source sub-state's persisted
+            # evidence.  Use path-aware file resolution (via lib.state_path) so
+            # multi-phase protocols produce the correct filename (e.g.
+            # review.B.clarify.yaml, not the legacy single-phase B.clarify.yaml).
             questions = []
             qfrom = (_paths.node_at_path(proto, parent + [nxt_sub]) or {}).get("questions_from")
             if qfrom:
                 qpath = lib.output_artifact_path(dir_, pid, instance,
-                                                 branch=branch, phase=(phase or None),
-                                                 substate=qfrom, kind="evidence")
+                                                 path=lib.state_path(proto, parent + [qfrom]),
+                                                 kind="evidence")
                 if os.path.isfile(qpath):
                     try:
                         questions = json.load(open(qpath)).get("questions", []) or []
                     except (json.JSONDecodeError, ValueError):
                         questions = []
             lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
-                          branch=branch, questions=questions,
-                          phase=(phase if phase else None))
+                          questions=questions,
+                          path=lib.state_path(proto, parent + [nxt_sub]))
             lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → gate {nxt_sub} open")
             return
         # Otherwise: an agent sub-state → seed + dispatch (Plan 1 behaviour).
@@ -595,9 +597,10 @@ def main():
                 lib.cas_push(dir_, f"{instance}: phase {_phase_id} blocked → pipeline halted")
             else:
                 # GATE CLEAR → advance root cursor via path-continue.
+                # `concl` is never "blocked" here: a blocked conclude goes to
+                # the halt arm above; this arm only runs on a clear gate.
                 nxt = _paths.next_sibling(proto, tree_path)
-                lib.set_check_run(cr_name, sha, "completed",
-                                  "success" if concl != "blocked" else "failure",
+                lib.set_check_run(cr_name, sha, "completed", "success",
                                   "Gate complete", csum)
                 inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
                 if nxt:

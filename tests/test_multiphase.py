@@ -14,14 +14,17 @@ path (Stage 4a, Task 16). That behaviour is now covered by the NODE_PATH suite:
         → test_phase_labels.py
 
 What remains is the GENERIC, still-live lib surface (state_file phase forms,
-is_multiphase, phase_states, state_by_id) exercised over inline protocol dicts.
+is_multiphase, phase_states, state_by_id) exercised over inline protocol dicts,
+plus the NODE_PATH-required contract guard (T3).
 """
 import importlib
 import pathlib
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
+FIXTURES = ROOT / "tests/fixtures"
 sys.path.insert(0, str(ENGINE))
 import lib  # noqa: E402
 
@@ -95,3 +98,26 @@ def test_phase_states_excludes_join():
 def test_state_by_id():
     assert lib.state_by_id(MULTIPHASE, "join")["kind"] == "join"
     assert lib.state_by_id(MULTIPHASE, "missing") is None
+
+
+# --- T3: bare `continue` without NODE_PATH fails loudly ---
+
+def test_continue_without_node_path_exits_2(engine_env, tmp_path):
+    """next.py `continue` with NO NODE_PATH must exit 2 with a clear stderr message.
+    This pins the 'NODE_PATH required' contract: the unified engine has a single
+    coordinate (NODE_PATH); a bare `continue` is a programmer error and must fail
+    loudly rather than silently no-op or advance the wrong state. Uses the
+    cap-mp-fanout-gate fixture (a multi-phase protocol) as the representative case
+    (single-phase behaves identically — the guard is unconditional)."""
+    proto = FIXTURES / "cap-mp-fanout-gate/protocol.json"
+    r = subprocess.run(
+        ["python3", str(ENGINE / "next.py"), str(tmp_path / "dir"), "pr-1", str(proto), "continue"],
+        text=True, capture_output=True, env=engine_env,
+    )
+    assert r.returncode == 2, (
+        f"Expected exit code 2 for bare `continue` without NODE_PATH, got {r.returncode}.\n"
+        f"stderr: {r.stderr}"
+    )
+    assert "node_path" in r.stderr.lower(), (
+        f"Expected a clear 'NODE_PATH required' message in stderr, got:\n{r.stderr}"
+    )
