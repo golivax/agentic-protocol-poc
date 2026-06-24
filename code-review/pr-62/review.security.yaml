@@ -1,7 +1,13 @@
 protocol: code-review
 instance: pr-62
-state: review
+state: done
 iteration: 1
 gates: {}
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28110971771'
+  checks:
+    schema-valid: pass
+    traces-exist-in-diff: pass
+  feedback: ''
 head_sha: 657e290beb6266ccd55b8bd95e247491e3468392
