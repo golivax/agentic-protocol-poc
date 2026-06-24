@@ -538,7 +538,7 @@ def main():
         # fanout's per-leg files + __join.yaml). Mark this leg's own sf done and
         # fire the enclosing fanout's path-keyed join — DO NOT write a cursor
         # file at the parent (that would prematurely mark the whole fanout done).
-        if tree_path is not None and _paths.is_fanout(proto, _paths.parent_path(tree_path)):
+        if _paths.is_fanout(proto, _paths.parent_path(tree_path)):
             lib.set_check_run(cr_name, sha, "completed", "success",
                               f"{substate} complete", "")
             update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
@@ -549,21 +549,16 @@ def main():
 
         # --- Sub-pipeline branch leg: advance the BRANCH CURSOR, not the phase. ---
         if branch and substate:
-            if tree_path is not None:
-                ctx.cursor_sf = lib.state_file(
-                    dir_, pid, instance,
-                    path=lib.state_path(proto, _paths.parent_path(tree_path)))
-            else:
-                ctx.cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
-                                               phase=(phase if phase else None))
+            ctx.cursor_sf = lib.state_file(
+                dir_, pid, instance,
+                path=lib.state_path(proto, _paths.parent_path(tree_path)))
             advance_node(ctx, process="done")
             return
 
         # --- Depth-1 AGENT phase (root child) clear tail. ---
         # When the node is a root-level agent phase (e.g. code-review's
         # `preflight`), advance the root cursor via path-continue.
-        if (tree_path is not None
-                and _paths.is_root_child(proto, tree_path)
+        if (_paths.is_root_child(proto, tree_path)
                 and _paths.node_kind(proto, tree_path) == "agent"):
             _this_state = lib.state_by_id(proto, agent_state)
             _conclude = run_conclude_hook(proto_path, proto, agent_state, evid, instance, blocking)
@@ -662,25 +657,18 @@ def main():
         )
         lib.cas_push(dir_, f"{instance}: iteration {iter_} failed checks → iteration {next_iter}")
 
-        # Re-dispatch. Carry `phase` so a multi-phase agent/fan-out phase resumes
-        # in the SAME phase on re-entry (the orchestrator relays payload.phase ->
-        # PHASE). Empty/absent for single-phase protocols → byte-identical payload.
-        redispatch = [
+        # Re-dispatch carrying the full tree path so the re-dispatched continue
+        # resumes the same depth-N leg (next.py reads NODE_PATH). branch/substate
+        # ride along for the depth-<=3 GHA relay; they are derived from the tree path.
+        gh_api(
             f"repos/{github_repository}/dispatches",
             "-f", "event_type=protocol-continue",
             "-F", f"client_payload[protocol]={pid}",
             "-F", f"client_payload[instance]={instance}",
             "-F", f"client_payload[branch]={branch}",
-        ]
-        if substate:
-            redispatch += ["-F", f"client_payload[substate]={substate}"]
-        if phase:
-            redispatch += ["-F", f"client_payload[phase]={phase}"]
-        # NODE_PATH mode: carry the full tree path so the re-dispatched continue
-        # resumes the same depth-N leg (next.py reads NODE_PATH).
-        if tree_path is not None:
-            redispatch += ["-F", f"client_payload[path]={'.'.join(tree_path)}"]
-        gh_api(*redispatch)
+            "-F", f"client_payload[substate]={substate}",
+            "-F", f"client_payload[path]={'.'.join(tree_path)}",
+        )
 
     else:  # process == "failed"
         # Exhausted
@@ -692,16 +680,11 @@ def main():
         # sf is already marked failed above; there is no leg-cursor to advance, so
         # we must NOT write the parent fanout file. Only a sub-pipeline SEQUENCE
         # leg has a cursor (advance_node marks the branch file failed).
-        flat_fanout_child = (tree_path is not None
-                             and _paths.is_fanout(proto, _paths.parent_path(tree_path)))
+        flat_fanout_child = _paths.is_fanout(proto, _paths.parent_path(tree_path))
         if branch and substate and not flat_fanout_child:
-            if tree_path is not None:
-                ctx.cursor_sf = lib.state_file(
-                    dir_, pid, instance,
-                    path=lib.state_path(proto, _paths.parent_path(tree_path)))
-            else:
-                ctx.cursor_sf = lib.state_file(dir_, pid, instance, branch=branch,
-                                               phase=(phase if phase else None))
+            ctx.cursor_sf = lib.state_file(
+                dir_, pid, instance,
+                path=lib.state_path(proto, _paths.parent_path(tree_path)))
             advance_node(ctx, process="failed")
 
         # A root-level agent phase that exhausts its iterations is a terminal phase

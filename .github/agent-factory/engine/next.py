@@ -3,10 +3,13 @@
 # Pure planner: reads (state, protocol, command), emits an action JSON on stdout.
 # The WORKFLOW decides what an event means and passes a command; the planner never
 # sniffs events. Commands:
-#   start    external request — fresh review from a clean slate (Absent or Terminal);
-#            leave an in-flight review undisturbed (Active → halt).
-#   reset    unconditional fresh review (a new head commit invalidates the old one).
-#   continue the engine's own iterate loop — resume Active; halt on Terminal.
+#   start / reset   enter the protocol from its first top-level node via enter_root
+#                   (start/reset both seed a fresh run; reset is invoked when a new
+#                   head commit invalidates the old run).
+#   continue        resume the leg named by NODE_PATH (the SOLE coordinate of the
+#                   unified engine) — seed/dispatch the fanout/agent/gate/merge it
+#                   resolves to. A continue WITHOUT a resolvable NODE_PATH errors.
+#   answer / override / resolve-gate   human-gate commands (path-aware).
 # head_sha (optional) is recorded as instance metadata (the check-run target); it is
 # NEVER compared to decide policy — that decision lives in the workflow.
 import json
@@ -518,10 +521,6 @@ def do_answer():
     branch = gate_path[-2]
     gate = gate_path[-1]
     branch_path = gate_path[:-1]
-    # ph is the phase qualifier for dispatch_continue (None in single-phase, fanout
-    # id in multi-phase) — derived from enclosing_fanout_id filtered by is_multiphase.
-    ph = (paths.enclosing_fanout_id(proto_data, gate_path)
-          if lib.is_multiphase(proto_data) else None)
     # life is the leg's in-flight state value: the enclosing fanout id.
     # enclosing_fanout_id(["review","B","clarify"]) == "review".
     life = paths.enclosing_fanout_id(proto_data, gate_path)
@@ -622,7 +621,9 @@ def do_answer():
                           "Answered", f"Answered by @{actor}.")
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered -> {nxt_sub}")
         lib.post_pr_comment(pr, f"{gate} answered by @{actor}; continuing to {nxt_sub}.")
-        lib.dispatch_continue(PID, INSTANCE, branch, nxt_sub, phase=ph or "")
+        # Path-only dispatch: the unified `continue` handler requires NODE_PATH.
+        # nxt_path is the next sub-state's full tree path (e.g. recover.rationale.finalize).
+        lib.dispatch_continue(PID, INSTANCE, path=".".join(nxt_path))
     else:
         cur["state"] = "done"
         lib.dump_yaml(cf, cur)

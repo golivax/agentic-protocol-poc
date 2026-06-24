@@ -156,6 +156,13 @@ def test_full_pipeline(tmp_path, engine_env):
     out, err, rc = run_engine("next.py", tmp_path / "dir-answer", "pr-1", PROTO, "answer",
                               env=ea)
     assert rc == 0, f"answer command failed:\n{err}"
+    # CONTRACT: do_answer's follow-on dispatch for a TOP-LEVEL (depth-3) sub-pipeline
+    # gate-with-next-substate must be PATH-form (the unified `continue` handler
+    # requires NODE_PATH and rejects a path-less branch/substate-only continue).
+    # Assert on what do_answer actually EMITTED (its ENGINE_LOCAL stderr), not on a
+    # manually-set NODE_PATH for the follow-on step.
+    assert "client_payload[path]=recover.rationale.finalize" in err, (
+        f"do_answer must emit a path-form continue, got:\n{err}")
 
     # Verify cursor advanced to finalize.
     w2 = clone()
