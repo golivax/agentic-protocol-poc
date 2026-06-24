@@ -1,0 +1,6 @@
+protocol: deep-review-stub
+instance: pr-88
+state: analyze
+iteration: 1
+gates: {}
+history: []
