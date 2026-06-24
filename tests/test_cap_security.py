@@ -1,9 +1,12 @@
 """test_cap_security.py — Task 15: Security regressions for agent-derived strings.
 
 Proves that:
-  1. A malicious ANSWER_BODY (shell-injection payload) is parsed as DATA by
-     _parse_answers / do_answer and never executed.  A sentinel file the
-     injection WOULD create must NOT appear.
+  0. _parse_answers (next.py) — the regex parser for an UNTRUSTED comment body —
+     stores each payload as a plain string and never executes it (DIRECT unit
+     tests, independent of the do_answer gate guard).
+  1. A malicious ANSWER_BODY (shell-injection payload) driven through the whole
+     do_answer path is inert.  A sentinel file the injection WOULD create must
+     NOT appear.
   2. A bogus / path-traversal NODE_PATH fed to advance.py yields a clean
      non-zero error and does NOT write any file outside the instance dir.
   3. (Bonus) Shell metacharacters in a NODE_PATH segment are treated as a
@@ -38,12 +41,37 @@ FIXTURES = ROOT / "tests/fixtures"
 # Protocol that has a subpipeline so NODE_PATH (depth-3) resolves normally,
 # used by traversal tests to confirm well-formed paths still work.
 SUBPIPELINE_PROTO = FIXTURES / "subpipeline-mini/protocol.json"
-# Simple single-agent protocol used for ANSWER_BODY tests (has no data gate
-# so do_answer returns "no open gate" gracefully rather than running the full
-# answer flow — that is the correct error-handling posture for injection).
-# We also use the subpipeline fixture where a gate IS open so we can confirm
-# injection content is stored verbatim, not executed.
+# Single-agent protocol (its `name` field is "single-agent"). It has NO data
+# gate, so do_answer early-returns at _find_open_gate → None: the injection
+# tests that use it prove the do_answer PATH is inert (no exec before/around the
+# gate guard), NOT that _parse_answers itself is safe.  The direct unit tests in
+# TestParseAnswersDirect lock the regex-parser's safety independently; the
+# subpipeline fixture (where a gate IS open) confirms an injection value is
+# stored verbatim end-to-end.
 SIMPLE_AGENT_PROTO = FIXTURES / "cap-single-agent/protocol.json"
+
+
+# ---------------------------------------------------------------------------
+# Load _parse_answers from next.py WITHOUT triggering its import-time side
+# effects (next.py runs lib.state_checkout + a command dispatch / sys.exit at
+# module level). We extract just the function's source via the `ast` module and
+# exec it in an isolated namespace whose only dependency is `re`. This gives a
+# real reference to the production function so a future regression in its regex
+# would fail these tests.
+# ---------------------------------------------------------------------------
+
+def _load_parse_answers():
+    import ast
+    import re as _re
+    src = (ENGINE / "next.py").read_text()
+    tree = ast.parse(src)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_parse_answers":
+            mod = ast.Module(body=[node], type_ignores=[])
+            ns = {"re": _re}
+            exec(compile(mod, str(ENGINE / "next.py"), "exec"), ns)
+            return ns["_parse_answers"]
+    raise AssertionError("_parse_answers not found in next.py")
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +135,79 @@ def _seed_open_gate(tmp_path, engine_env, proto=SUBPIPELINE_PROTO):
 
 
 # ===========================================================================
+# Section 0 — DIRECT unit tests of _parse_answers (the regex parser itself)
+# ===========================================================================
+
+class TestParseAnswersDirect:
+    """Call _parse_answers directly with malicious bodies. The function is a
+    pure-Python regex parser (cannot exec by construction) — these tests LOCK
+    that contract independently of do_answer's gate guard, closing the gap that
+    the do_answer-path injection tests use a gateless protocol and so never
+    reach _parse_answers."""
+
+    PARSE = staticmethod(_load_parse_answers())
+
+    def test_semicolon_payload_stored_as_string(self, tmp_path):
+        unique = str(uuid.uuid4()).replace("-", "")[:12]
+        sentinel = f"/tmp/PWNED_{unique}"
+        value = f"valid ; touch {sentinel} #tail"
+        out = self.PARSE(f"/answer q1: {value}", "/answer")
+        assert out == {"q1": value}, f"parsed dict wrong: {out!r}"
+        assert isinstance(out["q1"], str)
+        assert not os.path.exists(sentinel), (
+            f"CRITICAL: _parse_answers executed the payload — {sentinel} created!"
+        )
+
+    def test_backtick_payload_stored_as_string(self, tmp_path):
+        unique = str(uuid.uuid4()).replace("-", "")[:12]
+        sentinel = f"/tmp/PWNED_{unique}"
+        value = f"`touch {sentinel}`"
+        out = self.PARSE(f"/answer q1: {value}", "/answer")
+        assert out == {"q1": value}
+        assert not os.path.exists(sentinel), (
+            f"CRITICAL: _parse_answers executed backtick payload — {sentinel} created!"
+        )
+
+    def test_dollar_subshell_payload_stored_as_string(self, tmp_path):
+        unique = str(uuid.uuid4()).replace("-", "")[:12]
+        sentinel = f"/tmp/PWNED_{unique}"
+        value = f"$(touch {sentinel})"
+        out = self.PARSE(f"/answer q1: {value}", "/answer")
+        assert out == {"q1": value}
+        assert not os.path.exists(sentinel), (
+            f"CRITICAL: _parse_answers executed $() payload — {sentinel} created!"
+        )
+
+    def test_multiline_only_valid_lines_parsed(self, tmp_path):
+        unique = str(uuid.uuid4()).replace("-", "")[:12]
+        sentinel = f"/tmp/PWNED_{unique}"
+        body = (
+            f"chatty preamble\n"
+            f"; touch {sentinel}\n"            # not an answer line → ignored
+            f"/answer q1: first\n"
+            f"/answer q2: second & echo nope\n"  # value retains metachars verbatim
+        )
+        out = self.PARSE(body, "/answer")
+        assert out["q1"] == "first"
+        assert out["q2"] == "second & echo nope"
+        # The bare injection line is not a valid `id: val` after stripping prefix,
+        # so it must not become a key.
+        assert ";" not in "".join(out.keys())
+        assert not os.path.exists(sentinel), (
+            f"CRITICAL: _parse_answers executed a multiline payload — {sentinel} created!"
+        )
+
+    def test_equals_separator_payload_stored_as_string(self, tmp_path):
+        # _parse_answers also accepts `id = val`; confirm metachars survive verbatim.
+        unique = str(uuid.uuid4()).replace("-", "")[:12]
+        sentinel = f"/tmp/PWNED_{unique}"
+        value = f"x | touch {sentinel}"
+        out = self.PARSE(f"/answer q1 = {value}", "/answer")
+        assert out == {"q1": value}
+        assert not os.path.exists(sentinel)
+
+
+# ===========================================================================
 # Section 1 — Malicious ANSWER_BODY
 # ===========================================================================
 
@@ -116,7 +217,9 @@ class TestAnswerBodyInjection:
     from it, write them to a JSON file, and never execute anything in it."""
 
     def test_shell_injection_semicolon_not_executed(self, tmp_path, engine_env):
-        """Classic semicolon injection: `; touch SENTINEL #` must NOT create SENTINEL."""
+        """do_answer path inert: semicolon injection `; touch SENTINEL #` driven
+        through the gateless protocol must NOT create SENTINEL (the regex parser
+        itself is covered directly in TestParseAnswersDirect)."""
         unique = str(uuid.uuid4()).replace("-", "")[:12]
         sentinel = f"/tmp/PWNED_{unique}"
         # Payload: a valid answer prefix then an injection suffix
@@ -132,7 +235,8 @@ class TestAnswerBodyInjection:
         )
 
     def test_backtick_injection_not_executed(self, tmp_path, engine_env):
-        """`touch SENTINEL` backtick substitution must NOT create SENTINEL."""
+        """do_answer path inert: `touch SENTINEL` backtick substitution must NOT
+        create SENTINEL."""
         unique = str(uuid.uuid4()).replace("-", "")[:12]
         sentinel = f"/tmp/PWNED_{unique}"
         payload = f"/answer q1: `touch {sentinel}`"
@@ -145,7 +249,8 @@ class TestAnswerBodyInjection:
         )
 
     def test_dollar_subshell_injection_not_executed(self, tmp_path, engine_env):
-        """$() command substitution inside ANSWER_BODY must NOT execute."""
+        """do_answer path inert: $() command substitution inside ANSWER_BODY must
+        NOT execute."""
         unique = str(uuid.uuid4()).replace("-", "")[:12]
         sentinel = f"/tmp/PWNED_{unique}"
         payload = f"/answer q1: $(touch {sentinel})"
@@ -192,8 +297,9 @@ class TestAnswerBodyInjection:
         )
 
     def test_multiline_injection_body(self, tmp_path, engine_env):
-        """Multi-line ANSWER_BODY with injections on non-answer lines is parsed
-        safely: only valid `prefix id: val` lines contribute key/value pairs."""
+        """do_answer path inert: multi-line ANSWER_BODY with injections on
+        non-answer lines drives the gateless protocol without executing anything
+        (line-parsing safety itself is covered in TestParseAnswersDirect)."""
         unique = str(uuid.uuid4()).replace("-", "")[:12]
         sentinel = f"/tmp/PWNED_{unique}"
         payload = (
@@ -286,6 +392,7 @@ class TestNodePathTraversal:
         produce a clean non-zero exit; the protocol dict lookup returns None, and
         advance.py errors before writing any state file."""
         v, ev = self._verdicts_and_evidence(tmp_path, "ss1")
+        before = _all_files_under(tmp_path)
 
         r = _run_advance(tmp_path / "adv-ss1", "pr-1", SUBPIPELINE_PROTO, v, ev,
                          engine_env, extra_env={"NODE_PATH": "../../../escape"})
@@ -294,6 +401,18 @@ class TestNodePathTraversal:
         # and advance.py must exit non-zero
         assert r.returncode != 0, (
             f"CRITICAL: advance.py exited 0 for traversal single-segment! stdout={r.stdout!r}"
+        )
+
+        # Filesystem boundary check (consistent with the sibling traversal tests):
+        # no file may escape tmp_path, and nothing may land at an absolute traversal
+        # target.
+        after = _all_files_under(tmp_path)
+        for f in after - before:
+            assert str(f).startswith(str(tmp_path)), (
+                f"CRITICAL: file written outside tmp_path: {f}"
+            )
+        assert not pathlib.Path("/escape.yaml").exists(), (
+            "CRITICAL: single-segment traversal wrote /escape.yaml!"
         )
 
     def test_no_files_outside_instance_dir_on_traversal(self, tmp_path, engine_env):
