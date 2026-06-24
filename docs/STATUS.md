@@ -57,8 +57,57 @@ configurable `max_depth` (default **5**) bounds the static tree. The `/answer`
 handler is recursive too: `_find_open_gate` follows live cursors to a gate at any
 depth, and `do_answer` advances the enclosing sub-pipeline cursor / fires the
 enclosing (nested) join. Exercised by `tests/fixtures/deep-fanout/` (depth-4 walk)
-and `tests/fixtures/gate-deep/` (depth-5 nested gates). **Deferred to Stage 4:**
-the GitHub-Actions matrix wiring for arbitrary-depth legs + a live protocol.
+and `tests/fixtures/gate-deep/` (depth-5 nested gates).
+
+### Stage 4a — unified recursive engine (engine + pytest, done on branch `feat/stage4-recursive-engine-unification`)
+
+The engine is now a **single recursive code path** for all protocol shapes. The
+root of every protocol is treated as a `sequence` node; `start`/`reset` commands
+enter via `enter_root`; every phase transition, the top-level join, the approval
+gate, and merge/combine steps are driven by the recursive sequencer on the
+**`NODE_PATH`** coordinate alone. `NODE_PATH` is now **required** by
+`advance.py` and `join.py` — the old bespoke `(BRANCH, PHASE, SUBSTATE)` triple
+and the machinery that used it are deleted.
+
+**`protocol-advance` repository_dispatch type retired.** Phase-to-phase transition
+is now "continue at the next sibling path" — a `NODE_PATH` update, not a named
+dispatch type. Nothing fires a `protocol-advance` event; nothing in the engine
+listens for one.
+
+**Legacy multi-phase machinery deleted.** The `start_fanout`, `seed_and_dispatch_phase`,
+and the bespoke single-agent/phase-transition code paths that lived alongside the
+recursive engine are gone. All protocol shapes (single-agent, simple fanout,
+multi-phase, sub-pipeline, deep nested) go through the same `enter_root` → recursive
+enter/advance/join stack.
+
+**Cursor layout.** The root cursor lives in `_instance.yaml` under the `phase` key;
+nested cursors live in `<seq>.yaml` (one per sequence node, keyed by path segment).
+
+**Authoring-error validation.** `lib.validate_protocol` checks common protocol
+authoring errors (missing `sequence`, unreachable nodes, unknown `kind` values,
+etc.) and emits **actionable error messages** with the specific node path. This is
+a release-bar requirement: protocol authors outside this PoC must get clear
+feedback on malformed protocols.
+
+**Deploy requirement.** There is **no in-flight state migration.** Any PR that was
+mid-run when this branch deploys will have state in the old `(BRANCH, PHASE, SUBSTATE)`
+layout, which the new engine cannot resume. A fresh `/review`, `/recover`, or
+equivalent trigger is required after deploy to start a clean run.
+
+**Test count.** 399 tests across all modules, all green. The capability suite on
+this branch covers: single-agent, simple fanout, multi-phase, sub-pipeline,
+depth-4/5 deep trees, data-carrying and approval gates, `/override`, restart/reset,
+inputs channel, merge/combine, `max_depth` guard, authoring-error validation, and
+security (agent-derived string injection paths).
+
+**Pending — Stage 4b and 4c.** The GitHub-Actions wiring for the `NODE_PATH` axis
+is **not yet done**: matrix `leg:{path}`, orchestrator/ctx parsing of
+`client_payload.path`, path-keyed artifacts, orchestrator and join concurrency
+groups keyed on path rather than branch name, and dropping `protocol-advance` from
+the orchestrator's `on:` triggers. A live `deep-review-stub` protocol with
+gh-aw agents and an end-to-end live PR verification are also pending. These are
+separate follow-on stages (4b/4c), tracked in
+`docs/superpowers/plans/stage4b-gha-wiring.md` (to be written).
 
 ## Proven end-to-end (real GitHub Actions)
 
