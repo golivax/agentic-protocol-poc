@@ -1,6 +1,7 @@
 {
   "name": "deep-review-stub",
   "version": "0.1.0",
+  "min_engine_version": "1.0.0",
   "max_depth": 4,
   "triggers": [
     { "on": "issue_comment", "comment_prefix": "/deep-review", "command": "start" }
