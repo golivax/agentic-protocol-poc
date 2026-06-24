@@ -129,16 +129,22 @@ sub-pipeline `/answer` data-gate + merge → done, including recovery from a
 transient agent failure via the iterate loop). Spec/plan:
 `docs/superpowers/{specs,plans}/2026-06-24-stage4c-*`.
 
-**Three live-only bugs found + fixed during 4c** (the offline layers could not
-catch these): (1) the `lint.yml` actionlint gate was red on pre-existing
-shellcheck style nits → capped at error severity; (2) `protocol-join.yml` lacked
-`GH_TOKEN` — the unified `join.py` now *dispatches* `protocol-continue`/`-join`
-(pre-4a it ran inline), which the default token cannot do → added the dispatch
-PAT; (3) `do_answer`'s top-level data-gate arm pre-seeded the next sub-state's
-file, which the continue then re-seeded → empty-commit `cas_push` failure → it now
-advances the cursor only and lets the continue seed. **Backlog (cosmetic):** a
-depth-1 agent-phase check-run is named `<pid>/` (trailing slash) because
-`cr_name = pid + "/" + "/".join(tree_path[1:])` is empty at depth 1.
+**Four live-only bugs found + fixed during 4c** (the offline layers could not
+catch these — each is a job-context/interaction the ENGINE_LOCAL stubs hide): (1)
+the `lint.yml` actionlint gate was red on pre-existing shellcheck style nits →
+capped at error severity; (2) `protocol-join.yml` lacked `GH_TOKEN` — the unified
+`join.py` now *dispatches* `protocol-continue`/`-join` (pre-4a it ran inline),
+which the default token cannot do → added the dispatch PAT; (3) `do_answer`'s
+top-level data-gate arm pre-seeded the next sub-state's file, which the continue
+then re-seeded → empty-commit `cas_push` failure → it now advances the cursor only
+and lets the continue seed; (4) the `merge`/combine hook reads `PR` from the env
+to post its combined comment, but the unified merge runs from `next.py` in the
+plan job (no `PR`; pre-4a it ran in `protocol-join.yml`, which set it) → the
+combined comment silently dropped → `run_merge_hook` now derives `PR` from the
+instance for the hook. **Backlog (cosmetic/minor):** a depth-1 agent-phase
+check-run is named `<pid>/` (trailing slash) because `cr_name = pid + "/" +
+"/".join(tree_path[1:])` is empty at depth 1; re-running a *terminal* merge
+(manual re-fire) fails the final `cas_push` with an empty commit.
 
 ## Proven end-to-end (real GitHub Actions)
 
