@@ -1,5 +1,0 @@
-{"questions": [
-  {"id": "q1", "text": "The per-key state dict has no eviction. What is the expected key cardinality (e.g., per-IP, per-user-ID), and how will unbounded memory growth be managed over a long-running process lifetime?"},
-  {"id": "q2", "text": "After a long idle period the bucket silently refills up to full capacity before the next call — is this intentional burst behaviour, and should callers be warned about it?"},
-  {"id": "q3", "text": "The docstring marks this as single-process only: is this file purely a reference example, or is there a plan to promote it to production use where multiple replicas would require shared distributed state (e.g., Redis)?"}
-]}
