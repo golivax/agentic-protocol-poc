@@ -177,7 +177,6 @@ def is_pure_agent_root():
     if not states:
         return False
     # Must have at least one agent state and NO deterministic state.
-    _UNIFIED_KINDS = {"agent", "fanout", "gate", "join", "merge", "sequence"}
     for s in states:
         if s.get("kind") == "deterministic":
             return False
