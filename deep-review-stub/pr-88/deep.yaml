@@ -1,7 +1,7 @@
 protocol: deep-review-stub
 instance: pr-88
 state: preflight
-sub_state: triage
+sub_state: analyze
 iteration: 1
 gates: {}
 history: []
