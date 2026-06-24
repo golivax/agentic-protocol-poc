@@ -167,6 +167,23 @@ def is_fanout():
     return False
 
 
+def is_pure_agent_root():
+    """True when the protocol is a single-agent root sequence with no legacy
+    `kind:deterministic` publish state.  These protocols route through enter_root
+    (which seeds _instance.yaml) instead of the legacy single-agent path.
+    The guard preserves byte-identity for legacy fixtures that have a
+    `kind:deterministic` publish state after the agent state."""
+    states = proto_data.get("states", [])
+    if not states:
+        return False
+    # Must have at least one agent state and NO deterministic state.
+    _UNIFIED_KINDS = {"agent", "fanout", "gate", "join", "merge", "sequence"}
+    for s in states:
+        if s.get("kind") == "deterministic":
+            return False
+    return any(s.get("kind") == "agent" for s in states)
+
+
 def _reset_wipe(inf, inst_dir, prev, pr):
     """Wipe all prior-run state files for this instance and finalize any
     superseded status comment. Called on both `start`/`reset` entry and on
@@ -767,10 +784,11 @@ if COMMAND == "resolve-gate":
     sys.exit(0)
 
 if COMMAND in ("start", "reset") and not NODE_PATH and not BRANCH and not PHASE:
-    # Unified entry for multi-phase protocols and single-phase fanout protocols.
-    # The single-agent path (not fanout + not multi-phase) is intentionally excluded:
-    # it has its own lifecycle guard (halt if active) and does NOT create _instance.yaml.
-    if lib.is_multiphase(proto_data) or is_fanout():
+    # Unified entry for multi-phase protocols, single-phase fanout protocols, and
+    # pure single-agent root protocols (no kind:deterministic legacy publish state).
+    # Legacy single-agent fixtures with a kind:deterministic publish state keep the
+    # old path (no _instance.yaml) for byte-identical backwards compatibility.
+    if lib.is_multiphase(proto_data) or is_fanout() or is_pure_agent_root():
         enter_root(COMMAND, HEAD_SHA)
         sys.exit(0)
 

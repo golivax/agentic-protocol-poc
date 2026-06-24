@@ -1,0 +1,17 @@
+{
+  "name": "single-agent",
+  "version": "0.1.0",
+  "triggers": [],
+  "states": [
+    {
+      "id": "solo",
+      "kind": "agent",
+      "workflow": "solo-agent",
+      "evidence": "leaf.evidence.schema.json",
+      "max_iterations": 2,
+      "checks": [
+        { "run": "always-pass", "on_fail": "iterate" }
+      ]
+    }
+  ]
+}
