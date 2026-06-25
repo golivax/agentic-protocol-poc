@@ -143,3 +143,31 @@ def _fanout_status(nodes) -> str:
     if all(s == "done" for s in statuses):
         return "done"
     return "running"
+
+def instance_stats(instance_files: dict[str, str]) -> dict:
+    inst = yaml.safe_load(instance_files["_instance.yaml"]) or {}
+    transitions = 0
+    iters_by_phase = {}
+    for name, text in instance_files.items():
+        if not _is_node_file(name):
+            continue
+        node = yaml.safe_load(text) or {}
+        stem = name[:-len(STATE_FILE_SUFFIX)]
+        n = _iterations_of(node)
+        iters_by_phase[stem] = n
+        transitions += len(node.get("history") or [])
+    proj = status_projection(instance_files)
+    completed = sum(1 for p in proj["phases"] if p["status"] == "done")
+    failed = sum(1 for p in proj["phases"] if p["status"] == "failed")
+    return {
+        "protocol": inst.get("protocol"),
+        "pr": int(str(inst.get("instance", "pr-0")).removeprefix("pr-")),
+        "instance": inst.get("instance"),
+        "state_transitions": transitions,
+        "total_iterations": sum(iters_by_phase.values()),
+        "iterations_by_phase": iters_by_phase,
+        "phases_completed": completed,
+        "phases_failed": failed,
+        "current_phase": inst.get("phase"),
+        "head_sha": inst.get("head_sha"),
+    }
