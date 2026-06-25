@@ -63,6 +63,22 @@ def test_instance_status():
     assert r.status_code == 200
     assert r.json()["head"]["phase"] == "approval"
 
+def test_instance_evidence_returns_node_keyed_bodies():
+    r = app().get("/protocols/code-review/instances/62/evidence", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["protocol"] == "code-review" and body["pr"] == 62
+    assert body["evidence"]["preflight"]["checks"][0]["id"] == "spec-adherence"
+    assert body["evidence"]["review.security"]["dimension"] == "security"
+    assert body["answers"]["approval"]["decision"] == "approve"
+
+def test_instance_evidence_requires_auth():
+    assert app().get("/protocols/code-review/instances/62/evidence").status_code == 401
+
+def test_instance_evidence_unknown_instance_is_404():
+    r = app().get("/protocols/code-review/instances/999/evidence", headers=AUTH)
+    assert r.status_code == 404
+
 def test_instance_list():
     r = app().get("/protocols/code-review/instances", headers=AUTH)
     assert r.status_code == 200

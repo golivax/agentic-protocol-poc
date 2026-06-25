@@ -1,0 +1,1 @@
+{"checks":[{"id":"spec-adherence","status":"pass","summary":"Spec is covered.","evidence":[{"label":"spec","detail":"docs/spec.md"}],"remediation":""}],"examined":["a.py"]}

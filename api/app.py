@@ -108,6 +108,11 @@ def create_app(settings: Settings, client=None) -> FastAPI:
     def instance_stats(protocol: str, pr: int, request: Request):
         return state_reader.instance_stats(_instance_files(cl(request), protocol, pr))
 
+    @app.get("/protocols/{protocol}/instances/{pr}/evidence", dependencies=[Depends(require_auth)])
+    def instance_evidence(protocol: str, pr: int, request: Request):
+        proj = state_reader.evidence_projection(_instance_files(cl(request), protocol, pr))
+        return {"protocol": protocol, "pr": pr, **proj}
+
     @app.get("/stats", dependencies=[Depends(require_auth)])
     def global_stats(request: Request):
         client = cl(request)
