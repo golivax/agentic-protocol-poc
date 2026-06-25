@@ -22,3 +22,16 @@ def test_status_projection_ignores_sidecars_and_join_markers():
     ids = {p["id"] for p in out["phases"]}
     assert "deep.analyze.__join" not in ids
     assert all(not i.endswith(".json") for i in ids)
+
+def test_status_projection_excludes_injected_sidecar_filenames():
+    # Inject the sidecar filename categories directly to prove _is_node_file
+    # excludes them (not merely that no .yaml node happens to be named .json).
+    files = load_instance_files("code-review", 62)
+    files["preflight.evidence.json"] = '{"x": 1}'
+    files["something.answers.json"] = '{"y": 2}'
+    files["review.__join.yaml"] = "joined: true\n"
+    out = state_reader.status_projection(files)
+    ids = {p["id"] for p in out["phases"]}
+    # the real nodes still project; none of the injected sidecars become a phase
+    assert "preflight" in ids and "review" in ids and "approval" in ids
+    assert not any("evidence" in i or "answers" in i or "__join" in i for i in ids)

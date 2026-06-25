@@ -1,6 +1,5 @@
 from __future__ import annotations
 import json
-import re
 import yaml
 
 def _trigger_summary(proto: dict) -> list[dict]:
@@ -45,12 +44,17 @@ def protocol_detail(protocol_json: str) -> dict:
     return out
 
 
-_IGNORE_SUFFIXES = (".evidence.json", ".answers.json")
+STATE_FILE_SUFFIX = ".yaml"
+# Files inside an instance dir that are not node-state files. Sidecars such as
+# *.evidence.json / *.answers.json are excluded by the STATE_FILE_SUFFIX gate
+# (they are not .yaml); these cover the .yaml bookkeeping files.
+_IGNORE_FILES = ("_instance.yaml",)
+_IGNORE_SUFFIXES = (".__join.yaml",)
 
 def _is_node_file(name: str) -> bool:
-    if not name.endswith(".yaml"):
+    if not name.endswith(STATE_FILE_SUFFIX):
         return False
-    if name == "_instance.yaml" or name.endswith(".__join.yaml"):
+    if name in _IGNORE_FILES or name.endswith(_IGNORE_SUFFIXES):
         return False
     return True
 
@@ -63,7 +67,7 @@ def _node_status(node: dict) -> str:
     return "running"
 
 def _phase_and_branch(filename: str):
-    stem = filename[:-len(".yaml")]
+    stem = filename[:-len(STATE_FILE_SUFFIX)]
     parts = stem.split(".", 1)
     return (parts[0], parts[1] if len(parts) > 1 else None)
 

@@ -12,6 +12,19 @@ lives in `docs/superpowers/specs/2026-06-24-rest-api-design.md`.
   brainstorming on 2026-06-24 — add if a client needs the raw event log rather than
   the projected current status.
 
+## Known limitations
+
+- **Deeply-nested protocol status fidelity** — `state_reader.status_projection` is
+  faithful for single-level pipelines/fanouts (e.g. `code-review`: preflight → review
+  fanout → approval). For deeply-nested protocols like `deep-review-stub`, whose top
+  fanout legs (`quick`, `deep`) and sub-pipeline nodes (`deep.triage`, `deep.analyze.sec`…)
+  are stored at the instance root rather than under a `preflight.` prefix, the flat
+  phase projection does not reconstruct the true nested tree, and `head.kind`/`head.status`
+  may be absent when `_instance.yaml.phase` names a phase with no own node file. The live
+  protocol (`code-review`) projects correctly; reconstructing the full nested tree for
+  arbitrary-depth protocols is deferred (would consume `protocol_detail`'s state graph to
+  shape the projection). Flagged in SDD Task 4 review, 2026-06-25.
+
 ## Deferred capabilities
 
 - **Caching / synced store** — the design reads GitHub at request time. If `/stats`
