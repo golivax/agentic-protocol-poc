@@ -241,8 +241,9 @@ elif re.search(r"(?m)^engine:[ \t]*\n", text):
     # block form `engine:\n  id: ...` with no env — insert env after its children
     text = re.sub(r"(?m)^(engine:[ \t]*\n(?:[ \t]+.*\n)*)", lambda m: m.group(1) + env_block, text, count=1)
 elif re.search(r"(?m)^engine:[ \t]+\S+[ \t]*$", text):
-    # inline form `engine: claude` — expand to block form with id + env
-    text = re.sub(r"(?m)^engine:[ \t]+(\S+)[ \t]*$",
+    # inline form `engine: claude` — expand to block form with id + env (consume the
+    # trailing newline so no blank line is left before the next key)
+    text = re.sub(r"(?m)^engine:[ \t]+(\S+)[ \t]*\n",
                   lambda m: "engine:\n  id: " + m.group(1) + "\n" + env_block, text, count=1)
 open(md, "w").write(text)
 PY
@@ -270,8 +271,14 @@ ensure_dispatch_token() {
     log "POC_DISPATCH_TOKEN already set"
     return 0
   fi
-  local tok; read -r -s -p "Enter POC_DISPATCH_TOKEN (PAT with repo+workflow scopes): " tok </dev/tty; echo >/dev/tty
-  [[ -n "$tok" ]] || die "POC_DISPATCH_TOKEN is required"
+  local tok
+  if [[ "$NONINTERACTIVE" == 1 ]]; then
+    tok="${POC_DISPATCH_TOKEN:-}"
+    [[ -n "$tok" ]] || die "POC_DISPATCH_TOKEN not in env (required for --non-interactive); set it on the repo or export it"
+  else
+    read -r -s -p "Enter POC_DISPATCH_TOKEN (PAT with repo+workflow scopes): " tok </dev/tty; echo >/dev/tty
+    [[ -n "$tok" ]] || die "POC_DISPATCH_TOKEN is required"
+  fi
   gh secret set POC_DISPATCH_TOKEN --repo "$slug" --body "$tok"
 }
 
@@ -291,8 +298,14 @@ ensure_anthropic_secret() {
     log "ANTHROPIC_API_KEY already set"
     return 0
   fi
-  local tok; read -r -s -p "Enter ANTHROPIC_API_KEY (Claude Code auth token for the custom endpoint): " tok </dev/tty; echo >/dev/tty
-  [[ -n "$tok" ]] || die "ANTHROPIC_API_KEY is required for the Claude engine"
+  local tok
+  if [[ "$NONINTERACTIVE" == 1 ]]; then
+    tok="${ANTHROPIC_API_KEY:-}"
+    [[ -n "$tok" ]] || die "ANTHROPIC_API_KEY not in env (required for --non-interactive); set it on the repo or export it"
+  else
+    read -r -s -p "Enter ANTHROPIC_API_KEY (Claude Code auth token for the custom endpoint): " tok </dev/tty; echo >/dev/tty
+    [[ -n "$tok" ]] || die "ANTHROPIC_API_KEY is required for the Claude engine"
+  fi
   gh secret set ANTHROPIC_API_KEY --repo "$slug" --body "$tok"
 }
 
