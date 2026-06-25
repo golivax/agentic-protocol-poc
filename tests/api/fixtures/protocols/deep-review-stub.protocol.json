@@ -1,0 +1,48 @@
+{
+  "name": "deep-review-stub",
+  "version": "0.1.0",
+  "max_depth": 4,
+  "triggers": [
+    { "on": "issue_comment", "comment_prefix": "/deep-review", "command": "start" }
+  ],
+  "states": [
+    {
+      "id": "preflight",
+      "kind": "fanout",
+      "branches": [
+        { "id": "quick", "workflow": "quick-agent", "evidence": "leaf.evidence.schema.json",
+          "max_iterations": 2, "checks": [{ "run": "finding-present", "on_fail": "iterate" }],
+          "publish": "post-finding" },
+        {
+          "id": "deep",
+          "states": [
+            { "id": "triage", "kind": "agent", "workflow": "triage-agent",
+              "evidence": "leaf.evidence.schema.json", "max_iterations": 2,
+              "checks": [{ "run": "finding-present", "on_fail": "iterate" }] },
+            {
+              "id": "analyze",
+              "kind": "fanout",
+              "branches": [
+                { "id": "sec", "workflow": "sec-agent", "evidence": "leaf.evidence.schema.json",
+                  "max_iterations": 2, "checks": [{ "run": "finding-present", "on_fail": "iterate" }],
+                  "publish": "post-finding" },
+                { "id": "perf", "workflow": "perf-agent", "evidence": "leaf.evidence.schema.json",
+                  "max_iterations": 2, "checks": [{ "run": "finding-present", "on_fail": "iterate" }],
+                  "publish": "post-finding" }
+              ],
+              "next": "join-analyze"
+            },
+            { "id": "join-analyze", "kind": "join", "of": "analyze", "next": "report" },
+            { "id": "report", "kind": "agent", "workflow": "report-agent",
+              "evidence": "leaf.evidence.schema.json", "max_iterations": 2,
+              "inputs": [{ "from": "sec", "as": "sec" }, { "from": "perf", "as": "perf" }],
+              "checks": [{ "run": "finding-present", "on_fail": "iterate" }],
+              "publish": "post-finding" }
+          ]
+        }
+      ],
+      "next": "join-preflight"
+    },
+    { "id": "join-preflight", "kind": "join", "of": "preflight", "next": "done" }
+  ]
+}

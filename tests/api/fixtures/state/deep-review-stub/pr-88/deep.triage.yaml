@@ -1,0 +1,12 @@
+protocol: deep-review-stub
+instance: pr-88
+state: done
+iteration: 1
+gates: {}
+head_sha: 2af85ddf96c38e5be38a4accd4549b9e57279e65
+history:
+- iteration: 1
+  agent_run_id: '28109653891'
+  checks:
+    finding-present: pass
+  feedback: ''

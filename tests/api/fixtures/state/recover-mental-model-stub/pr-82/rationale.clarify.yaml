@@ -1,0 +1,26 @@
+protocol: recover-mental-model-stub
+instance: pr-82
+state: clarify
+head_sha: 4ceeafe4f82fb62bedc9c092225a53b83986bec6
+gates:
+  state: answered
+  history:
+  - actor: golivax
+    answers:
+    - q1
+    - q2
+    - q3
+  questions:
+  - id: q1
+    text: "The `_state` dict has no eviction policy, so keys accumulate indefinitely\
+      \ \u2014 what is the expected key cardinality (e.g., per-IP, per-user), and\
+      \ is unbounded memory growth acceptable for the target use case?"
+  - id: q2
+    text: "The docstring explicitly marks this as single-process only \u2014 was this\
+      \ a deliberate scope decision (coordinated with a separate distributed/Redis-backed\
+      \ limiter elsewhere), or could callers accidentally deploy it in a multi-process\
+      \ environment where limits would be per-process rather than global?"
+  - id: q3
+    text: "This lives under `examples/` rather than a library path \u2014 is `TokenBucket`\
+      \ intended to be imported by production code as-is, or is it purely illustrative\
+      \ reference code that should not be depended upon?"

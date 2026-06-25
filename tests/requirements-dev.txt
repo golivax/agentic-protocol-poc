@@ -1,3 +1,6 @@
 pytest
 PyYAML
+fastapi
+httpx
+respx
 jsonschema
