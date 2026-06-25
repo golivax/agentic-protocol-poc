@@ -4,21 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-PoC of an **agentic protocol engine**: a generic state machine that drives gh-aw
-(GitHub Agentic Workflows) agents through a porch-style protocol with
-evidence schemas, deterministic transition checks, and bounded
-iterate-with-feedback. A PR review runs on opening a PR or commenting `/review`.
+An **agentic protocol engine**: a generic, recursive state machine that drives
+gh-aw (GitHub Agentic Workflows) agents through a porch-style protocol with
+evidence schemas, deterministic transition checks, bounded iterate-with-feedback,
+and human gates. You declare a protocol as data; one engine interprets it for every
+shape (single-agent, fan-out, multi-phase, sub-pipeline, arbitrarily-nested trees).
 
-One example protocol exercises the engine:
-- **`code-review`** (`.github/agent-factory/protocols/code-review/`) — a multi-phase pipeline:
-  `preflight` (agent, pre-flight gate) → `review` (fanout to `grumpy` + `security` legs) →
-  `join` (AND-barrier) → `approval` (human gate). A live `/review` or PR-open runs the
-  pipeline via the router (`agentic-orchestrator.yml`), which selects this protocol through
-  `lib.route` scanning `protocol.json` `triggers` blocks at runtime.
+> The repo name still says `poc` — it has outgrown that. Treat it as a reusable
+> engine + protocol library, not a throwaway. See `README.md` for the
+> product-level overview.
 
-Single-phase engine shapes used in regression testing live in
-`tests/fixtures/single-agent/` (single-agent path) and `tests/fixtures/fanout-mini/`
-(single-phase fanout without the multi-phase wrapper).
+Three protocols ship under `.github/agent-factory/protocols/`:
+- **`code-review`** — the production pipeline: `preflight` (agent, pre-flight gate)
+  → `review` (fanout to `grumpy` + `security` legs) → `join` (AND-barrier) →
+  `approval` (human gate) → done. A live `/review` runs it via the router
+  (`agentic-orchestrator.yml`), which selects the protocol through `lib.route`
+  scanning `protocol.json` `triggers` blocks at runtime.
+- **`recover-mental-model-stub`** — sub-pipeline branches + a data-carrying gate
+  (`/recover`, then `/answer qID: value`). A capability example with stub agents.
+- **`deep-review-stub`** — a depth-4 nested fan-out/sub-pipeline tree
+  (`/deep-review`), exercising the recursive engine. Stub agents.
+
+Two other distribution-facing components live beside the engine:
+- **`dist/`** — an installer that drops the engine + chosen protocols into any repo
+  (`dist/README.md`).
+- **`api/`** — a read-only FastAPI visibility service (live status/stats of a
+  `<protocol, PR>` run). It reads state as a data contract; it never imports the
+  engine. Under active development on `feat/protocol-visibility-api`.
+
+Minimal engine shapes used in capability/regression testing live under
+`tests/fixtures/` (e.g. `cap-single-agent/`, `simple-fanout/`,
+`cap-mp-fanout-gate/`, `deep-fanout/`, `gate-deep/`, `too-deep/`).
 
 The deep design rationale lives in `docs/HOW-IT-WORKS.md`; what is/isn't
 implemented and why (deviations from the original spec) lives in `docs/STATUS.md`.
@@ -48,14 +64,19 @@ deliberate.
 ```
 .github/agent-factory/engine/   GENERIC — no protocol-specific logic.
   lib.py               state checkout, cas_push, status-comment upsert,
-                       resolve_executable, set_check_run, match_run_by_cid.
+                       resolve_executable, set_check_run, match_run_by_cid,
+                       route, validate_protocol, open_gate, do_answer.
                        Importable module + a `python3 lib.py <subcommand>` CLI
                        (the orchestrator calls the CLI for inline helpers).
-  next.py              pure planner: (state, protocol, command) -> action JSON
+  paths.py             the NODE_PATH coordinate: state-file paths for any node
+                       at any depth (single, fanout leg, sub-pipeline, nested).
+  next.py              pure planner: (state, protocol, command) -> action JSON.
+                       Root is a sequence node; enters via enter_root, sequences
+                       recursively on NODE_PATH.
   advance.py           the SOLE writer of non-initial state: verdicts -> mutate,
-                       publish, CAS-push, re-dispatch
-  run-checks.py        resolve + run a state's checks (any language) -> verdicts
-  join.py              fan-out AND-barrier (v2)
+                       publish, CAS-push, re-dispatch. Recursive enter/advance.
+  run-checks.py        resolve + run a node's checks (any language) -> verdicts
+  join.py              recursive fan-out AND-barrier (bubbles nested joins)
 
 .github/agent-factory/protocols/<name>/   A PROTOCOL — all protocol-specific logic lives here.
   protocol.json        states, checks, transitions, max_iterations (DATA)
@@ -184,24 +205,34 @@ Key frontmatter facts (see `docs/STATUS.md` for the security rationale):
   `POC_DISPATCH_TOKEN` (a PAT with repo + workflow scopes — the default
   `GITHUB_TOKEN` deliberately can't trigger workflows or read PR labels).
 
-## Fan-out / join (the `BRANCH` seam)
+## Recursive engine — the `NODE_PATH` coordinate
 
-The `code-review` protocol's `review` phase fans out to N parallel agent branches
-(here `grumpy` + `security`), each with its own iterate loop + eager publish, then
-joins them under a strict AND-barrier (`join` state) before advancing to the
-`approval` gate. The engine grows one environment variable to support this — not a
-second code path. `next.py`, `run-checks.py`, and `advance.py` read one env var, `BRANCH`:
+The engine is **one recursive code path** for every protocol shape. The root of a
+protocol is a `sequence` node; `start`/`reset` enter via `enter_root`; every phase
+transition, fan-out, join, gate, and merge/combine step is driven by the recursive
+sequencer on a single variable-length **node-path** (`NODE_PATH` env). There is no
+separate single-agent / multi-phase / fan-out code path — they are all the same
+stack at different depths. (Historical note: the pre-unification engine used a fixed
+`(BRANCH, PHASE, SUBSTATE)` triple; that machinery was deleted in Stage 4a. See
+`docs/STATUS.md`.)
 
-- **`BRANCH` empty/unset** → the single-agent path (used by `tests/fixtures/single-agent/`
-  as the engine regression fixture).
-- **`BRANCH=<id>` set** → the same scripts operate on one fan-out branch (its
-  agent unit, check list, publish hook, and per-branch state file).
+A fan-out **branch** is a parallel agent *leg* (or a nested sub-pipeline), not a git
+branch. For `code-review`'s `review` phase the legs are `grumpy` + `security`, each
+with its own iterate loop + eager publish, joined under a strict AND-barrier (`join`
+node) before the `approval` gate.
 
-A "branch" is a parallel agent *leg*, not a git branch. Per-branch state lives at
-`code-review/pr-N/review.<branch>.yaml` (e.g. `code-review/pr-N/review.grumpy.yaml`,
-`code-review/pr-N/review.security.yaml`) + a shared `_instance.yaml` (`joined` flag) —
-each branch writes only its own file, so CAS has no write contention. Matrix legs
-pass per-branch data (run-id, verdicts) via branch-named **artifacts**, not job
-`outputs` (which clobber across legs). Two axes are kept orthogonal: **process**
-(`done`/`failed` — did checks pass within `max_iterations`) vs. **verdict**
-(APPROVE/CHANGES_REQUESTED). The join gate cares only about the process axis.
+- **State paths come from `paths.py`** keyed by `NODE_PATH`: a single agent phase →
+  `code-review/pr-N/preflight.yaml`; fan-out legs →
+  `code-review/pr-N/review.grumpy.yaml` / `review.security.yaml`; a nested fan-out's
+  join marker → `<fanout>.__join.yaml`; the root cursor lives in `_instance.yaml`
+  (`phase` key), nested cursors in `<seq>.yaml`. Each node writes only its own file,
+  so CAS has no write contention.
+- **`max_depth`** (default 5) bounds the static tree; `lib.validate_protocol` rejects
+  malformed protocols (a `join` naming no in-scope fanout, an agent node missing its
+  `workflow`, a gate's `questions_from` naming a non-existent sibling) with an
+  actionable error before any state is written.
+- **Matrix legs** pass per-leg data (run-id, verdicts) via path-keyed **artifacts**,
+  not job `outputs` (which clobber across legs).
+- **Two axes are kept orthogonal:** **process** (`done`/`failed` — did checks pass
+  within `max_iterations`) vs. **verdict** (APPROVE/CHANGES_REQUESTED). The join gate
+  cares only about the process axis.

@@ -1,6 +1,6 @@
 # The Agentic Protocol Engine — How It Works
 
-A guide to the PoC: why it exists, the ideas it's built on, its architecture,
+A guide to the engine: why it exists, the ideas it's built on, its architecture,
 and how a developer writes and runs a protocol.
 
 ---
