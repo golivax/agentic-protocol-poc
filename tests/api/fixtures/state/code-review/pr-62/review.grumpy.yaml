@@ -1,0 +1,14 @@
+protocol: code-review
+instance: pr-62
+state: done
+iteration: 1
+gates: {}
+history:
+- iteration: 1
+  agent_run_id: '28110972887'
+  checks:
+    schema-valid: pass
+    rubric-coverage: pass
+    traces-exist-in-diff: pass
+  feedback: ''
+head_sha: 657e290beb6266ccd55b8bd95e247491e3468392
