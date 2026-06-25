@@ -92,6 +92,46 @@ PR, advanced one PR at a time; a PAT for cross-workflow triggering (the default
 
 ---
 
+## Execution model: no long-lived driver
+
+There is no long-lived "driver" run that babysits a protocol to completion. Each
+workflow run performs **one transition of the state machine and then exits**. The
+durable state lives in git (the `agentic-state` branch); every run re-derives what
+to do from that state, acts, writes the new state via a fast-forward CAS push, and
+terminates. (This is key idea #1 and #6 made concrete.)
+
+Concretely, the way the pieces hand off:
+
+- A trigger — a `/review` comment, a `protocol-continue` / `protocol-join`
+  `repository_dispatch` — is just a **wake-up**. The orchestrator → engine
+  plan (`next.py`) / dispatch / checks / advance (`advance.py`) runs for *that one
+  step*, then finishes.
+- When a step needs to cause the next step, it **fires a new `repository_dispatch`
+  event** (e.g. `advance.py` dispatches `protocol-continue` carrying
+  `client_payload[path]`; `join.py` dispatches the bubbled continue/join). That
+  spawns a *fresh* run later — it does not block waiting.
+- A fan-out doesn't keep a parent run alive holding the legs together: each leg
+  advances independently and fires the join barrier; the join is its own evaluator
+  run that exits whether or not all legs are terminal yet ("not all terminal →
+  wait" just means *this* run exits and a later leg's fire-join re-wakes it).
+- Human gates make this especially clear: at an approval gate or a data `/answer`
+  gate, the engine **opens the gate and the run ends**. Nothing is held open for
+  minutes/hours/days waiting for the human — the eventual `/approve` or `/answer`
+  comment is a new wake-up that starts a new run.
+
+The one bounded wait that *does* exist is **inside a single agent-dispatch step**:
+the `dispatch` job runs the gh-aw agent and `gh run watch`es that one agent run to
+collect its `evidence.json` (it resolves the run by correlation id — §3.5 — then
+waits for it). But that is scoped to one leg's one agent invocation within one
+transition — not the whole protocol. The overall pipeline is event-driven and
+stateless-between-steps, which is precisely why arbitrary depth works: each
+fan-out level is its own engine invocation rather than a nested, long-held parent.
+
+This is the "events are wake-ups, not state carriers; ephemeral compute, durable
+state in git" model. The §3.3 lifecycle below shows it for a single iteration.
+
+---
+
 ## 3. Architecture
 
 ### 3.1 Components
@@ -253,6 +293,11 @@ them in parallel.
 ---
 
 ## 4. Developer guide
+
+> This section is the **tutorial** — how to design a protocol. For a terse
+> field-by-field reference of every `protocol.json` key by node kind (plus the
+> machine-readable JSON Schema you can wire into your editor), see
+> [`PROTOCOL-DSL.md`](PROTOCOL-DSL.md).
 
 ### 4.1 Anatomy of a protocol (`protocol.json`)
 

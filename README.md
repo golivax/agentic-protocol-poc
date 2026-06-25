@@ -65,6 +65,13 @@ The one principle that ties it together:
   per iteration — plan (state PAT) → dispatch (read-only agent) → checks (no write
   token) → advance (state PAT) — so a compromised agent can never reach the writer.
 
+> **No long-lived driver.** Nothing babysits a protocol to completion. Each run
+> does **one transition and exits** — to cause the next step it fires a fresh
+> `repository_dispatch`; fan-out legs advance independently and re-wake a join;
+> even a human gate opens and ends the run (the later `/approve` or `/answer` is a
+> new wake-up). See
+> [`docs/HOW-IT-WORKS.md` — execution model](docs/HOW-IT-WORKS.md#execution-model-no-long-lived-driver).
+
 ---
 
 ## The bundled protocols
@@ -116,7 +123,9 @@ the same `enter_root` → recursive enter/advance/join stack, driven by one
 variable-length `NODE_PATH` coordinate. **To build a new protocol you write a new
 `protocols/<name>/` directory + agent workflows; you do not touch the engine.**
 
-See [`docs/HOW-IT-WORKS.md` §3–4](docs/HOW-IT-WORKS.md) for the authoring guide.
+See [`docs/HOW-IT-WORKS.md` §3–4](docs/HOW-IT-WORKS.md) for the authoring guide,
+and [`docs/PROTOCOL-DSL.md`](docs/PROTOCOL-DSL.md) for the `protocol.json` field
+reference (with a JSON Schema you can wire into your editor).
 
 ---
 
@@ -201,6 +210,7 @@ full rationale.
 | Doc | What's in it |
 |-----|--------------|
 | [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) | Full design rationale + protocol-authoring guide. Start here. |
+| [`docs/PROTOCOL-DSL.md`](docs/PROTOCOL-DSL.md) | `protocol.json` field reference (every key by node kind) + the JSON Schema. |
 | [`docs/STATUS.md`](docs/STATUS.md) | What is/isn't implemented, deviations from the original design, and why. |
 | [`docs/BACKLOG.md`](docs/BACKLOG.md) | Engine backlog. |
 | [`dist/README.md`](dist/README.md) | Installer usage. |

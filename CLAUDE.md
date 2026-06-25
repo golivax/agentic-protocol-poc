@@ -36,8 +36,10 @@ Minimal engine shapes used in capability/regression testing live under
 `tests/fixtures/` (e.g. `cap-single-agent/`, `simple-fanout/`,
 `cap-mp-fanout-gate/`, `deep-fanout/`, `gate-deep/`, `too-deep/`).
 
-The deep design rationale lives in `docs/HOW-IT-WORKS.md`; what is/isn't
-implemented and why (deviations from the original spec) lives in `docs/STATUS.md`.
+The deep design rationale lives in `docs/HOW-IT-WORKS.md`; the `protocol.json` DSL
+field reference lives in `docs/PROTOCOL-DSL.md` (backed by the JSON Schema at
+`.github/agent-factory/engine/protocol.schema.json`); what is/isn't implemented and
+why (deviations from the original spec) lives in `docs/STATUS.md`.
 **Read `docs/STATUS.md` before extending anything** — many "missing" pieces are
 deliberate.
 
