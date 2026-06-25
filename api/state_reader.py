@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import yaml
+from datetime import datetime
 
 def _trigger_summary(proto: dict) -> list[dict]:
     out = []
@@ -171,3 +172,56 @@ def instance_stats(instance_files: dict[str, str]) -> dict:
         "current_phase": inst.get("phase"),
         "head_sha": inst.get("head_sha"),
     }
+
+
+def classify_label(phase_label: str) -> str:
+    s = (phase_label or "").lower()
+    if "✅" in s or "done" in s:
+        return "completed"
+    if "❌" in s or "failed" in s:
+        return "failed"
+    if "⛔" in s or "blocked" in s:
+        return "blocked"
+    return "running"
+
+
+def classify_instance(instance_yaml_text: str) -> str:
+    inst = yaml.safe_load(instance_yaml_text) or {}
+    return classify_label(inst.get("phase_label", ""))
+
+
+def gate_view(instance_files: dict[str, str]):
+    for name, text in instance_files.items():
+        if not _is_node_file(name):
+            continue
+        node = yaml.safe_load(text) or {}
+        gates = node.get("gates") or {}
+        if isinstance(gates, dict) and gates.get("state") == "open":
+            questions = [{"id": q.get("id"), "text": q.get("text")}
+                         for q in (gates.get("questions") or [])]
+            return {
+                "phase": name[:-len(STATE_FILE_SUFFIX)],
+                "open": True,
+                "questions": questions,
+                "awaiting": "answer" if questions else "approval",
+            }
+    return None
+
+
+def _parse_iso(s):
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def sum_run_minutes(runs: list[dict]) -> float:
+    total = 0.0
+    for r in runs:
+        start = _parse_iso(r.get("run_started_at"))
+        end = _parse_iso(r.get("updated_at"))
+        if start and end and end >= start:
+            total += (end - start).total_seconds() / 60.0
+    return round(total, 1)
