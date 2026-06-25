@@ -1,14 +1,145 @@
 from __future__ import annotations
-from fastapi import FastAPI
+import re
+from fastapi import FastAPI, Depends, Header, HTTPException, Request, Query
+from fastapi.responses import JSONResponse
 from api.config import Settings
+from api import state_reader
+from api.github_client import NotFound, RateLimited, UpstreamError
+
+PROTO_DIR = ".github/agent-factory/protocols"
+MINUTES_NOTE = ("approximate: sum of wall-clock (updated_at − run_started_at) "
+                "over engine workflow runs")
 
 def create_app(settings: Settings, client=None) -> FastAPI:
     app = FastAPI(title="Protocol Visibility API")
     app.state.settings = settings
-    app.state.client = client  # GitHubClient injected in Task 8; None for now
+    app.state.client = client
+
+    def cl(request: Request):
+        return request.app.state.client
+
+    def require_auth(authorization: str = Header(default="")):
+        token = authorization.removeprefix("Bearer ").strip()
+        if not token or token != settings.api_bearer_token:
+            raise HTTPException(status_code=401, detail="invalid or missing bearer token")
+
+    def _proto_json(client, name):
+        try:
+            return client.get_text(f"{PROTO_DIR}/{name}/protocol.json", settings.protocols_ref)
+        except NotFound:
+            raise HTTPException(status_code=404, detail=f"unknown protocol: {name}")
+
+    def _instance_files(client, protocol, pr):
+        paths = client.list_tree(f"{protocol}/pr-{pr}/")
+        files = {p.split("/")[-1]: client.get_text(p, settings.state_branch) for p in paths}
+        if "_instance.yaml" not in files:
+            raise HTTPException(status_code=404, detail=f"no instance {protocol} pr-{pr}")
+        return files
+
+    def _pr_numbers(client, protocol):
+        prs = set()
+        for p in client.list_tree(f"{protocol}/"):
+            m = re.search(rf"^{re.escape(protocol)}/pr-(\d+)/", p)
+            if m:
+                prs.add(int(m.group(1)))
+        return sorted(prs)
+
+    @app.exception_handler(NotFound)
+    def _nf(request, exc: NotFound):
+        # NotFound escaping a handler (e.g. a blob 404 mid-assembly) maps to 404,
+        # honoring the global "NotFound -> 404" rule even where it isn't caught inline.
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    @app.exception_handler(RateLimited)
+    def _rl(request, exc: RateLimited):
+        h = {"Retry-After": exc.retry_after} if exc.retry_after else {}
+        return JSONResponse(status_code=429, content={"error": "github rate limit"}, headers=h)
+
+    @app.exception_handler(UpstreamError)
+    def _up(request, exc: UpstreamError):
+        return JSONResponse(status_code=502, content={"error": "github upstream error"})
 
     @app.get("/healthz")
     def healthz():
-        return {"status": "ok"}
+        client = app.state.client
+        try:
+            if client is not None:
+                client.list_dir(PROTO_DIR, settings.protocols_ref)
+            return {"status": "ok"}
+        except Exception:
+            return {"status": "degraded"}
+
+    @app.get("/protocols", dependencies=[Depends(require_auth)])
+    def list_protocols(request: Request):
+        client = cl(request)
+        names = client.list_dir(PROTO_DIR, settings.protocols_ref)
+        jsons = []
+        for n in names:
+            try:
+                jsons.append(client.get_text(f"{PROTO_DIR}/{n}/protocol.json", settings.protocols_ref))
+            except NotFound:
+                continue
+        return {"protocols": state_reader.list_protocols(jsons)}
+
+    @app.get("/protocols/{protocol}", dependencies=[Depends(require_auth)])
+    def protocol_detail(protocol: str, request: Request):
+        return state_reader.protocol_detail(_proto_json(cl(request), protocol))
+
+    @app.get("/protocols/{protocol}/instances", dependencies=[Depends(require_auth)])
+    def list_instances(protocol: str, request: Request):
+        _proto_json(cl(request), protocol)  # 404 if unknown protocol
+        return {"protocol": protocol, "instances": _pr_numbers(cl(request), protocol)}
+
+    @app.get("/protocols/{protocol}/instances/{pr}/status", dependencies=[Depends(require_auth)])
+    def instance_status(protocol: str, pr: int, request: Request):
+        return state_reader.status_projection(_instance_files(cl(request), protocol, pr))
+
+    @app.get("/protocols/{protocol}/instances/{pr}/stats", dependencies=[Depends(require_auth)])
+    def instance_stats(protocol: str, pr: int, request: Request):
+        return state_reader.instance_stats(_instance_files(cl(request), protocol, pr))
+
+    @app.get("/stats", dependencies=[Depends(require_auth)])
+    def global_stats(request: Request):
+        client = cl(request)
+        names = client.list_dir(PROTO_DIR, settings.protocols_ref)
+        counts = {"running": 0, "completed": 0, "failed": 0, "blocked": 0}
+        by_protocol, total = {}, 0
+        for name in names:
+            prs = _pr_numbers(client, name)
+            by_protocol[name] = {"total": len(prs), "running": 0}
+            for pr in prs:
+                total += 1
+                inst_txt = client.get_text(f"{name}/pr-{pr}/_instance.yaml", settings.state_branch)
+                klass = state_reader.classify_instance(inst_txt)
+                counts[klass] = counts.get(klass, 0) + 1
+                if klass == "running":
+                    by_protocol[name]["running"] += 1
+        runs = client.list_workflow_runs(settings.engine_workflows)
+        return {
+            "protocols": names,
+            "instances_total": total,
+            "instances_running": counts["running"],
+            "instances_completed": counts["completed"],
+            "instances_failed": counts["failed"],
+            "instances_blocked": counts["blocked"],
+            "by_protocol": by_protocol,
+            "action_minutes_approx": state_reader.sum_run_minutes(runs),
+            "action_minutes_note": MINUTES_NOTE,
+        }
+
+    @app.get("/gates", dependencies=[Depends(require_auth)])
+    def gates(request: Request, status: str = Query("open"),
+              protocol: str | None = Query(None)):
+        client = cl(request)
+        if protocol:
+            _proto_json(client, protocol)  # 404 if the named protocol is unknown
+        names = [protocol] if protocol else client.list_dir(PROTO_DIR, settings.protocols_ref)
+        out = []
+        for name in names:
+            for pr in _pr_numbers(client, name):
+                gv = state_reader.gate_view(_instance_files(client, name, pr))
+                if gv and (status != "open" or gv["open"]):
+                    out.append({"protocol": name, "pr": pr, **gv})
+        return {"gates": out}
 
     return app
