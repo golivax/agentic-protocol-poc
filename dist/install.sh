@@ -152,7 +152,7 @@ install_agents() {
     engine="${engine:-claude}"
     AGENT_ENGINES["$agent"]="$engine"
     log "adding ${agent} (engine: ${engine})"
-    gh aw add "${SOURCE}/workflows/${agent}.md@${REF}" --engine "$engine" --force
+    gh aw add "${SOURCE}/.github/workflows/${agent}.md@${REF}" --engine "$engine" --force
   done < <(gh_raw ".github/agent-factory/protocols/${p}/protocol.json" \
             | python3 "$WORKDIR/resolve.py" agents /dev/stdin)
 }
@@ -182,18 +182,25 @@ md = sys.argv[1]; url = os.environ["BASE_URL_INJECT"]
 text = open(md).read()
 authtok = "    ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}\n"
 baseurl = f"    ANTHROPIC_BASE_URL: {url}\n"
-# Idempotent: the source default may ALREADY carry engine.env. Never append a
-# second env: block (invalid YAML).
+env_block = "  env:\n" + baseurl + authtok
+# Idempotent across the forms gh-aw may leave the engine block in:
+#  - `gh aw add --engine claude` rewrites it to the INLINE form `engine: claude`
+#    (no env) — the common case after install.
+#  - an existing block `engine:\n  id: claude\n  env:\n    ANTHROPIC_BASE_URL: ...`
+#  Never append a second env: block (invalid YAML).
 if re.search(r"(?m)^    ANTHROPIC_BASE_URL:.*$", text):
     # overwrite the existing base URL line in place
     text = re.sub(r"(?m)^    ANTHROPIC_BASE_URL:.*$", baseurl.rstrip("\n"), text)
 elif re.search(r"(?m)^  env:\s*$", text):
     # an env: block exists but no base URL — add our two lines under it
     text = re.sub(r"(?m)^(  env:\s*\n)", lambda m: m.group(1) + baseurl + authtok, text, count=1)
-else:
-    # no env: at all — insert a fresh env: block right under engine:
-    block = "  env:\n" + baseurl + authtok
-    text = re.sub(r"(?m)^(engine:\n(?:[ \t].*\n)*?)", lambda m: m.group(1) + block, text, count=1)
+elif re.search(r"(?m)^engine:[ \t]*\n", text):
+    # block form `engine:\n  id: ...` with no env — insert env after its children
+    text = re.sub(r"(?m)^(engine:[ \t]*\n(?:[ \t]+.*\n)*)", lambda m: m.group(1) + env_block, text, count=1)
+elif re.search(r"(?m)^engine:[ \t]+\S+[ \t]*$", text):
+    # inline form `engine: claude` — expand to block form with id + env
+    text = re.sub(r"(?m)^engine:[ \t]+(\S+)[ \t]*$",
+                  lambda m: "engine:\n  id: " + m.group(1) + "\n" + env_block, text, count=1)
 open(md, "w").write(text)
 PY
   done
