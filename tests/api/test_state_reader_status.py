@@ -35,3 +35,23 @@ def test_status_projection_excludes_injected_sidecar_filenames():
     # the real nodes still project; none of the injected sidecars become a phase
     assert "preflight" in ids and "review" in ids and "approval" in ids
     assert not any("evidence" in i or "answers" in i or "__join" in i for i in ids)
+
+def test_evidence_projection_splits_evidence_and_answers():
+    files = {
+        "_instance.yaml": "protocol: code-review\ninstance: pr-62\n",
+        "preflight.yaml": "state: done\n",
+        "preflight.evidence.json": '{"checks":[{"id":"spec-present","status":"pass"}]}',
+        "review.security.evidence.json": '{"dimension":"security","verdict":"APPROVE","findings":[]}',
+        "approval.answers.json": '{"decision":"approve"}',
+    }
+    out = state_reader.evidence_projection(files)
+    assert out["evidence"]["preflight"] == {"checks": [{"id": "spec-present", "status": "pass"}]}
+    assert out["evidence"]["review.security"]["dimension"] == "security"
+    assert out["answers"]["approval"] == {"decision": "approve"}
+    assert "preflight" not in out["answers"]
+    assert set(out["evidence"]) == {"preflight", "review.security"}
+
+def test_evidence_projection_skips_malformed_json():
+    files = {"bad.evidence.json": "{not json", "ok.evidence.json": '{"a":1}'}
+    out = state_reader.evidence_projection(files)
+    assert out["evidence"] == {"ok": {"a": 1}}
