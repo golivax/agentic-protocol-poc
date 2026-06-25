@@ -8,6 +8,10 @@
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
+    "_note": {
+      "type": "string",
+      "description": "Free-text annotation ignored by the engine (JSON has no comments). Allowed on any object in a protocol."
+    },
     "name": {
       "type": "string",
       "description": "Protocol id. Becomes the state-path prefix <name>/<instance-key>.yaml. Unique per protocols directory."
@@ -48,6 +52,7 @@
       "required": ["on", "command"],
       "additionalProperties": false,
       "properties": {
+        "_note": { "type": "string", "description": "Free-text annotation; ignored by the engine." },
         "on": {
           "type": "string",
           "description": "GitHub event name, e.g. issue_comment or pull_request."
@@ -74,6 +79,7 @@
       "additionalProperties": false,
       "description": "A deterministic check over the agent's evidence. ABI: <check> <evidence.json> <diff.txt> <changed-files.txt> -> one JSON {check,pass,feedback}, always exit 0.",
       "properties": {
+        "_note": { "type": "string", "description": "Free-text annotation; ignored by the engine." },
         "run": {
           "type": "string",
           "description": "Check id. Resolved to checks/<run> or checks/<run>.* in the protocol dir (extension-agnostic) unless 'exec' is given."
@@ -95,6 +101,7 @@
       "additionalProperties": false,
       "description": "Materialize an earlier node's evidence (or a gate's answers) as inputs/<as>.json for this node's agent.",
       "properties": {
+        "_note": { "type": "string", "description": "Free-text annotation; ignored by the engine." },
         "from": {
           "type": "string",
           "description": "Source node id (a sibling sub-state, a fanout branch, or a phase)."
@@ -111,6 +118,10 @@
       "additionalProperties": false,
       "description": "One node in a sequence. The fields you may set depend on 'kind'.",
       "properties": {
+        "_note": {
+          "type": "string",
+          "description": "Free-text annotation; ignored by the engine."
+        },
         "id": {
           "type": "string",
           "description": "Node id, unique within its enclosing sequence."
@@ -214,6 +225,10 @@
       "additionalProperties": false,
       "description": "A fanout leg. Either a FLAT leg (has 'workflow') or a SUB-PIPELINE leg (has its own 'states'). A branch has no 'kind'.",
       "properties": {
+        "_note": {
+          "type": "string",
+          "description": "Free-text annotation; ignored by the engine."
+        },
         "id": {
           "type": "string",
           "description": "Leg id, unique within the fanout."

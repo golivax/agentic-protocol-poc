@@ -123,9 +123,11 @@ the same `enter_root` → recursive enter/advance/join stack, driven by one
 variable-length `NODE_PATH` coordinate. **To build a new protocol you write a new
 `protocols/<name>/` directory + agent workflows; you do not touch the engine.**
 
-See [`docs/HOW-IT-WORKS.md` §3–4](docs/HOW-IT-WORKS.md) for the authoring guide,
-and [`docs/PROTOCOL-DSL.md`](docs/PROTOCOL-DSL.md) for the `protocol.json` field
-reference (with a JSON Schema you can wire into your editor).
+**Building one?** [`docs/AUTHORING.md`](docs/AUTHORING.md) is the authoring hub —
+it threads the [tutorial](docs/HOW-IT-WORKS.md), the
+[`protocol.json` field reference](docs/PROTOCOL-DSL.md) (with a JSON Schema you can
+wire into your editor), and a `protocol-lint.py` tool that validates a protocol and
+draws it — as an indented tree or a BPMN-ish fork/join flow diagram (`--view both`).
 
 ---
 
@@ -209,7 +211,8 @@ full rationale.
 
 | Doc | What's in it |
 |-----|--------------|
-| [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) | Full design rationale + protocol-authoring guide. Start here. |
+| [`docs/AUTHORING.md`](docs/AUTHORING.md) | **Authoring Protocols and Workflows** — the map of everything you need to write a protocol (tutorial, field reference, the validate-and-visualize linter, the authoring-error catalog). Start here to build one. |
+| [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) | Full design rationale + protocol-authoring tutorial. Start here to understand the engine. |
 | [`docs/PROTOCOL-DSL.md`](docs/PROTOCOL-DSL.md) | `protocol.json` field reference (every key by node kind) + the JSON Schema. |
 | [`docs/STATUS.md`](docs/STATUS.md) | What is/isn't implemented, deviations from the original design, and why. |
 | [`docs/BACKLOG.md`](docs/BACKLOG.md) | Engine backlog. |

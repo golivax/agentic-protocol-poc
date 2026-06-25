@@ -7,6 +7,8 @@ the engine.** This page is the *reference* (every key, by node kind). For the
 narrative "how to design a protocol" walkthrough — picking the rubric, writing the
 evidence schema and checks — see
 [`HOW-IT-WORKS.md` §4](HOW-IT-WORKS.md) (the tutorial).
+[`AUTHORING.md`](AUTHORING.md) is the hub that ties the two together and points at
+the `protocol-lint.py` validator/visualizer.
 
 There is a machine-readable JSON Schema at
 [`.github/agent-factory/engine/protocol.schema.json`](../.github/agent-factory/engine/protocol.schema.json).
@@ -60,6 +62,7 @@ either *flat* (has `workflow`) or a *sub-pipeline* (has `states[]`) — never bo
 | `phase_labels` | object | | Override the PR labels of terminal/structural phases (`setup`/`done`/`failed`/`blocked`/…). |
 | `triggers` | trigger[] | | Event → command entry points (see below). |
 | `$schema` | string | | Editor pointer; ignored by the engine. |
+| `_note` | string | | Free-text annotation (JSON has no comments). Ignored by the engine; allowed on **any** object — the protocol, a node, a branch, a trigger, a check, an input. |
 
 ## `triggers[]`
 
@@ -206,6 +209,15 @@ orthogonal axes the engine tracks — **process** (`done`/`failed`: did checks p
 within `max_iterations`) vs. **verdict** (`APPROVE`/`CHANGES_REQUESTED`) — are kept
 separate; a `join` cares only about the process axis.
 
+Run all of this **before** wiring up any Actions with the bundled linter, which
+applies the schema *and* these semantic rules and prints the message for any it
+trips:
+
+```bash
+python3 .github/agent-factory/engine/protocol-lint.py \
+  .github/agent-factory/protocols/<name>/protocol.json
+```
+
 The dev-only test `tests/test_protocol_schema.py` validates every shipped protocol
 and fixture against the JSON Schema, so the schema and this page stay in lockstep
 with the DSL.
@@ -214,6 +226,8 @@ with the DSL.
 
 ## See also
 
+- [`AUTHORING.md`](AUTHORING.md) — the authoring hub: the journey from mental model
+  → tutorial → this reference → validating + visualizing your protocol.
 - [`HOW-IT-WORKS.md` §4](HOW-IT-WORKS.md) — the authoring tutorial (rubric design,
   evidence schemas, writing a check, publish hooks).
 - [`HOW-IT-WORKS.md` — execution model](HOW-IT-WORKS.md#execution-model-no-long-lived-driver)

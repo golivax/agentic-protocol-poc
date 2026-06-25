@@ -297,7 +297,9 @@ them in parallel.
 > This section is the **tutorial** — how to design a protocol. For a terse
 > field-by-field reference of every `protocol.json` key by node kind (plus the
 > machine-readable JSON Schema you can wire into your editor), see
-> [`PROTOCOL-DSL.md`](PROTOCOL-DSL.md).
+> [`PROTOCOL-DSL.md`](PROTOCOL-DSL.md). [`AUTHORING.md`](AUTHORING.md) is the hub
+> that gathers this tutorial, the reference, and the `protocol-lint.py`
+> validate-and-visualize tool in one place.
 
 ### 4.1 Anatomy of a protocol (`protocol.json`)
 

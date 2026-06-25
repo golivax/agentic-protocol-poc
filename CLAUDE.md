@@ -38,10 +38,18 @@ Minimal engine shapes used in capability/regression testing live under
 
 The deep design rationale lives in `docs/HOW-IT-WORKS.md`; the `protocol.json` DSL
 field reference lives in `docs/PROTOCOL-DSL.md` (backed by the JSON Schema at
-`.github/agent-factory/engine/protocol.schema.json`); what is/isn't implemented and
-why (deviations from the original spec) lives in `docs/STATUS.md`.
+`.github/agent-factory/engine/protocol.schema.json`); `docs/AUTHORING.md` is the
+**Authoring Protocols and Workflows** hub that gathers the tutorial, the reference,
+and the validate-and-visualize linter; what is/isn't implemented and why
+(deviations from the original spec) lives in `docs/STATUS.md`.
 **Read `docs/STATUS.md` before extending anything** — many "missing" pieces are
 deliberate.
+
+To sanity-check a `protocol.json` (schema + the engine's own authoring rules) and
+see its tree shape, run
+`python3 .github/agent-factory/engine/protocol-lint.py <protocol.json>`
+(structural validation needs the dev-only `jsonschema`; it degrades to
+semantic-only with a note when absent).
 
 ## The core mental model
 
