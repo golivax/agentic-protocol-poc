@@ -225,6 +225,27 @@ ensure_dispatch_token() {
   gh secret set POC_DISPATCH_TOKEN --repo "$slug" --body "$tok"
 }
 
+# Set the LLM credential the agents authenticate with. The agent engine.env maps
+# secrets.ANTHROPIC_API_KEY -> ANTHROPIC_AUTH_TOKEN, so for a Claude Code account this
+# secret holds the Claude Code auth token (not an api.anthropic.com API key). We set it
+# ourselves because install_agents uses `gh aw add --engine` (non-wizard), which does not
+# run gh-aw's secret step. Skipped for engines that don't need this secret.
+ensure_anthropic_secret() {
+  local needs=0 a
+  for a in "${!AGENT_ENGINES[@]}"; do
+    [[ "${AGENT_ENGINES[$a]}" == "claude" ]] && needs=1
+  done
+  [[ "$needs" == 1 ]] || return 0
+  local slug; slug="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+  if gh secret list --repo "$slug" 2>/dev/null | grep -q '^ANTHROPIC_API_KEY'; then
+    log "ANTHROPIC_API_KEY already set"
+    return 0
+  fi
+  local tok; read -r -s -p "Enter ANTHROPIC_API_KEY (Claude Code auth token for the custom endpoint): " tok </dev/tty; echo >/dev/tty
+  [[ -n "$tok" ]] || die "ANTHROPIC_API_KEY is required for the Claude engine"
+  gh secret set ANTHROPIC_API_KEY --repo "$slug" --body "$tok"
+}
+
 write_install_receipt() {
   local protos_json files=() p ver
   protos_json="{"
@@ -268,6 +289,7 @@ cmd_install() {
   configure_endpoints
   ensure_state_branch
   ensure_dispatch_token
+  ensure_anthropic_secret
   write_install_receipt
   finalize_commit
   log "done — open a PR or comment a trigger to run the protocol"
