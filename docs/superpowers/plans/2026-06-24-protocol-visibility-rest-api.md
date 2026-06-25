@@ -83,9 +83,11 @@ gates:
 - Create: `api/config.py`
 - Create: `api/app.py`
 - Create: `api/requirements.txt`
-- Create: `tests/api/__init__.py` (empty)
 - Create: `tests/api/test_health.py`
 - Modify: `tests/requirements-dev.txt`
+- Modify: `tests/conftest.py` (prepend repo root to `sys.path` — see note)
+
+> **Package-layout note (verified during execution):** Do **NOT** create `tests/api/__init__.py`. The production package is `api/` and the test dir is `tests/api/`; under pytest's default `prepend` import mode, a `tests/api/__init__.py` (with no `tests/__init__.py`) makes pytest put `tests/` on `sys.path` and import `tests/api/` *as* `api`, shadowing the production package (`ModuleNotFoundError: No module named 'api.app'`). Instead, `tests/conftest.py` prepends the repo root to `sys.path` so the real `api/` resolves, and `tests/api/` stays a namespace package — `from tests.api.conftest import ...` (used in later tasks) works without an `__init__.py`.
 
 **Interfaces:**
 - Produces: `api.config.Settings` (frozen dataclass) with fields `api_bearer_token: str`, `github_token: str`, `github_repo: str`, `state_branch: str`, `protocols_ref: str`, `engine_workflows: list[str]`, `github_api_url: str`; classmethod `Settings.from_env(env: Mapping[str,str]) -> Settings` (raises `ValueError` listing every missing required var). `api.app.create_app(settings: Settings, client=None) -> FastAPI`. Route `GET /healthz` → `{"status": "ok"}` (liveness only; readiness ping added in Task 8).
