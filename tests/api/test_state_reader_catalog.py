@@ -9,6 +9,7 @@ def test_list_protocols_summarizes_name_version_triggers():
     out = state_reader.list_protocols([cr, deep])
     names = {p["name"] for p in out}
     assert names == {"code-review", "deep-review-stub"}
+    assert out == sorted(out, key=lambda p: p["name"])
     cr_entry = next(p for p in out if p["name"] == "code-review")
     assert cr_entry["version"] == "0.1.0"
     assert any(t["comment_prefix"] == "/review" for t in cr_entry["triggers"])

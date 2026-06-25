@@ -11,11 +11,11 @@ def list_protocols(protocol_jsons: list[str]) -> list[dict]:
     out = []
     for raw in protocol_jsons:
         proto = json.loads(raw)
-        out.append({
-            "name": proto["name"],
-            "version": proto.get("version", ""),
-            "triggers": _trigger_summary(proto),
-        })
+        entry = {"name": proto["name"]}
+        if "version" in proto:
+            entry["version"] = proto["version"]
+        entry["triggers"] = _trigger_summary(proto)
+        out.append(entry)
     return sorted(out, key=lambda p: p["name"])
 
 def _state_summary(s: dict) -> dict:
@@ -33,10 +33,11 @@ def _state_summary(s: dict) -> dict:
 
 def protocol_detail(protocol_json: str) -> dict:
     proto = json.loads(protocol_json)
-    return {
-        "name": proto["name"],
-        "version": proto.get("version", ""),
-        "max_depth": proto.get("max_depth"),
-        "triggers": _trigger_summary(proto),
-        "states": [_state_summary(s) for s in proto.get("states", [])],
-    }
+    out = {"name": proto["name"]}
+    if "version" in proto:
+        out["version"] = proto["version"]
+    if "max_depth" in proto:
+        out["max_depth"] = proto["max_depth"]
+    out["triggers"] = _trigger_summary(proto)
+    out["states"] = [_state_summary(s) for s in proto.get("states", [])]
+    return out
