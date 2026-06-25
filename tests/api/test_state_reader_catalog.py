@@ -24,3 +24,7 @@ def test_protocol_detail_exposes_state_graph():
     assert any(c["run"] == "spec-present" for c in preflight["checks"])
     review = next(s for s in out["states"] if s["id"] == "review")
     assert {b["id"] for b in review["branches"]} == {"grumpy", "security"}
+    # leaf branches retain their per-leg fields (not flattened to just id)
+    grumpy = next(b for b in review["branches"] if b["id"] == "grumpy")
+    assert grumpy["workflow"] == "grumpy-agent"
+    assert grumpy["max_iterations"] == 3

@@ -9,6 +9,10 @@ from api.github_client import NotFound, RateLimited, UpstreamError
 PROTO_DIR = ".github/agent-factory/protocols"
 MINUTES_NOTE = ("approximate: sum of wall-clock (updated_at − run_started_at) "
                 "over engine workflow runs")
+# A protocol id is a single path segment; reject anything that could traverse
+# out of the protocols/state dirs when interpolated into a GitHub API path
+# (defense-in-depth — query-sourced names can otherwise contain "/" or "..").
+_PROTOCOL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 def create_app(settings: Settings, client=None) -> FastAPI:
     app = FastAPI(title="Protocol Visibility API")
@@ -23,13 +27,19 @@ def create_app(settings: Settings, client=None) -> FastAPI:
         if not token or token != settings.api_bearer_token:
             raise HTTPException(status_code=401, detail="invalid or missing bearer token")
 
+    def _validate_protocol(name: str):
+        if not _PROTOCOL_RE.match(name or ""):
+            raise HTTPException(status_code=400, detail="invalid protocol name")
+
     def _proto_json(client, name):
+        _validate_protocol(name)
         try:
             return client.get_text(f"{PROTO_DIR}/{name}/protocol.json", settings.protocols_ref)
         except NotFound:
             raise HTTPException(status_code=404, detail=f"unknown protocol: {name}")
 
     def _instance_files(client, protocol, pr):
+        _validate_protocol(protocol)
         paths = client.list_tree(f"{protocol}/pr-{pr}/")
         files = {p.split("/")[-1]: client.get_text(p, settings.state_branch) for p in paths}
         if "_instance.yaml" not in files:

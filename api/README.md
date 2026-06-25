@@ -25,3 +25,12 @@ OpenAPI docs at `/docs`. All endpoints except `/healthz` need `Authorization: Be
 - `GET /stats` — engine-wide stats (action minutes are wall-clock approx)
 - `GET /gates?status=open[&protocol=]` — instances paused on a human gate
 - `GET /healthz` — liveness/readiness (no auth)
+
+## Notes for clients
+
+- The `/status` projection is faithful for single-level pipelines/fanouts (e.g.
+  `code-review`). For deeply-nested protocols, `head.kind`/`head.status` may be
+  absent when the head phase has no own node file — treat an absent value as
+  `"unknown"`. See `docs/API-BACKLOG.md` (Known limitations).
+- `action_minutes_approx` is wall-clock (`updated_at − run_started_at`), not billed
+  minutes; it will differ from GitHub billing.

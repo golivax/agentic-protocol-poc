@@ -21,14 +21,16 @@ def list_protocols(protocol_jsons: list[str]) -> list[dict]:
     return sorted(out, key=lambda p: p["name"])
 
 def _state_summary(s: dict) -> dict:
-    keep = ("id", "kind", "label", "max_iterations", "next", "of", "sub_state")
+    keep = ("id", "kind", "label", "workflow", "max_iterations", "next", "of", "sub_state")
     out = {k: s[k] for k in keep if k in s}
     if "checks" in s:
         out["checks"] = s["checks"]
     if "branches" in s:
-        out["branches"] = [_state_summary(b) if "states" in b
-                           else {k: b[k] for k in ("id", "workflow") if k in b}
-                           for b in s["branches"]]
+        # Summarize every branch the same way (a leaf branch simply has no
+        # nested `states`); `keep` filters to present fields, so leaf branches
+        # retain their `workflow`/`max_iterations`/`checks` instead of being
+        # flattened to just id+workflow.
+        out["branches"] = [_state_summary(b) for b in s["branches"]]
     if "states" in s:  # nested sub-pipeline
         out["states"] = [_state_summary(c) for c in s["states"]]
     return out

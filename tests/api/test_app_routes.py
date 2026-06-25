@@ -85,6 +85,18 @@ def test_gates_unknown_protocol_is_404():
     r = app().get("/gates", params={"status": "open", "protocol": "nope"}, headers=AUTH)
     assert r.status_code == 404
 
+def test_gates_traversal_protocol_is_400():
+    # A query-sourced protocol with path-traversal chars must be rejected before
+    # it reaches the GitHub URL builder.
+    r = app().get("/gates", params={"protocol": "../../etc"}, headers=AUTH)
+    assert r.status_code == 400
+
+def test_protocol_detail_invalid_name_is_400():
+    # A malformed-but-routable name (leading dot — not URL-normalized like "..")
+    # is rejected by the validator before any GitHub call.
+    r = app().get("/protocols/.hidden", headers=AUTH)
+    assert r.status_code == 400
+
 def test_notfound_from_blob_fetch_maps_to_404():
     # A client whose list_tree advertises a path but whose get_text 404s on it
     # (TOCTOU / permission gap) must surface as 404, not 500, via the global handler.
