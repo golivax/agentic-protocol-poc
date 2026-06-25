@@ -48,6 +48,24 @@ def protocol_detail(protocol_json: str) -> dict:
 
 
 STATE_FILE_SUFFIX = ".yaml"
+EVIDENCE_SUFFIX = ".evidence.json"
+ANSWERS_SUFFIX = ".answers.json"
+
+def evidence_projection(instance_files: dict[str, str]) -> dict:
+    evidence, answers = {}, {}
+    for name, text in instance_files.items():
+        if name.endswith(EVIDENCE_SUFFIX):
+            target, suffix = evidence, EVIDENCE_SUFFIX
+        elif name.endswith(ANSWERS_SUFFIX):
+            target, suffix = answers, ANSWERS_SUFFIX
+        else:
+            continue
+        try:
+            target[name[: -len(suffix)]] = json.loads(text)
+        except (ValueError, TypeError):
+            continue
+    return {"evidence": evidence, "answers": answers}
+
 # Files inside an instance dir that are not node-state files. Sidecars such as
 # *.evidence.json / *.answers.json are excluded by the STATE_FILE_SUFFIX gate
 # (they are not .yaml); these cover the .yaml bookkeeping files.
