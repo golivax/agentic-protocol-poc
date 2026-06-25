@@ -27,6 +27,14 @@ gh_tree_children() {
     --jq ".tree[] | select(.type == \"${kind}\") | .path" 2>/dev/null || true
 }
 
+# Resolve the TARGET repo (owner/name) from the origin remote. We must NOT use
+# `gh repo view`, which on a fork resolves to the upstream parent — so secret
+# and branch operations would hit the wrong repo.
+target_slug() {
+  git remote get-url origin 2>/dev/null \
+    | sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##'
+}
+
 parse_args() {
   SUBCMD="${1:-}"; shift || true
   while [[ $# -gt 0 ]]; do
@@ -85,7 +93,7 @@ preflight() {
   grep -q 'github/gh-aw' <<<"$exts" || die "gh-aw missing — run: gh extension install github/gh-aw"
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     || die "run inside a clone of the target repo"
-  local slug; slug="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+  local slug; slug="$(target_slug)"
   gh api "repos/${slug}" --jq '.permissions.push' | grep -q true \
     || die "you need write access to ${slug}"
 }
@@ -223,7 +231,7 @@ PY
 }
 
 ensure_state_branch() {
-  local slug; slug="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+  local slug; slug="$(target_slug)"
   if gh api "repos/${slug}/branches/agentic-state" >/dev/null 2>&1; then
     log "agentic-state branch already exists — leaving it"
     return 0
@@ -237,7 +245,7 @@ ensure_state_branch() {
 }
 
 ensure_dispatch_token() {
-  local slug; slug="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+  local slug; slug="$(target_slug)"
   if gh secret list --repo "$slug" 2>/dev/null | grep -q '^POC_DISPATCH_TOKEN'; then
     log "POC_DISPATCH_TOKEN already set"
     return 0
@@ -258,7 +266,7 @@ ensure_anthropic_secret() {
     [[ "${AGENT_ENGINES[$a]}" == "claude" ]] && needs=1
   done
   [[ "$needs" == 1 ]] || return 0
-  local slug; slug="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+  local slug; slug="$(target_slug)"
   if gh secret list --repo "$slug" 2>/dev/null | grep -q '^ANTHROPIC_API_KEY'; then
     log "ANTHROPIC_API_KEY already set"
     return 0
