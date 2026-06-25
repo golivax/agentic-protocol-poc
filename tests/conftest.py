@@ -2,11 +2,16 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
+
+# CRITICAL: Insert project root at the BEGINNING of sys.path
+# This must happen before pytest imports test modules
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import pytest
 import yaml
-
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
 PROTOCOLS = ROOT / ".github/agent-factory/protocols"
 FIXTURES = ROOT / "tests/fixtures"

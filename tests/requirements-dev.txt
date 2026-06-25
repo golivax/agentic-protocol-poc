@@ -1,2 +1,5 @@
 pytest
 PyYAML
+fastapi
+httpx
+respx
