@@ -74,3 +74,15 @@ def test_list_workflow_runs_empty_workflows_uses_repo_runs_endpoint():
     c = GitHubClient(S)
     runs = c.list_workflow_runs([])
     assert len(runs) == 1 and runs[0]["name"] == "any"
+
+@respx.mock
+def test_list_dir_returns_entry_names():
+    respx.get("https://api.github.com/repos/o/r/contents/.github/agent-factory/protocols").mock(
+        return_value=httpx.Response(200, json=[
+            {"name": "code-review", "type": "dir"},
+            {"name": "deep-review-stub", "type": "dir"},
+            {"name": "README.md", "type": "file"},
+        ]))
+    c = GitHubClient(S)
+    assert c.list_dir(".github/agent-factory/protocols", "main") == \
+        ["code-review", "deep-review-stub"]

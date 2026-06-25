@@ -47,6 +47,11 @@ class GitHubClient:
 
     get_json = get_text
 
+    def list_dir(self, path: str, ref: str) -> list[str]:
+        url = f"{self._base()}/contents/{path}"
+        r = self._check(self.http.get(url, headers=self._headers(), params={"ref": ref}))
+        return sorted(e["name"] for e in r.json() if e.get("type") == "dir")
+
     def list_workflow_runs(self, workflows: list[str]) -> list[dict]:
         runs, sources = [], (workflows or [None])
         for wf in sources:
