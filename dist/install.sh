@@ -8,6 +8,8 @@ DRY_RUN=0
 FORCE=0
 DRIFTED=""
 BASE_URL=""
+NONINTERACTIVE=0
+DEFAULT_ENGINE="claude"
 SUBCMD=""
 PROTOCOLS=()
 declare -A AGENT_ENGINES=()
@@ -34,6 +36,8 @@ parse_args() {
       --base-url) BASE_URL="$2"; shift 2 ;;
       --dry-run) DRY_RUN=1; shift ;;
       --force) FORCE=1; shift ;;
+      --non-interactive) NONINTERACTIVE=1; shift ;;
+      --default-engine) DEFAULT_ENGINE="$2"; shift 2 ;;
       -*) die "unknown flag: $1" ;;
       *) PROTOCOLS+=("$1"); shift ;;
     esac
@@ -148,8 +152,12 @@ install_agents() {
   local p="$1" agent engine
   while read -r agent; do
     [[ -z "$agent" ]] && continue
-    read -r -p "Engine for ${agent} [claude/copilot/codex/gemini] (default claude): " engine </dev/tty || engine=""
-    engine="${engine:-claude}"
+    if [[ "$NONINTERACTIVE" == 1 ]]; then
+      engine="$DEFAULT_ENGINE"
+    else
+      read -r -p "Engine for ${agent} [claude/copilot/codex/gemini] (default claude): " engine </dev/tty || engine=""
+      engine="${engine:-claude}"
+    fi
     AGENT_ENGINES["$agent"]="$engine"
     log "adding ${agent} (engine: ${engine})"
     gh aw add "${SOURCE}/.github/workflows/${agent}.md@${REF}" --engine "$engine" --force
@@ -164,16 +172,23 @@ configure_endpoints() {
     [[ "${AGENT_ENGINES[$agent]}" == "claude" ]] && any=1
   done
   [[ "$any" == 1 ]] || return 0
-  local ans; read -r -p "Configure a custom Anthropic endpoint for the Claude workflows? [y/N]: " ans </dev/tty || ans="n"
-  [[ "$ans" == "y" || "$ans" == "Y" ]] || return 0
-  local url; read -r -p "  Base URL (default ${BASE_URL:-https://api.anthropic.com}): " url </dev/tty || url=""
-  url="${url:-${BASE_URL:-https://api.anthropic.com}}"
-  echo "  The following engine.env will be added to each Claude workflow and recompiled:"
-  echo "    env:"
-  echo "      ANTHROPIC_BASE_URL: ${url}"
-  echo "      ANTHROPIC_AUTH_TOKEN: \${{ secrets.ANTHROPIC_API_KEY }}"
-  local ok; read -r -p "  Apply? [y/N]: " ok </dev/tty || ok="n"
-  [[ "$ok" == "y" || "$ok" == "Y" ]] || { log "skipped endpoint config"; return 0; }
+  local url
+  if [[ "$NONINTERACTIVE" == 1 ]]; then
+    [[ -n "$BASE_URL" ]] || { log "no --base-url given; skipping endpoint config"; return 0; }
+    url="$BASE_URL"
+    log "configuring custom endpoint (non-interactive): ANTHROPIC_BASE_URL=${url}"
+  else
+    local ans; read -r -p "Configure a custom Anthropic endpoint for the Claude workflows? [y/N]: " ans </dev/tty || ans="n"
+    [[ "$ans" == "y" || "$ans" == "Y" ]] || return 0
+    read -r -p "  Base URL (default ${BASE_URL:-https://api.anthropic.com}): " url </dev/tty || url=""
+    url="${url:-${BASE_URL:-https://api.anthropic.com}}"
+    echo "  The following engine.env will be added to each Claude workflow and recompiled:"
+    echo "    env:"
+    echo "      ANTHROPIC_BASE_URL: ${url}"
+    echo "      ANTHROPIC_AUTH_TOKEN: \${{ secrets.ANTHROPIC_API_KEY }}"
+    local ok; read -r -p "  Apply? [y/N]: " ok </dev/tty || ok="n"
+    [[ "$ok" == "y" || "$ok" == "Y" ]] || { log "skipped endpoint config"; return 0; }
+  fi
   for agent in "${!AGENT_ENGINES[@]}"; do
     [[ "${AGENT_ENGINES[$agent]}" == "claude" ]] || continue
     BASE_URL_INJECT="$url" python3 - ".github/workflows/${agent}.md" <<'PY'
