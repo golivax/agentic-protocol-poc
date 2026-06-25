@@ -1,6 +1,6 @@
 import json
 import yaml
-from tests.api.conftest import load_instance_files, FIXTURES
+from tests.api.fixtures_helper import load_instance_files, FIXTURES
 
 def test_instance_fixtures_parse_as_yaml():
     files = load_instance_files("code-review", 62)

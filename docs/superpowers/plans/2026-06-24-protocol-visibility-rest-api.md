@@ -87,7 +87,9 @@ gates:
 - Modify: `tests/requirements-dev.txt`
 - Modify: `tests/conftest.py` (prepend repo root to `sys.path` — see note)
 
-> **Package-layout note (verified during execution):** Do **NOT** create `tests/api/__init__.py`. The production package is `api/` and the test dir is `tests/api/`; under pytest's default `prepend` import mode, a `tests/api/__init__.py` (with no `tests/__init__.py`) makes pytest put `tests/` on `sys.path` and import `tests/api/` *as* `api`, shadowing the production package (`ModuleNotFoundError: No module named 'api.app'`). Instead, `tests/conftest.py` prepends the repo root to `sys.path` so the real `api/` resolves, and `tests/api/` stays a namespace package — `from tests.api.conftest import ...` (used in later tasks) works without an `__init__.py`.
+> **Package-layout note (verified during execution):** Do **NOT** create `tests/api/__init__.py`. The production package is `api/` and the test dir is `tests/api/`; under pytest's default `prepend` import mode, a `tests/api/__init__.py` (with no `tests/__init__.py`) makes pytest put `tests/` on `sys.path` and import `tests/api/` *as* `api`, shadowing the production package (`ModuleNotFoundError: No module named 'api.app'`). Instead, `tests/conftest.py` prepends the repo root to `sys.path` so the real `api/` resolves, and `tests/api/` stays a namespace package — `from tests.api.fixtures_helper import ...` (used in later tasks) works without an `__init__.py`.
+>
+> **Second-`conftest.py` note (verified during execution):** Do **NOT** put a `conftest.py` in `tests/api/`. The engine tests use a bare `from conftest import FIXTURES, PROTOCOLS, run_check`, which pytest's prepend mode resolves to `tests/conftest.py` by module name. A second file literally named `conftest.py` (in `tests/api/`) is imported under the same top-level module name `conftest`, collides in `sys.modules`, and makes the engine tests import the wrong `FIXTURES` → 31 engine-test failures. Put the API test helpers in a normally-named module, `tests/api/fixtures_helper.py`, instead.
 
 **Interfaces:**
 - Produces: `api.config.Settings` (frozen dataclass) with fields `api_bearer_token: str`, `github_token: str`, `github_repo: str`, `state_branch: str`, `protocols_ref: str`, `engine_workflows: list[str]`, `github_api_url: str`; classmethod `Settings.from_env(env: Mapping[str,str]) -> Settings` (raises `ValueError` listing every missing required var). `api.app.create_app(settings: Settings, client=None) -> FastAPI`. Route `GET /healthz` → `{"status": "ok"}` (liveness only; readiness ping added in Task 8).
@@ -219,11 +221,11 @@ git commit -m "feat(api): scaffold FastAPI package, config, and /healthz"
 - Create: `tests/api/fixtures/state/deep-review-stub/pr-88/{_instance,deep,deep.triage,deep.analyze.__join,deep.analyze.sec,deep.analyze.perf,deep.report,quick}.yaml`
 - Create: `tests/api/fixtures/state/recover-mental-model-stub/pr-82/{_instance,rationale.clarify}.yaml`
 - Create: `tests/api/fixtures/protocols/code-review.protocol.json`, `tests/api/fixtures/protocols/deep-review-stub.protocol.json`
-- Create: `tests/api/conftest.py`
+- Create: `tests/api/fixtures_helper.py` (a plain module — **not** named `conftest.py`; see the second-`conftest.py` note above)
 - Create: `tests/api/test_fixtures_sane.py`
 
 **Interfaces:**
-- Produces: pytest fixture `fixtures_dir` (returns `Path` to `tests/api/fixtures`); helper `load_instance_files(protocol, pr) -> dict[str, str]` returning `{filename: text}` for every file under that instance dir.
+- Produces: helper `load_instance_files(protocol, pr) -> dict[str, str]` returning `{filename: text}` for every file under that instance dir, and module-level `FIXTURES: Path`. Both in `tests/api/fixtures_helper.py`, imported as `from tests.api.fixtures_helper import load_instance_files, FIXTURES`.
 
 - [ ] **Step 1: Export real state fixtures from `origin/agentic-state`**
 
@@ -250,18 +252,13 @@ cp .github/agent-factory/protocols/deep-review-stub/protocol.json \
 ```
 Expected: 15 fixture files created. (If a path is missing, list the instance with `git ls-tree -r --name-only origin/agentic-state | grep <protocol>/pr-<N>/` and adjust.)
 
-- [ ] **Step 2: Write conftest helpers + sanity test**
+- [ ] **Step 2: Write fixture helpers + sanity test**
 
-`tests/api/conftest.py`:
+`tests/api/fixtures_helper.py` (plain module — must NOT be named `conftest.py`):
 ```python
 import pathlib
-import pytest
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
-
-@pytest.fixture
-def fixtures_dir():
-    return FIXTURES
 
 def load_instance_files(protocol, pr):
     d = FIXTURES / "state" / protocol / f"pr-{pr}"
@@ -272,7 +269,7 @@ def load_instance_files(protocol, pr):
 ```python
 import json
 import yaml
-from tests.api.conftest import load_instance_files, FIXTURES
+from tests.api.fixtures_helper import load_instance_files, FIXTURES
 
 def test_instance_fixtures_parse_as_yaml():
     files = load_instance_files("code-review", 62)
@@ -295,7 +292,7 @@ Expected: PASS (2 passed). If FAIL, the export in Step 1 was incomplete — re-r
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/api/fixtures tests/api/conftest.py tests/api/test_fixtures_sane.py
+git add tests/api/fixtures tests/api/fixtures_helper.py tests/api/test_fixtures_sane.py
 git commit -m "test(api): capture real agentic-state + protocol fixtures"
 ```
 
@@ -417,7 +414,7 @@ git commit -m "feat(api): state_reader protocol catalog (list + detail)"
 - Create: `tests/api/test_state_reader_status.py`
 
 **Interfaces:**
-- Consumes: `load_instance_files(protocol, pr)` from `tests/api/conftest.py`.
+- Consumes: `load_instance_files(protocol, pr)` from `tests/api/fixtures_helper.py`.
 - Produces:
   - `status_projection(instance_files: dict[str, str]) -> dict` — `{"protocol","pr","instance","head":{"phase","kind","status"},"phases":[...]}`. Each phase: `{"id","kind","status","iterations","checks"}`; fanout phases instead carry `"branches":[{"id","status","iterations","checks"}]`; gate phases carry `"gate":{"open":bool}`.
   - Helper `_node_status(node: dict) -> str` → `"done"|"failed"|"running"`.
@@ -430,7 +427,7 @@ git commit -m "feat(api): state_reader protocol catalog (list + detail)"
 `tests/api/test_state_reader_status.py`:
 ```python
 from api import state_reader
-from tests.api.conftest import load_instance_files
+from tests.api.fixtures_helper import load_instance_files
 
 def test_status_projection_code_review_pr62():
     out = state_reader.status_projection(load_instance_files("code-review", 62))
@@ -591,7 +588,7 @@ git commit -m "feat(api): state_reader instance status projection"
 `tests/api/test_state_reader_stats.py`:
 ```python
 from api import state_reader
-from tests.api.conftest import load_instance_files
+from tests.api.fixtures_helper import load_instance_files
 
 def test_instance_stats_code_review_pr62():
     out = state_reader.instance_stats(load_instance_files("code-review", 62))
@@ -677,7 +674,7 @@ git commit -m "feat(api): state_reader per-instance stats"
 `tests/api/test_state_reader_aggregate.py`:
 ```python
 from api import state_reader
-from tests.api.conftest import load_instance_files
+from tests.api.fixtures_helper import load_instance_files
 
 def test_classify_label_variants():
     assert state_reader.classify_label("✅ done") == "completed"
