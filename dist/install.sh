@@ -83,6 +83,11 @@ import json, sys
 print(json.load(open(sys.argv[1]))["min_gh_aw_version"])
 PY
 )"
+  ENGINE_DIR="$(python3 - "$WORKDIR/manifest.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1]))["engine_dir"])
+PY
+)"
 }
 
 preflight() {
@@ -152,6 +157,21 @@ fetch_unit() {
   local p
   for p in "${PROTOCOLS[@]}"; do
     while read -r f; do [[ -n "$f" ]] && fetch_one "$f"; done < <(protocol_files "$p")
+  done
+  restore_exec_bits
+}
+
+# The GitHub Contents API drops the file mode, but engine scripts, checks, and
+# publish hooks are invoked as executables (the engine workflow runs next.py etc.
+# directly; run-checks resolves checks by path). Re-apply +x to exactly the blobs
+# the source tree marks executable (git mode 100755).
+restore_exec_bits() {
+  local base rel
+  for base in "$ENGINE_DIR" $(printf '.github/agent-factory/protocols/%s\n' "${PROTOCOLS[@]}"); do
+    while IFS= read -r rel; do
+      [[ -n "$rel" && -f "${base}/${rel}" ]] && chmod +x "${base}/${rel}"
+    done < <(gh api "repos/${SOURCE}/git/trees/${REF}:${base}?recursive=1" \
+               --jq '.tree[] | select(.mode=="100755") | .path' 2>/dev/null || true)
   done
 }
 
