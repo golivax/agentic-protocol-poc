@@ -1,0 +1,27 @@
+protocol: recover-mental-model-stub
+instance: pr-111
+state: clarify
+head_sha: e2e1073384d59a653b8ae44eeb5e5b353ca05219
+gates:
+  state: open
+  history: []
+  questions:
+  - id: q1
+    text: "The `push-mental-model.py` combine hook force-pushes to `_mental_model`\
+      \ and recreates it as an orphan each run, erasing all history. Was discarding\
+      \ history intentional, and what happens if two `/recover` runs execute concurrently\
+      \ on the same repo \u2014 does the second push silently overwrite the first?"
+  - id: q2
+    text: The `socratic` sub-pipeline contains a human `gate` (answering phase) while
+      `legion` and `codeset` run with `max_iterations:1 / on_fail:block` and no gate.
+      Since all three are joined at a strict AND-barrier, the join can stall for hours
+      waiting for `/answer` input. How are the legion/codeset results surfaced to
+      the PR author during that wait, and is there a timeout or cancellation path
+      if the gate is never answered?
+  - id: q3
+    text: "Both `legion` and `codeset` branches use `max_iterations:1` with `on_fail:block`,\
+      \ meaning a single artifact-check failure permanently blocks the protocol run.\
+      \ What is the intended recovery path \u2014 does the author re-issue `/recover`\
+      \ to restart all three legs from scratch, or is there a way to retry only the\
+      \ failed leg without re-running the socratic sub-pipeline (which requires human\
+      \ interaction)?"

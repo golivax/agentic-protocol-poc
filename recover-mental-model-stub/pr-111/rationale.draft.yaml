@@ -1,7 +1,12 @@
 protocol: recover-mental-model-stub
 instance: pr-111
-state: recover
+state: done
 iteration: 1
 gates: {}
 head_sha: e2e1073384d59a653b8ae44eeb5e5b353ca05219
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28253460424'
+  checks:
+    questions-present: pass
+  feedback: ''
