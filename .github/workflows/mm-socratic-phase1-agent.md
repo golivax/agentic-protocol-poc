@@ -75,7 +75,6 @@ pre-agent-steps:
         --permission-mode bypassPermissions || \
         echo "[mm-socratic-1] phase 1 exited non-zero (packaging whatever exists)" >&2
       cp -a QUESTION_TREE-*.adoc OPEN_QUESTIONS-*.adoc "$OUT"/ 2>/dev/null || true
-      # Seed evidence with run_id + manifest; questions[] is filled by the agent.
       python3 - "$OUT" > /tmp/gh-aw/evidence.json <<'PY'
       import json, os, sys
       root = sys.argv[1]
@@ -87,7 +86,7 @@ pre-agent-steps:
                             "bytes": os.path.getsize(ap)})
       json.dump({"method": "socratic:phase1",
                  "run_id": os.environ.get("GITHUB_RUN_ID", ""),
-                 "questions": [], "files": files}, sys.stdout)
+                 "files": files}, sys.stdout)
       PY
       cat /tmp/gh-aw/evidence.json
 post-steps:
@@ -112,25 +111,22 @@ timeout-minutes: 30
 
 Phase 1 of the skill already ran in the setup steps and staged
 `QUESTION_TREE-*.adoc` + `OPEN_QUESTIONS-*.adoc` into `/tmp/gh-aw/out`, and seeded
-`/tmp/gh-aw/evidence.json` with a `run_id`, a `files` manifest, and an empty
-`questions` array.
+`/tmp/gh-aw/evidence.json` with a `run_id` + a `files` manifest. The OPEN leaves
+are answered automatically by the downstream `answering` step (no human gate).
 
 ## Task context
 
 Read `/tmp/gh-aw/task-context.json` (`pr`, `iteration`, `feedback`).
 
-## Your job — surface the OPEN leaves as gate questions
+## Your job (verify-and-repair only)
 
-1. Read the staged `OPEN_QUESTIONS-*.adoc` from `/tmp/gh-aw/out`. It lists the
-   `[OPEN]` leaves of the Question Tree (the gaps the code cannot answer),
-   grouped by the role that should answer them.
-2. For EACH open leaf, produce one question object `{ "id": <Q-ID>, "text": <the
-   question, including the role to ask in parentheses> }`. Use the leaf's Q-ID
-   (e.g. `Q1.4.1`) as `id`; if a leaf has no Q-ID, synthesize a stable short id
-   like `q1`, `q2`, … in document order.
-3. Rewrite `/tmp/gh-aw/evidence.json` so its `questions` array holds those objects.
-   PRESERVE the existing `run_id` and `files` fields exactly. There must be at
-   least one question (the `questions-present` check rejects an empty list).
-4. Do NOT post comments or touch GitHub. The engine opens the `answering` gate
-   from your `questions`; a human answers via `/answer <id>: <value>`; the engine
-   then dispatches phase 2 with your tree + the answers.
+1. Confirm `/tmp/gh-aw/evidence.json` is valid JSON with a non-empty `run_id`
+   and a `files` array.
+2. Confirm the staged tree at `/tmp/gh-aw/out` contains `QUESTION_TREE-*.adoc`
+   and `OPEN_QUESTIONS-*.adoc` — what the `socratic-phase1-present` check requires.
+3. If the manifest does not reflect the files actually on disk, regenerate
+   `/tmp/gh-aw/evidence.json` from the real contents of `/tmp/gh-aw/out`
+   (paths relative to that dir), keeping `run_id` = `GITHUB_RUN_ID`.
+4. Do NOT post comments or touch GitHub. The engine dispatches the `answering`
+   step next; it downloads your `mm-tree-socratic-phase1` artifact by `run_id`,
+   answers the OPEN leaves automatically, and hands the answered tree to phase 2.

@@ -4,6 +4,10 @@ Covers the three method legs (legion ∥ codeset ∥ socratic sub-pipeline), the
 deterministic checks, the full engine walk under ENGINE_LOCAL, and the
 push-mental-model merge hook that assembles + force-pushes the orphan
 `_mental_model` branch.
+
+The socratic sub-pipeline is fully automated: phase1 → answering → phase2 are all
+agent steps (the answering step researches + fills the OPEN leaves — there is NO
+human gate / /answer).
 """
 import importlib, json, os, subprocess, sys
 from pathlib import Path
@@ -33,7 +37,11 @@ LEGION_OK = {"run_id": "123", "files": [
 CODESET_OK = {"run_id": "123", "files": [
     {"path": "AGENTS.md"}, {"path": "CLAUDE.md"},
     {"path": ".claude/docs/knowledge.json"}, {"path": ".claude/docs/get_context.py"}]}
-SOCRATIC2_OK = {"run_id": "123", "files": [
+PHASE1_OK = {"run_id": "123", "files": [
+    {"path": "QUESTION_TREE-x.adoc"}, {"path": "OPEN_QUESTIONS-x.adoc"}]}
+ANSWERING_OK = {"run_id": "123", "files": [
+    {"path": "QUESTION_TREE-x.adoc"}, {"path": "OPEN_QUESTIONS-x.adoc"}]}
+PHASE2_OK = {"run_id": "123", "files": [
     {"path": "docs/specs/prd-foo.adoc"}, {"path": "docs/specs/use-cases-foo.adoc"},
     {"path": "docs/specs/adrs/foo-adr-001-x.adoc"}, {"path": "docs/arc42/arc42-foo.adoc"}]}
 
@@ -49,8 +57,7 @@ def test_legion_artifacts_fail_missing_file(tmp_path):
 
 
 def test_legion_artifacts_fail_no_run_id(tmp_path):
-    ev = dict(LEGION_OK, run_id="")
-    r = _run("legion-artifacts", ev, tmp_path)
+    r = _run("legion-artifacts", dict(LEGION_OK, run_id=""), tmp_path)
     assert r["pass"] is False and "run_id" in r["feedback"]
 
 
@@ -59,42 +66,38 @@ def test_codeset_artifacts_pass(tmp_path):
 
 
 def test_codeset_artifacts_fail_missing(tmp_path):
-    ev = dict(CODESET_OK, files=[{"path": "AGENTS.md"}])
-    r = _run("codeset-artifacts", ev, tmp_path)
+    r = _run("codeset-artifacts", dict(CODESET_OK, files=[{"path": "AGENTS.md"}]), tmp_path)
     assert r["pass"] is False and "knowledge.json" in r["feedback"]
 
 
+def test_socratic_phase1_present_pass(tmp_path):
+    assert _run("socratic-phase1-present", PHASE1_OK, tmp_path)["pass"] is True
+
+
+def test_socratic_phase1_present_fail_missing(tmp_path):
+    r = _run("socratic-phase1-present", dict(PHASE1_OK, files=[{"path": "QUESTION_TREE-x.adoc"}]), tmp_path)
+    assert r["pass"] is False and "OPEN_QUESTIONS" in r["feedback"]
+
+
+def test_socratic_answering_present_pass(tmp_path):
+    assert _run("socratic-answering-present", ANSWERING_OK, tmp_path)["pass"] is True
+
+
+def test_socratic_answering_present_fail_missing(tmp_path):
+    r = _run("socratic-answering-present", dict(ANSWERING_OK, files=[]), tmp_path)
+    assert r["pass"] is False and "OPEN_QUESTIONS" in r["feedback"]
+
+
 def test_socratic_docs_present_pass(tmp_path):
-    assert _run("socratic-docs-present", SOCRATIC2_OK, tmp_path)["pass"] is True
+    assert _run("socratic-docs-present", PHASE2_OK, tmp_path)["pass"] is True
 
 
 def test_socratic_docs_present_fail_missing_adr(tmp_path):
-    ev = dict(SOCRATIC2_OK, files=[
+    ev = dict(PHASE2_OK, files=[
         {"path": "docs/specs/prd-foo.adoc"}, {"path": "docs/specs/use-cases-foo.adoc"},
         {"path": "docs/arc42/arc42-foo.adoc"}])
     r = _run("socratic-docs-present", ev, tmp_path)
     assert r["pass"] is False and "adrs" in r["feedback"]
-
-
-def test_questions_present_pass(tmp_path):
-    r = _run("questions-present", {"questions": [{"id": "q1", "text": "Why?"}]}, tmp_path)
-    assert r["pass"] is True
-
-
-def test_questions_present_fail_empty(tmp_path):
-    assert _run("questions-present", {"questions": []}, tmp_path)["pass"] is False
-
-
-def test_answers_coverage_pass(tmp_path):
-    r = _run("answers-coverage",
-             {"questions": [{"id": "q1"}], "answers": {"q1": "because"}}, tmp_path)
-    assert r["pass"] is True
-
-
-def test_answers_coverage_fail_missing(tmp_path):
-    r = _run("answers-coverage",
-             {"questions": [{"id": "q1"}, {"id": "q2"}], "answers": {"q1": "y"}}, tmp_path)
-    assert r["pass"] is False and "q2" in r["feedback"]
 
 
 # ─── push-mental-model merge hook ────────────────────────────────────────────
@@ -102,7 +105,6 @@ def test_answers_coverage_fail_missing(tmp_path):
 def test_push_mental_model_hook(tmp_path):
     """Stage the three leg trees + inputs, run the hook under ENGINE_LOCAL against a
     bare origin, then clone `_mental_model` and assert the assembled layout."""
-    # Bare origin that stands in for the target repo.
     origin = tmp_path / "target.git"
     subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
 
@@ -113,7 +115,6 @@ def test_push_mental_model_hook(tmp_path):
         tree = workdir / "trees" / leg
         tree.mkdir(parents=True)
         (tree / "FILE.txt").write_text(f"{leg} output\n")
-    # a nested file in one tree, to confirm copytree recursion
     (workdir / "trees" / "socratic" / "docs").mkdir()
     (workdir / "trees" / "socratic" / "docs" / "prd.adoc").write_text("= PRD\n")
 
@@ -127,7 +128,6 @@ def test_push_mental_model_hook(tmp_path):
     assert out["conclusion"] == "success", out
     assert "legion" in out["summary"] and "socratic" in out["summary"]
 
-    # Clone the orphan branch and assert the layout.
     view = tmp_path / "view"
     subprocess.run(["git", "clone", "-q", "-b", "_mental_model", str(origin), str(view)],
                    check=True)
@@ -142,7 +142,6 @@ def test_push_mental_model_hook(tmp_path):
 
 
 def test_push_mental_model_hook_no_trees_is_neutral(tmp_path):
-    """No leg produced a tree → neutral conclusion, no push attempted."""
     workdir = tmp_path / "wd"; (workdir / "inputs").mkdir(parents=True)
     env = dict(os.environ)
     env.update(ENGINE_LOCAL="1", MM_TARGET_REMOTE=str(tmp_path / "nope.git"), PR="7")
@@ -155,7 +154,10 @@ def test_push_mental_model_hook_no_trees_is_neutral(tmp_path):
 # ─── full e2e pipeline ───────────────────────────────────────────────────────
 
 def test_full_pipeline(tmp_path, engine_env):
-    """start → legion ∥ codeset ∥ socratic(phase1→answering→phase2) → join → combine."""
+    """start → legion ∥ codeset ∥ socratic(phase1→answering→phase2) → join → combine.
+
+    The socratic sub-pipeline is all-agent: each sub-state advance seeds + dispatches
+    the next (no gate, no /answer)."""
     passv = tmp_path / "v.json"
     passv.write_text(json.dumps({"results": [
         {"check": "synthetic-pass", "pass": True, "feedback": "", "on_fail": "iterate"}
@@ -176,57 +178,47 @@ def test_full_pipeline(tmp_path, engine_env):
         return work
     clone.n = 0
 
-    # 1. start → seed the fanout
     out, err, rc = run_engine("next.py", tmp_path / "dir-next", "pr-1", PROTO, "start",
                               "abc123", env=engine_env)
     assert rc == 0, f"next start failed:\n{err}"
 
-    # 2. the two flat legs
     adv("recover.legion", LEGION_OK)
     adv("recover.codeset", CODESET_OK)
 
-    # 3. socratic phase1 (emits questions → gate opens)
-    adv("recover.socratic.phase1",
-        {"run_id": "r", "questions": [{"id": "q1", "text": "Why?"}],
-         "files": [{"path": "QUESTION_TREE-x.adoc"}, {"path": "OPEN_QUESTIONS-x.adoc"}]})
+    # socratic sub-pipeline, all automated
+    adv("recover.socratic.phase1", PHASE1_OK)
     w = clone()
     cur = read_state_yaml(w / "recover-mental-model/pr-1/socratic.yaml")
-    assert cur["sub_state"] == "answering", f"expected answering gate, got {cur}"
+    assert cur["sub_state"] == "answering", f"expected cursor at answering, got {cur}"
+    # advance seeded the answering sub-state file (agent→agent transition)
+    assert (w / "recover-mental-model/pr-1/socratic.answering.yaml").is_file()
 
-    # 4. answer the gate
-    ea = dict(engine_env, ANSWER_BODY="/answer q1: because reasons",
-              ANSWER_ACTOR="alice", PR_HEAD_SHA="abc123")
-    out, err, rc = run_engine("next.py", tmp_path / "dir-answer", "pr-1", PROTO, "answer", env=ea)
-    assert rc == 0, f"answer failed:\n{err}"
-    assert "client_payload[path]=recover.socratic.phase2" in err, (
-        f"do_answer must emit a path-form continue to phase2, got:\n{err}")
+    adv("recover.socratic.answering", ANSWERING_OK)
     w2 = clone()
     cur2 = read_state_yaml(w2 / "recover-mental-model/pr-1/socratic.yaml")
-    assert cur2["sub_state"] == "phase2", f"expected phase2, got {cur2}"
+    assert cur2["sub_state"] == "phase2", f"expected cursor at phase2, got {cur2}"
+    assert (w2 / "recover-mental-model/pr-1/socratic.phase2.yaml").is_file()
 
-    # 5. socratic phase2
-    adv("recover.socratic.phase2", SOCRATIC2_OK)
+    adv("recover.socratic.phase2", PHASE2_OK)
 
-    # 6. join — all three legs done → advance to combine
+    # join — all three legs done → advance to combine
     ej = dict(engine_env, PR_HEAD_SHA="abc123", PR="1")
     out, err, rc = run_engine("join.py", tmp_path / "dir-join", "pr-1", PROTO, env=ej)
     assert rc == 0, f"join failed:\n{err}"
     jc = out + err
     assert "event_type=protocol-continue" in jc and "client_payload[path]=combine" in jc, (
         f"expected join → protocol-continue path=combine, got:\n{jc}")
-    w3 = clone()
-    inst = read_state_yaml(w3 / "recover-mental-model/pr-1/_instance.yaml")
+    inst = read_state_yaml(clone() / "recover-mental-model/pr-1/_instance.yaml")
     assert inst.get("joined") is True and inst.get("phase") == "combine", inst
 
-    # 7. continue combine → runs the merge hook (neutral here: no real trees to push
-    #    under ENGINE_LOCAL, but the hook resolves + finalizes the cursor to done).
+    # continue combine → runs the merge hook (neutral here: no real trees under
+    # ENGINE_LOCAL) and finalizes the cursor.
     ec = dict(engine_env, PR_HEAD_SHA="abc123", PR="1", NODE_PATH="combine")
     out2, err2, rc2 = run_engine("next.py", tmp_path / "dir-merge", "pr-1", PROTO,
                                  "continue", env=ec)
     assert rc2 == 0, f"merge continue failed:\n{err2}"
     assert json.loads(out2).get("reason") == "merge:combine"
     assert "title=Combined" in (out2 + err2)
-    # cursor finalized: instance joined + parked at the combine phase
     inst2 = read_state_yaml(clone() / "recover-mental-model/pr-1/_instance.yaml")
     assert inst2.get("joined") is True and inst2.get("phase") == "combine"
 
@@ -247,11 +239,10 @@ def test_run_merge_hook_resolves_three_legs(tmp_path, engine_env):
             json.dump(ev, f)
     # socratic leg output is its last sub-state (phase2)
     with open(os.path.join(base, "socratic.phase2.evidence.json"), "w") as f:
-        json.dump(SOCRATIC2_OK, f)
+        json.dump(PHASE2_OK, f)
 
     proto_path = str(PROTO)
     proto = json.load(open(proto_path))
     merge_state = lib.state_by_id(proto, "combine")
     res = lib.run_merge_hook(dir_, "recover-mental-model", "pr-1", proto_path, merge_state)
-    # ENGINE_LOCAL + no staged trees → neutral (no push), but a valid verdict shape.
     assert res["conclusion"] in ("neutral", "success") and res.get("summary")

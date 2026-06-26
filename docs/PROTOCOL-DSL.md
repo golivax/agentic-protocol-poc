@@ -180,14 +180,17 @@ deeper fan-outs (from `recover-mental-model`):
     { "id": "codeset", "workflow": "mm-codeset-agent", "checks": [ /* … */ ] },   // flat leg
     { "id": "socratic", "states": [                                              // sub-pipeline leg
         { "id": "phase1",    "kind": "agent", "workflow": "mm-socratic-phase1-agent", "checks": [ /* … */ ] },
-        { "id": "answering", "kind": "gate",  "questions_from": "phase1",
-          "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }] },
+        { "id": "answering", "kind": "agent", "workflow": "mm-socratic-answering-agent",
+          "inputs": [ { "from": "phase1", "as": "tree" } ], "checks": [ /* … */ ] },
         { "id": "phase2",    "kind": "agent", "workflow": "mm-socratic-phase2-agent",
           "inputs": [ { "from": "phase1", "as": "tree" }, { "from": "answering", "as": "answers" } ] }
       ] }
   ]
 }
 ```
+
+(A sub-pipeline step can also be a `gate` — see the `subpipeline-gate` test fixture
+for the `draft → clarify (gate) → finalize` shape.)
 
 ---
 

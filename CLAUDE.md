@@ -23,9 +23,11 @@ Three protocols ship under `.github/agent-factory/protocols/`:
 - **`recover-mental-model`** — three parallel mental-model recovery methods
   (`legion` ∥ `codeset` ∥ `socratic` sub-pipeline) → `join` → `combine` merge that
   collects all three outputs and pushes them to an orphan `_mental_model` branch
-  (`/recover`, then `/answer qID: value` for socratic's human-gated `answering`
-  step). The combine hook (`publish/push-mental-model.py`) is the only place that
-  writes a non-`agentic-state` branch.
+  (`/recover`; fully automated, no human input). The socratic sub-pipeline is
+  three agent steps — `phase1` (build the Question Tree) → `answering` (auto-answer
+  the OPEN leaves via code/web research) → `phase2` (synthesize docs). The combine
+  hook (`publish/push-mental-model.py`) is the only place that writes a
+  non-`agentic-state` branch.
 - **`deep-review-stub`** — a depth-4 nested fan-out/sub-pipeline tree
   (`/deep-review`), exercising the recursive engine. Stub agents.
 

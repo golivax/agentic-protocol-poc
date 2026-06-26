@@ -4,8 +4,7 @@
   "version": "1.0.0",
   "min_engine_version": "1.0.0",
   "triggers": [
-    { "on": "issue_comment", "comment_prefix": "/recover", "command": "start" },
-    { "on": "issue_comment", "comment_prefix": "/answer", "command": "answer" }
+    { "on": "issue_comment", "comment_prefix": "/recover", "command": "start" }
   ],
   "states": [
     {
@@ -36,13 +35,16 @@
               "workflow": "mm-socratic-phase1-agent",
               "evidence": "socratic-phase1.evidence.schema.json",
               "max_iterations": 1,
-              "checks": [{ "run": "questions-present", "on_fail": "iterate" }]
+              "checks": [{ "run": "socratic-phase1-present", "on_fail": "block" }]
             },
             {
               "id": "answering",
-              "kind": "gate",
-              "questions_from": "phase1",
-              "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }]
+              "kind": "agent",
+              "workflow": "mm-socratic-answering-agent",
+              "evidence": "socratic-answering.evidence.schema.json",
+              "max_iterations": 1,
+              "inputs": [{ "from": "phase1", "as": "tree" }],
+              "checks": [{ "run": "socratic-answering-present", "on_fail": "block" }]
             },
             {
               "id": "phase2",

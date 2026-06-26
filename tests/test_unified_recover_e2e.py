@@ -1,25 +1,27 @@
 """Full e2e oracle walk for recover-mental-model via NODE_PATH, asserting the
 persisted state at every step.
 
+The socratic sub-pipeline is fully automated (phase1 → answering → phase2, all
+agent steps — no human gate). Each sub-state advance seeds + dispatches the next.
+
 Walk:
   start
-  → advance recover.legion           (flat leg, pass)
-  → advance recover.codeset          (flat leg, pass)
-  → advance recover.socratic.phase1  (sub-pipeline first step, emits questions)
-  → answer the answering gate (/answer q1: ...)  — auto-detected by _find_open_gate
-  → continue recover.socratic.phase2 (seeded after gate advance)
-  → advance recover.socratic.phase2  (pass)
+  → advance recover.legion            (flat leg, pass)
+  → advance recover.codeset           (flat leg, pass)
+  → advance recover.socratic.phase1   (sub-pipeline first step → seeds answering)
+  → advance recover.socratic.answering(auto-answer step → seeds phase2)
+  → advance recover.socratic.phase2   (pass → leg done → fire join)
   → join.py (top, no NODE_PATH)
-  → continue combine                 (runs the push-mental-model merge hook)
+  → continue combine                  (runs the push-mental-model merge hook)
   → assert _instance joined:true, phase=combine
 
 State-path (single-phase fanout) drops the leading 'recover' id:
-  recover.legion             → legion.yaml
-  recover.codeset            → codeset.yaml
-  recover.socratic           → socratic.yaml  (cursor)
-  recover.socratic.phase1    → socratic.phase1.yaml
-  recover.socratic.answering → socratic.answering.yaml  (gate)
-  recover.socratic.phase2    → socratic.phase2.yaml
+  recover.legion              → legion.yaml
+  recover.codeset             → codeset.yaml
+  recover.socratic            → socratic.yaml  (cursor)
+  recover.socratic.phase1     → socratic.phase1.yaml
+  recover.socratic.answering  → socratic.answering.yaml
+  recover.socratic.phase2     → socratic.phase2.yaml
 """
 
 import json
@@ -42,8 +44,10 @@ LEGION = {"run_id": "r", "files": [
 CODESET = {"run_id": "r", "files": [
     {"path": "AGENTS.md"}, {"path": ".claude/docs/knowledge.json"},
     {"path": ".claude/docs/get_context.py"}]}
-PHASE1 = {"run_id": "r", "questions": [{"id": "q1", "text": "Why this change?"}],
-          "files": [{"path": "QUESTION_TREE-x.adoc"}, {"path": "OPEN_QUESTIONS-x.adoc"}]}
+PHASE1 = {"run_id": "r", "files": [
+    {"path": "QUESTION_TREE-x.adoc"}, {"path": "OPEN_QUESTIONS-x.adoc"}]}
+ANSWERING = {"run_id": "r", "files": [
+    {"path": "QUESTION_TREE-x.adoc"}, {"path": "OPEN_QUESTIONS-x.adoc"}]}
 PHASE2 = {"run_id": "r", "files": [
     {"path": "docs/specs/prd-x.adoc"}, {"path": "docs/specs/use-cases-x.adoc"},
     {"path": "docs/specs/adrs/x-adr-001-y.adoc"}, {"path": "docs/arc42/arc42-x.adoc"}]}
@@ -99,47 +103,35 @@ def test_recover_unified_e2e(engine_env, tmp_path):
     assert "not all terminal" in rj_early.stderr
     assert _yaml(reclone("je") / "_instance.yaml").get("joined") is not True
 
-    # 3. socratic phase1 → emits questions, gate opens
-    adv("recover.socratic.phase1", PHASE1)
+    # 3. socratic phase1 → seeds answering (agent→agent, no gate)
+    r3 = adv("recover.socratic.phase1", PHASE1)
     f3 = reclone("3")
     cur3 = _yaml(f3 / "socratic.yaml")
     assert cur3["sub_state"] == "answering", cur3
     assert cur3["state"] == "recover", cur3
-    gate3 = _yaml(f3 / "socratic.answering.yaml")
-    assert gate3["gates"]["state"] == "open"
-    assert gate3["gates"]["questions"][0]["id"] == "q1"
+    assert (f3 / "socratic.answering.yaml").is_file(), "answering sub-state not seeded"
 
-    # 4. /answer closes the gate → cursor advances to phase2
-    run(NEXT, tmp_path / "s4", "pr-1", PROTO, "answer",
-        ANSWER_BODY="/answer q1: because it is safe", ANSWER_ACTOR="alice")
+    # 4. socratic answering → seeds phase2
+    adv("recover.socratic.answering", ANSWERING)
     f4 = reclone("4")
-    assert _yaml(f4 / "socratic.yaml")["sub_state"] == "phase2"
-    assert _yaml(f4 / "socratic.answering.yaml")["gates"]["state"] == "answered"
-    # do_answer must NOT pre-seed phase2 (the continue seeds it)
-    assert not (f4 / "socratic.phase2.yaml").is_file()
+    cur4 = _yaml(f4 / "socratic.yaml")
+    assert cur4["sub_state"] == "phase2", cur4
+    assert (f4 / "socratic.phase2.yaml").is_file(), "phase2 sub-state not seeded"
 
-    # 5. continue → seeds phase2, run-agent with inputs
-    r5 = run(NEXT, tmp_path / "s5", "pr-1", PROTO, "continue",
-             NODE_PATH="recover.socratic.phase2")
-    act5 = json.loads(r5.stdout)
-    assert act5["action"] == "run-agent" and act5.get("path") == "recover.socratic.phase2"
-    assert {"tree", "answers"} <= {i["as"] for i in act5.get("inputs", [])}
-    assert (reclone("5") / "socratic.phase2.yaml").is_file()
+    # 5. socratic phase2 → sub-pipeline ends → fire join
+    r5 = adv("recover.socratic.phase2", PHASE2)
+    assert "event_type=protocol-join" in r5.stderr
+    assert _yaml(reclone("5") / "socratic.yaml")["state"] == "done"
 
-    # 6. phase2 done → sub-pipeline ends → fire join
-    r6 = adv("recover.socratic.phase2", PHASE2)
-    assert "event_type=protocol-join" in r6.stderr
-    assert _yaml(reclone("6") / "socratic.yaml")["state"] == "done"
-
-    # 7. join → all three legs done → advance to combine
-    rj = run(JOIN, tmp_path / "s7", "pr-1", PROTO)
+    # 6. join → all three legs done → advance to combine
+    rj = run(JOIN, tmp_path / "s6", "pr-1", PROTO)
     assert "event_type=protocol-continue" in rj.stderr
     assert "client_payload[path]=combine" in rj.stderr
-    inst7 = _yaml(reclone("7") / "_instance.yaml")
-    assert inst7.get("joined") is True and inst7.get("phase") == "combine"
+    inst6 = _yaml(reclone("6") / "_instance.yaml")
+    assert inst6.get("joined") is True and inst6.get("phase") == "combine"
 
-    # 8. continue combine → runs the merge hook + finalizes
-    r8 = run(NEXT, tmp_path / "s8", "pr-1", PROTO, "continue", NODE_PATH="combine")
-    assert json.loads(r8.stdout).get("reason") == "merge:combine"
+    # 7. continue combine → runs the merge hook + finalizes
+    r7 = run(NEXT, tmp_path / "s7", "pr-1", PROTO, "continue", NODE_PATH="combine")
+    assert json.loads(r7.stdout).get("reason") == "merge:combine"
     final = _yaml(reclone("final") / "_instance.yaml")
     assert final.get("joined") is True and final.get("phase") == "combine"

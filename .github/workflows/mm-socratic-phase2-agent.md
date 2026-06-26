@@ -15,11 +15,11 @@ engine:
     ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net
     ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
 # INFRA PREREQUISITE: runs phase 2 of the socratic-code-theory-recovery skill.
-# Unlike the local socratic-runs harness, phase 2 here CANNOT `--resume` phase 1's
-# session (it is a separate GitHub run on a fresh machine). Instead it restores
-# phase 1's tree from the mm-tree-socratic-phase1 artifact, writes the human
-# answers into OPEN_QUESTIONS, and synthesizes from those files. Needs actions:read
-# to download the phase-1 artifact. See docs/STATUS.md.
+# Unlike the local socratic-runs harness, phase 2 here CANNOT `--resume` an earlier
+# session (it is a separate GitHub run on a fresh machine). Instead it restores the
+# ANSWERED tree from the answering step's mm-tree-socratic-answering artifact and
+# synthesizes from it. Needs actions:read to download that artifact. See
+# docs/STATUS.md.
 permissions:
   contents: read
   pull-requests: read
@@ -60,7 +60,7 @@ pre-agent-steps:
       else
         echo "[mm-socratic-2] skill dir not found in repo — phase 2 will be unavailable" >&2
       fi
-  - name: Restore phase-1 tree, apply answers, run phase 2
+  - name: Restore answered tree and run phase 2
     env:
       ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net
       ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -71,16 +71,15 @@ pre-agent-steps:
       OUT=/tmp/gh-aw/out
       mkdir -p "$OUT"
       cd "$GITHUB_WORKSPACE/target"
-      # Restore phase-1's QUESTION_TREE/OPEN_QUESTIONS from its artifact (run_id is
-      # carried in the staged `tree` input the engine materialized for this leg).
-      P1_RUN=$(python3 -c "import json,sys; d=json.load(open('/tmp/gh-aw/task-context.json')); print((d.get('inputs',{}).get('tree') or {}).get('run_id',''))" 2>/dev/null || true)
-      if [ -n "$P1_RUN" ]; then
-        gh run download "$P1_RUN" --repo "$REPO" -n mm-tree-socratic-phase1 -D . || \
-          echo "[mm-socratic-2] could not download phase-1 tree (run $P1_RUN)" >&2
+      # Restore the ANSWERED tree from the answering step's artifact (its run_id is
+      # carried in the staged `answers` input the engine materialized for this leg).
+      ANS_RUN=$(python3 -c "import json; d=json.load(open('/tmp/gh-aw/task-context.json')); print((d.get('inputs',{}).get('answers') or {}).get('run_id',''))" 2>/dev/null || true)
+      if [ -n "$ANS_RUN" ]; then
+        gh run download "$ANS_RUN" --repo "$REPO" -n mm-tree-socratic-answering -D . || \
+          echo "[mm-socratic-2] could not download answered tree (run $ANS_RUN)" >&2
       fi
-      # Write the human answers (inputs.answers) into OPEN_QUESTIONS so phase 2 can
-      # read them, then synthesize. (The agent body refines this if needed.)
-      claude -p "we used socratic code-theory recovery; the OPEN_QUESTIONS*.adoc answers were supplied in /tmp/gh-aw/task-context.json under .inputs.answers — apply them, then continue with phase 2 to synthesize docs/specs and docs/arc42." \
+      # Synthesize from the answered tree (QUESTION_TREE + answered OPEN_QUESTIONS).
+      claude -p "we used socratic code-theory recovery and the OPEN_QUESTIONS*.adoc are already answered. Continue with phase 2: synthesize docs/specs (prd, use-cases, adrs) and docs/arc42 from the answered Question Tree. Do not ask anything." \
         --permission-mode bypassPermissions || \
         echo "[mm-socratic-2] phase 2 exited non-zero (packaging whatever exists)" >&2
       # Stage the socratic leg's final tree: tree files + synthesized docs.
@@ -121,8 +120,8 @@ timeout-minutes: 45
 
 # MM Socratic Phase-2 Agent — synthesize the documentation set
 
-Phase 2 ran in the setup steps: it restored phase 1's Question Tree, applied the
-human answers, synthesized `docs/specs/*` + `docs/arc42/*`, and staged the leg's
+Phase 2 ran in the setup steps: it restored the answered Question Tree from the
+answering step, synthesized `docs/specs/*` + `docs/arc42/*`, and staged the leg's
 final tree (tree files + docs + `MANIFEST.txt`) into `/tmp/gh-aw/out`, plus seeded
 `/tmp/gh-aw/evidence.json`.
 
@@ -130,17 +129,16 @@ final tree (tree files + docs + `MANIFEST.txt`) into `/tmp/gh-aw/out`, plus seed
 
 Read `/tmp/gh-aw/task-context.json`:
 - `pr`, `iteration`, `feedback`
-- `inputs.tree`: phase-1 evidence `{run_id, questions, files}` — its `run_id`
-  named the artifact that was restored.
-- `inputs.answers`: `{questions:[...], answers:{<id>:<value>}}` — the human's
-  answers to the OPEN leaves.
+- `inputs.tree`: phase-1 evidence `{run_id, files}`.
+- `inputs.answers`: the answering step's evidence `{run_id, files}` — its `run_id`
+  named the answered-tree artifact that was restored (the OPEN leaves are already
+  filled in, automatically — there is no human gate).
 
-## Your job — ensure a complete, answer-grounded doc set
+## Your job — ensure a complete doc set
 
-1. Verify the staged `OPEN_QUESTIONS-*.adoc` reflects `inputs.answers` (each
-   answered leaf carries its answer, deferred ones marked). If any answer from
-   `inputs.answers` is missing in the file, write it in and re-run the synthesis
-   for the affected sections.
+1. Verify the staged `OPEN_QUESTIONS-*.adoc` is answered (each leaf has an answer
+   or a `(deferred)` marker, no `_(write here)_` blanks). Fill any gaps from the
+   code/diff (cite `file:line`) or mark them deferred.
 2. Confirm `/tmp/gh-aw/out` contains the full set the `socratic-docs-present`
    check requires: `docs/specs/prd-*.adoc`, `docs/specs/use-cases-*.adoc`, at
    least one `docs/specs/adrs/*.adoc`, and `docs/arc42/arc42-*.adoc`. Generate any

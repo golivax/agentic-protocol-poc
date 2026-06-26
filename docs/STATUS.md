@@ -10,7 +10,8 @@ before extending the system so you know which "missing" pieces are deliberate.
 into a real protocol. It fans out three mental-model recovery methods in
 parallel — `legion` (`/legion:map`), `codeset` (`python -m codeset .`), and
 `socratic` (the `socratic-code-theory-recovery` sub-pipeline `phase1 → answering
-(human gate) → phase2`) — then `join`s and runs a `combine` merge hook
+→ phase2`, all automated agent steps — the answering step researches + fills the
+OPEN leaves, no human gate) — then `join`s and runs a `combine` merge hook
 (`publish/push-mental-model.py`) that collects all three leg trees and
 **force-pushes a single orphan `_mental_model` branch** (one per repo, overwritten
 each run), mirroring `golivax2/yuanrong-datasystem@_mental_model`.

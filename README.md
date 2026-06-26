@@ -83,7 +83,7 @@ scanning every protocol's `triggers` block.
 | Protocol | Shape | Triggers | What it demonstrates |
 |----------|-------|----------|----------------------|
 | **`code-review`** | `preflight` → `review` fan-out (`grumpy` ∥ `security`) → `join` (AND-barrier) → `approval` (human gate) → done | `/review`, then `/approve` · `/request-changes` · `/reject` · `/override` | The production pipeline: multi-phase, parallel agents with bounded iterate-and-publish, a strict join gate, and a pause-and-require human approval gate. |
-| **`recover-mental-model`** | three parallel recovery methods (`legion` ∥ `codeset` ∥ `socratic` sub-pipeline) → join → merge that pushes a `_mental_model` branch | `/recover`, then `/answer qID: value` | A real multi-method pipeline: parallel agents, a human-gated sub-pipeline (socratic `phase1 → answering → phase2`), and a merge hook that collects all three outputs into one orphan `_mental_model` branch. |
+| **`recover-mental-model`** | three parallel recovery methods (`legion` ∥ `codeset` ∥ `socratic` sub-pipeline) → join → merge that pushes a `_mental_model` branch | `/recover` | A real multi-method pipeline: parallel agents and a fully-automated sub-pipeline (socratic `phase1 → answering → phase2`, all agent steps), joined into a merge hook that collects all three outputs into one orphan `_mental_model` branch. |
 | **`deep-review-stub`** | depth-4 nested fan-out / sub-pipeline tree | `/deep-review` | The recursive engine: arbitrarily-nested fan-outs and sub-pipelines on one `NODE_PATH` coordinate, bounded by `max_depth`. |
 
 The `-stub` protocol (`deep-review-stub`) uses trivial stand-in agents — it exists
