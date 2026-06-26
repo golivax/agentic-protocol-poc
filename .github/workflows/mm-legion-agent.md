@@ -45,6 +45,12 @@ pre-agent-steps:
       path: target
       persist-credentials: false
       fetch-depth: 0
+  - name: Install legion (native /legion:* commands)
+    run: |
+      # legion is an npm package that installs its Claude Code slash commands into
+      # ~/.claude (Node + the claude CLI are already set up by the compiled lock).
+      npx -y @9thlevelsoftware/legion@8.0.5 --claude || \
+        echo "[mm-legion] legion install failed — /legion:map will be unavailable" >&2
   - name: Run legion:map and stage output
     env:
       ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net

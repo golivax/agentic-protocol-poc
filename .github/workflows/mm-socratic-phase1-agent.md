@@ -41,6 +41,21 @@ pre-agent-steps:
       path: target
       persist-credentials: false
       fetch-depth: 0
+  - name: Install socratic skill
+    run: |
+      # Install the socratic-code-theory-recovery skill into ~/.claude/skills from
+      # the Semantic-Anchors repo (the claude CLI is set up by the compiled lock).
+      set -uo pipefail
+      tmp=$(mktemp -d)
+      git clone --depth 1 https://github.com/LLM-Coding/Semantic-Anchors "$tmp" || \
+        echo "[mm-socratic-1] skill clone failed" >&2
+      mkdir -p "$HOME/.claude/skills"
+      if [ -d "$tmp/skill" ]; then
+        rm -rf "$HOME/.claude/skills/socratic-code-theory-recovery"
+        cp -r "$tmp/skill" "$HOME/.claude/skills/socratic-code-theory-recovery"
+      else
+        echo "[mm-socratic-1] skill/ dir not found in repo — phase 1 will be unavailable" >&2
+      fi
   - name: Run socratic phase 1 and stage output
     env:
       ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net

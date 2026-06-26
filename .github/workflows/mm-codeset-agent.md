@@ -14,11 +14,11 @@ engine:
   env:
     ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net
     ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
-# INFRA PREREQUISITE: this leg runs `python -m codeset` against the PR head. The
-# runner must have Python 3.10+, git, the `claude` CLI (codeset shells out to it
-# for synthesis), the codeset-vibing package, and the ANTHROPIC_* secrets. The
-# install step is best-effort — point CODESET_SRC at your codeset-vibing checkout
-# or replace with a pip install. See docs/STATUS.md.
+# INFRA PREREQUISITE: this leg runs `python -m codeset` against the PR head.
+# Python 3.10+, git, and the `claude` CLI (set up by the compiled lock; codeset
+# shells out to it for synthesis) must be present, plus the ANTHROPIC_* secrets.
+# codeset-vibing is installed from source in a setup step (it is not on PyPI).
+# See docs/STATUS.md.
 permissions:
   contents: read
   pull-requests: read
@@ -42,6 +42,12 @@ pre-agent-steps:
       path: target
       persist-credentials: false
       fetch-depth: 0
+  - name: Install codeset-vibing
+    run: |
+      # codeset-vibing is not on PyPI — install from source. It shells out to the
+      # claude CLI (already installed by the compiled lock) for synthesis.
+      python3 -m pip install --quiet "git+https://github.com/PGCodeLLM/codeset-vibing.git" || \
+        echo "[mm-codeset] codeset-vibing install failed — python -m codeset will be unavailable" >&2
   - name: Run codeset and stage output
     env:
       ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net
@@ -50,9 +56,6 @@ pre-agent-steps:
       set -uo pipefail
       OUT=/tmp/gh-aw/out
       mkdir -p "$OUT"
-      # Install codeset-vibing (adjust to your runner; e.g. a pip install).
-      python3 -m pip install -q codeset-vibing 2>/dev/null || \
-        echo "[mm-codeset] codeset-vibing not pip-installable here; expecting it on PATH" >&2
       cd "$GITHUB_WORKSPACE/target"
       # The real method: codeset mines git history + AST + synthesizes per-file
       # knowledge, writing AGENTS.md/CLAUDE.md/.claude/docs/* + build.log.
