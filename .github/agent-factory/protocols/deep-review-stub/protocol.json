@@ -18,7 +18,7 @@
         {
           "id": "deep",
           "states": [
-            { "id": "triage", "kind": "agent", "workflow": "triage-agent",
+            { "id": "triage", "kind": "agent", "workflow": "deep-triage-agent",
               "evidence": "leaf.evidence.schema.json", "max_iterations": 2,
               "checks": [{ "run": "finding-present", "on_fail": "iterate" }] },
             {

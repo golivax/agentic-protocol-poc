@@ -14,7 +14,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENG = ROOT / ".github/agent-factory/engine"
-PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
+PROTO = ROOT / ".github/agent-factory/protocols/code-review-v1/protocol.json"
 
 
 def _yaml(p):
@@ -28,7 +28,7 @@ def _rc(engine_env, tmp_path, tag):
          engine_env["STATE_REMOTE"], str(d)],
         check=True,
     )
-    return d / "code-review" / "pr-1"
+    return d / "code-review-v1" / "pr-1"
 
 
 def test_preflight_clear_advances_via_path_continue(engine_env, tmp_path):

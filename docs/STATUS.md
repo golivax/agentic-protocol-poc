@@ -12,6 +12,22 @@ before extending the system so you know which "missing" pieces are deliberate.
 `multi-grumpy` (single-phase fanout) were retired into `tests/fixtures/single-agent/`
 and `tests/fixtures/fanout-mini/` on 2026-06-20 as engine regression fixtures.
 
+**Custody-pipeline migration (2026-06-26):** the production `code-review` protocol
+above was superseded by the full **custody-story pipeline** backported from
+`golivax2/yuanrong-datasystem@main`. The original grumpy/security/approval example is
+preserved verbatim as **`code-review-v1`** (start/override triggers renamed to
+`/v1-review`/`/v1-override` so `code-review` keeps `/review`+`/override`; its gate
+commands `/approve`·`/request-changes`·`/reject` are unchanged). The new `code-review`
+is `preflight → overview → review` (5-leg fanout) `→ join → triage → fix → context →
+mrp → done` on Codex agents, with Bun/Node/Z3 toolchains vendored under its `scripts/`
+(outside the engine's Python-only contract — those phase checks degrade to advisory
+when a toolchain is absent). The `mm-compliance-gate` + `mm-updater` side-channels
+were migrated alongside. Engine backport was **cherry-picked, not bulk-copied**
+(a bulk copy would delete the engine-only `protocol-lint.py`/`protocol.schema.json`):
+`next.py` iterate-state-preserve, `advance.py` conclude-`inputs[]`,
+`lib._review_verdict_note` (review-schema-shaped; generalize later), and a new
+`prefetch-review.py` + the `agentic-engine.yml` preflight prefetch block.
+
 The v1/v2/v3/v4 milestone sections below are a dated record of what was built
 in sequence. Protocol names (`grumpy-review`, `multi-grumpy`) inside those
 clearly-historical sections refer to the protocols as they existed at that

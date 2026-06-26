@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import typing
 
 # Import shared library from the same directory as this script.
@@ -313,10 +314,12 @@ def run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid
     return {"conclusion": "neutral", "summary": "publish hook returned no verdict"}
 
 
-def run_conclude_hook(proto_path, proto, state_id, evid, instance, blocking):
+def run_conclude_hook(proto_path, proto, state_id, evid, instance, blocking,
+                      dir_=None, tree_path=None):
     """Resolve+run the optional `conclude` hook for an agent state. Returns
     {conclusion,summary,blocked} or None if the state declares none. Trusted
-    (zone 4). Receives BLOCKING via env."""
+    (zone 4). Receives BLOCKING via env and, for states with declared inputs,
+    CONCLUDE_INPUTS_DIR with those inputs materialized as <as>.json."""
     state = lib.state_by_id(proto, state_id)
     action = (state or {}).get("conclude") or None
     if not action:
@@ -329,6 +332,24 @@ def run_conclude_hook(proto_path, proto, state_id, evid, instance, blocking):
         return {"conclusion": "neutral", "summary": "conclude hook unresolved", "blocked": False}
     env = dict(os.environ)
     env["BLOCKING"] = "1" if blocking else "0"
+    declared = lib.state_inputs(proto, state_id)
+    if dir_ is not None and declared:
+        fo = lib._fanout_state(proto)
+        phase = fo["id"] if (fo and lib.is_multiphase(proto)) else None
+        consuming_branch = tree_path[-2] if tree_path and len(tree_path) >= 2 else None
+        resolved = lib.resolve_inputs(
+            proto,
+            dir_,
+            lib.protocol_id(proto_path),
+            instance,
+            consuming_branch=consuming_branch,
+            consuming_phase=phase,
+            inputs=declared,
+            consuming_path=tree_path,
+        )
+        workdir = tempfile.mkdtemp(prefix="conclude-inputs-")
+        lib.materialize_inputs(resolved, workdir)
+        env["CONCLUDE_INPUTS_DIR"] = os.path.join(workdir, "inputs")
     result = subprocess.run([path, evid, instance], text=True,
                             stdout=subprocess.PIPE, env=env)
     try:
@@ -563,7 +584,9 @@ def main():
         if (_paths.is_root_child(proto, tree_path)
                 and _paths.node_kind(proto, tree_path) == "agent"):
             _this_state = lib.state_by_id(proto, agent_state)
-            _conclude = run_conclude_hook(proto_path, proto, agent_state, evid, instance, blocking)
+            _conclude = run_conclude_hook(
+                proto_path, proto, agent_state, evid, instance, blocking,
+                dir_=dir_, tree_path=tree_path)
             hook = run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid)
             if _conclude is not None:
                 concl = _conclude.get("conclusion", "neutral")

@@ -18,11 +18,11 @@ def _emit(engine_env, tmp_path, proto_rel, command, *args, node_path=None):
     return json.loads(r.stdout)
 
 def test_codereview_review_legs_carry_leaf_path_and_workflow(engine_env, tmp_path):
-    # code-review start lands at preflight (agent). Continue at the review fanout.
-    _emit(engine_env, tmp_path, ".github/agent-factory/protocols/code-review/protocol.json",
+    # code-review-v1 start lands at preflight (agent). Continue at the review fanout.
+    _emit(engine_env, tmp_path, ".github/agent-factory/protocols/code-review-v1/protocol.json",
           "start", "sha1")
     act = _emit(engine_env, tmp_path,
-                ".github/agent-factory/protocols/code-review/protocol.json",
+                ".github/agent-factory/protocols/code-review-v1/protocol.json",
                 "continue", node_path="review")
     assert act["action"] == "run-fanout"
     legs = {l["path"]: l["workflow"] for l in act["legs"]}
@@ -40,8 +40,8 @@ def test_recover_legs_subpipeline_branch_points_at_first_substate(engine_env, tm
 
 def test_codereview_preflight_run_agent_carries_path_and_workflow(engine_env, tmp_path):
     act = _emit(engine_env, tmp_path,
-                ".github/agent-factory/protocols/code-review/protocol.json",
+                ".github/agent-factory/protocols/code-review-v1/protocol.json",
                 "start", "sha1")
     assert act["action"] == "run-agent"
     assert act["path"] == "preflight"
-    assert act["workflow"] == "preflight-agent"
+    assert act["workflow"] == "preflight-agent-v1"

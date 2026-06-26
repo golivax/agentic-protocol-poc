@@ -14,16 +14,29 @@ shape (single-agent, fan-out, multi-phase, sub-pipeline, arbitrarily-nested tree
 > engine + protocol library, not a throwaway. See `README.md` for the
 > product-level overview.
 
-Three protocols ship under `.github/agent-factory/protocols/`:
-- **`code-review`** — the production pipeline: `preflight` (agent, pre-flight gate)
-  → `review` (fanout to `grumpy` + `security` legs) → `join` (AND-barrier) →
-  `approval` (human gate) → done. A live `/review` runs it via the router
-  (`agentic-orchestrator.yml`), which selects the protocol through `lib.route`
-  scanning `protocol.json` `triggers` blocks at runtime.
+Four protocols ship under `.github/agent-factory/protocols/`:
+- **`code-review`** — the production pipeline (migrated from the custody-story
+  gh-aw pipeline): `preflight` → `overview` (+risk) → `review` (fanout to 5
+  dimension legs `correctness`/`test`/`performance`/`security`/`maintainability`)
+  → `join-review` (AND-barrier) → `triage` → `fix` → `context` → `mrp` → done.
+  Codex/gpt-5.5 agents (OpenAI gateway). A live `/review` (or `/override`) runs it
+  via the router (`agentic-orchestrator.yml`), which selects the protocol through
+  `lib.route` scanning `protocol.json` `triggers` blocks at runtime. Its `context`
+  and `security` phases vendor Bun/Node/Z3 toolchains under
+  `protocols/code-review/scripts/` — outside the engine's Python-only contract, so
+  those phase checks degrade to advisory when a toolchain is absent.
+- **`code-review-v1`** — the original simpler example, preserved: `preflight` →
+  `review` (fanout to `grumpy` + `security` legs) → `join` (AND-barrier) →
+  `approval` (human gate) → done. Claude/sonnet agents. Triggers `/v1-review`,
+  `/v1-override`, `/approve`, `/request-changes`, `/reject` (the start/override
+  commands were renamed off `/review`+`/override`, which `code-review` now owns).
 - **`recover-mental-model-stub`** — sub-pipeline branches + a data-carrying gate
   (`/recover`, then `/answer qID: value`). A capability example with stub agents.
 - **`deep-review-stub`** — a depth-4 nested fan-out/sub-pipeline tree
   (`/deep-review`), exercising the recursive engine. Stub agents.
+
+Two parallel side-channel agents — `mm-compliance-gate` + `mm-updater`
+(Claude/sonnet) — fire on `pull_request` events outside the engine state machine.
 
 Two other distribution-facing components live beside the engine:
 - **`dist/`** — an installer that drops the engine + chosen protocols into any repo
@@ -213,7 +226,9 @@ Key frontmatter facts (see `docs/STATUS.md` for the security rationale):
   skip/fabricate to demo the failed-check → iterate loop (grumpy: sabotages
   iteration 1 then self-recovers; security: fabricates every iteration → exhausts
   to `failed`).
-- Secrets the repo needs: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`,
+- Secrets the repo needs: `ANTHROPIC_API_KEY` + `ANTHROPIC_BASE_URL` (the
+  Claude/sonnet agents — `code-review-v1` + the two mental-model side-channels),
+  `OPENAI_API_KEY` (the Codex agents of the `code-review` custody pipeline),
   `POC_DISPATCH_TOKEN` (a PAT with repo + workflow scopes — the default
   `GITHUB_TOKEN` deliberately can't trigger workflows or read PR labels).
 
@@ -229,13 +244,14 @@ stack at different depths. (Historical note: the pre-unification engine used a f
 `docs/STATUS.md`.)
 
 A fan-out **branch** is a parallel agent *leg* (or a nested sub-pipeline), not a git
-branch. For `code-review`'s `review` phase the legs are `grumpy` + `security`, each
+branch. For `code-review-v1`'s `review` phase the legs are `grumpy` + `security`, each
 with its own iterate loop + eager publish, joined under a strict AND-barrier (`join`
-node) before the `approval` gate.
+node) before the `approval` gate. (The production `code-review` pipeline fans out to
+5 dimension legs instead.)
 
 - **State paths come from `paths.py`** keyed by `NODE_PATH`: a single agent phase →
-  `code-review/pr-N/preflight.yaml`; fan-out legs →
-  `code-review/pr-N/review.grumpy.yaml` / `review.security.yaml`; a nested fan-out's
+  `code-review-v1/pr-N/preflight.yaml`; fan-out legs →
+  `code-review-v1/pr-N/review.grumpy.yaml` / `review.security.yaml`; a nested fan-out's
   join marker → `<fanout>.__join.yaml`; the root cursor lives in `_instance.yaml`
   (`phase` key), nested cursors in `<seq>.yaml`. Each node writes only its own file,
   so CAS has no write contention.

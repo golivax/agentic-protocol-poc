@@ -10,7 +10,7 @@ PROTOCOLS = Path(__file__).resolve().parents[1] / ".github/agent-factory/protoco
 
 
 def test_all_shipped_protocols_declare_min_engine_version():
-    for name in ["code-review", "deep-review-stub", "recover-mental-model-stub"]:
+    for name in ["code-review-v1", "deep-review-stub", "recover-mental-model-stub"]:
         proto = json.load(open(PROTOCOLS / name / "protocol.json"))
         assert proto.get("min_engine_version") == "1.0.0", name
 

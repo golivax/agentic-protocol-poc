@@ -1,0 +1,83 @@
+{
+  "$schema": "../../engine/protocol.schema.json",
+  "name": "code-review-v1",
+  "version": "0.1.0",
+  "min_engine_version": "1.0.0",
+  "triggers": [
+    { "on": "issue_comment", "comment_prefix": "/v1-review", "command": "start" },
+    { "on": "issue_comment", "comment_prefix": "/v1-override", "command": "override" },
+    { "on": "issue_comment", "comment_prefix": "/approve", "command": "resolve-gate" },
+    { "on": "issue_comment", "comment_prefix": "/request-changes", "command": "resolve-gate" },
+    { "on": "issue_comment", "comment_prefix": "/reject", "command": "resolve-gate" }
+  ],
+  "states": [
+    {
+      "id": "preflight",
+      "kind": "agent",
+      "label": "pre-flight gate",
+      "workflow": "preflight-agent-v1",
+      "evidence": "preflight.evidence.schema.json",
+      "max_iterations": 2,
+      "params": { "ai_checks": ["spec-adherence", "plan-adherence"] },
+      "checks": [
+        { "run": "preflight-schema-valid",   "on_fail": "iterate"  },
+        { "run": "adherence-coverage",      "on_fail": "iterate"  },
+        { "run": "traces-exist-in-diff",    "on_fail": "iterate"  },
+        { "run": "spec-present",            "on_fail": "block"    },
+        { "run": "plan-present",            "on_fail": "block"    },
+        { "run": "docs-updated-with-code",  "on_fail": "advisory" },
+        { "run": "tests-updated-with-code", "on_fail": "advisory" }
+      ],
+      "conclude": "conclude-preflight",
+      "publish": "publish-verdict",
+      "on_blocked": "halt",
+      "next": "review"
+    },
+    {
+      "id": "review",
+      "kind": "fanout",
+      "label": "review",
+      "branches": [
+        {
+          "id": "grumpy",
+          "workflow": "grumpy-agent",
+          "evidence": "grumpy.evidence.schema.json",
+          "max_iterations": 3,
+          "params": { "categories": ["naming", "error-handling", "performance", "duplication", "security"] },
+          "checks": [
+            { "run": "schema-valid",        "on_fail": "iterate" },
+            { "run": "rubric-coverage",      "on_fail": "iterate" },
+            { "run": "traces-exist-in-diff", "on_fail": "iterate" }
+          ],
+          "publish": "publish-grumpy"
+        },
+        {
+          "id": "security",
+          "workflow": "security-agent",
+          "evidence": "security.evidence.schema.json",
+          "max_iterations": 3,
+          "params": { "categories": ["security"] },
+          "checks": [
+            { "run": "schema-valid",        "on_fail": "iterate" },
+            { "run": "traces-exist-in-diff", "on_fail": "iterate" }
+          ],
+          "publish": "publish-security"
+        }
+      ],
+      "next": "join"
+    },
+    {
+      "id": "join",
+      "kind": "join",
+      "of": "review",
+      "next": "approval"
+    },
+    {
+      "id": "approval",
+      "kind": "gate",
+      "label": "approval gate",
+      "approve_excludes_author": true,
+      "next": "done"
+    }
+  ]
+}

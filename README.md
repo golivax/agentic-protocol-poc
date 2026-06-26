@@ -82,13 +82,14 @@ scanning every protocol's `triggers` block.
 
 | Protocol | Shape | Triggers | What it demonstrates |
 |----------|-------|----------|----------------------|
-| **`code-review`** | `preflight` → `review` fan-out (`grumpy` ∥ `security`) → `join` (AND-barrier) → `approval` (human gate) → done | `/review`, then `/approve` · `/request-changes` · `/reject` · `/override` | The production pipeline: multi-phase, parallel agents with bounded iterate-and-publish, a strict join gate, and a pause-and-require human approval gate. |
+| **`code-review`** | `preflight` → `overview` (+risk) → `review` fan-out (5 dimensions) → `join` (AND-barrier) → `triage` → `fix` → `context` → `mrp` → done | `/review` · `/override` | The production pipeline, migrated from the custody-story gh-aw flow: a deep multi-phase DAG with a 5-leg review fan-out, cross-phase `inputs[]`, and Codex agents. Its `context`/`security` phases vendor Bun/Node/Z3 toolchains. |
+| **`code-review-v1`** | `preflight` → `review` fan-out (`grumpy` ∥ `security`) → `join` (AND-barrier) → `approval` (human gate) → done | `/v1-review`, then `/approve` · `/request-changes` · `/reject` · `/v1-override` | The original simpler example, preserved: multi-phase, parallel agents with bounded iterate-and-publish, a strict join gate, and a pause-and-require human approval gate. |
 | **`recover-mental-model-stub`** | one automated leg ∥ one human-gated **sub-pipeline** → join → merge | `/recover`, then `/answer qID: value` | Sub-pipeline branches and a **data-carrying gate**: the agent asks questions, a human answers, and the answers feed the next step. |
 | **`deep-review-stub`** | depth-4 nested fan-out / sub-pipeline tree | `/deep-review` | The recursive engine: arbitrarily-nested fan-outs and sub-pipelines on one `NODE_PATH` coordinate, bounded by `max_depth`. |
 
 The two `-stub` protocols use trivial stand-in agents — they exist to exercise and
 illustrate engine capabilities you'd compose in your own protocol. `code-review`
-is the real, live-verified one.
+(and the simpler `code-review-v1`) are the real, live-verified ones.
 
 ---
 

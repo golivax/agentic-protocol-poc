@@ -1022,6 +1022,40 @@ def _render_leg_section(sf, max_iter):
     return st, "\n".join(out)
 
 
+def _review_verdict_note(d, pid, instance, ph_id, bid):
+    """Surface a review fan-out branch's evidence verdict in its status header.
+
+    The per-leg checklist (_render_leg_section) reports 'all checks passed' from the
+    FORM checks only, so a dimension that returned REQUEST_CHANGES (or carries
+    critical/high findings) reads as clear even though it is not. This appends a
+    flagged note for those dimensions. Scoped to the review fan-out; returns '' for
+    APPROVE/clean dimensions or when the dimension's evidence is not available yet.
+    """
+    path = output_artifact_path(d, pid, instance, branch=bid, phase=ph_id, kind="evidence")
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path) as fh:
+            ev = json.load(fh)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(ev, dict):
+        return ""
+    sev = {"critical": 0, "high": 0}
+    for f in (ev.get("findings") if isinstance(ev.get("findings"), list) else []):
+        if isinstance(f, dict) and f.get("severity") in sev:
+            sev[f["severity"]] += 1
+    if ev.get("verdict") != "REQUEST_CHANGES" and not sev["critical"] and not sev["high"]:
+        return ""
+    parts = []
+    if sev["critical"]:
+        parts.append(f"{sev['critical']} critical")
+    if sev["high"]:
+        parts.append(f"{sev['high']} high")
+    detail = f" ({', '.join(parts)})" if parts else ""
+    return f" — ⚠️ request-changes{detail}"
+
+
 def render_pipeline_status_body(dir_, pid, instance, proto):
     """
     render_pipeline_status_body <state_dir> <pid> <instance> <protocol.json>
@@ -1056,7 +1090,8 @@ def render_pipeline_status_body(dir_, pid, instance, proto):
                 max_iter = b.get("max_iterations", "?")
                 sf = state_file(dir_, pid, instance, bid, phase=ph_id)
                 st, lines = _render_leg_section(sf, max_iter)
-                sections += f"**{ph_id} · {bid}**\n\n{lines}\n\n"
+                vnote = _review_verdict_note(dir_, pid, instance, ph_id, bid)
+                sections += f"**{ph_id} · {bid}**{vnote}\n\n{lines}\n\n"
                 if st == "done":
                     pass
                 elif st == "failed":

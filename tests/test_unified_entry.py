@@ -37,10 +37,10 @@ def _start(engine_env, tmp_path, proto, sha="s1"):
 
 
 def test_start_codereview_seeds_first_phase(engine_env, tmp_path):
-    proto = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
+    proto = ROOT / ".github/agent-factory/protocols/code-review-v1/protocol.json"
     act = _start(engine_env, tmp_path, proto)
     assert act["action"] == "run-agent"           # preflight is an agent phase
-    assert _yaml(_rc(engine_env, tmp_path, "code-review", "cr") / "_instance.yaml")["phase"] == "preflight"
+    assert _yaml(_rc(engine_env, tmp_path, "code-review-v1", "cr") / "_instance.yaml")["phase"] == "preflight"
 
 
 def test_start_deepfanout_seeds_fanout(engine_env, tmp_path):
@@ -53,7 +53,7 @@ def test_start_deepfanout_seeds_fanout(engine_env, tmp_path):
 
 
 def test_continue_review_phase_emits_fanout_legs(engine_env, tmp_path):
-    proto = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
+    proto = ROOT / ".github/agent-factory/protocols/code-review-v1/protocol.json"
     _start(engine_env, tmp_path, proto)                       # seeds _instance(phase=preflight)
     e = dict(engine_env); e["NODE_PATH"] = "review"
     r = subprocess.run(["python3", str(ENG / "next.py"), str(tmp_path / "c"), "pr-1",
@@ -62,6 +62,6 @@ def test_continue_review_phase_emits_fanout_legs(engine_env, tmp_path):
     act = json.loads(r.stdout)
     assert act["action"] == "run-fanout"
     assert {l["path"] for l in act["legs"]} == {"review.grumpy", "review.security"}
-    fdir = _rc(engine_env, tmp_path, "code-review", "rev")
+    fdir = _rc(engine_env, tmp_path, "code-review-v1", "rev")
     assert (fdir / "review.grumpy.yaml").is_file() and (fdir / "review.security.yaml").is_file()
     assert not (fdir / "review.__join.yaml").is_file()          # depth-1 uses _instance marker

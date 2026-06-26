@@ -126,8 +126,15 @@ def enter_node(proto, path, command, emit=True):
     if kind == "agent":
         sf = lib.state_file(DIR, PID, INSTANCE, path=fpath)
         os.makedirs(os.path.dirname(sf), exist_ok=True)
-        lib.dump_yaml(sf, {"protocol": PID, "instance": INSTANCE, "state": life or path[-1],
-                           "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []})
+        # Seed ONLY on first entry. On an iterate re-dispatch the file already
+        # exists — advance.py wrote {iteration++, history+=fail} before firing
+        # protocol-continue — so an unconditional re-seed would reset the
+        # iteration counter (defeating the `iter_ < max_iter` exhaustion guard)
+        # and wipe the failed-iteration history (under-reporting in the status
+        # comment). Mirrors advance.py's "recover missing state file" guard.
+        if not os.path.isfile(sf):
+            lib.dump_yaml(sf, {"protocol": PID, "instance": INSTANCE, "state": life or path[-1],
+                               "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []})
         if emit:
             act = {"action": "run-agent", "iteration": 1, "feedback": "",
                    "reason": f"phase:{path[-1]}", "path": ".".join(path),
@@ -708,9 +715,21 @@ if COMMAND == "continue" and NODE_PATH:
         # Seed its state file, cas_push so the dispatched agent finds it, then
         # emit a path-qualified run-agent action. Same seed→cas_push→emit order.
         node = paths.node_at_path(proto_data, _p)
+        sf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, _p))
+        seeded = not os.path.isfile(sf)  # first entry seeds; iterate re-entry preserves
         enter_node(proto_data, _p, "continue", emit=False)
-        lib.cas_push(DIR, f"{PID}/{INSTANCE}: continue agent {NODE_PATH}")
-        act = {"action": "run-agent", "iteration": 1, "feedback": "",
+        # Publish only when enter_node actually seeded a new file. On an iterate
+        # re-entry the state is unchanged (advance.py already pushed it), so a
+        # cas_push would be a no-op that cas_push refuses as an empty commit.
+        if seeded:
+            lib.cas_push(DIR, f"{PID}/{INSTANCE}: continue agent {NODE_PATH}")
+        # Carry the leg's real iteration + last-failure feedback into the re-run so
+        # the agent retries WITH the gate's feedback (first entry: iteration 1, "").
+        st = lib.load_yaml(sf) if os.path.isfile(sf) else {}
+        _hist = st.get("history") or []
+        act = {"action": "run-agent",
+               "iteration": int(st.get("iteration", 1)),
+               "feedback": (_hist[-1].get("feedback", "") if _hist else ""),
                "reason": f"continue:{NODE_PATH}", "path": NODE_PATH,
                "workflow": node.get("workflow")}
         declared = lib.state_inputs(proto_data, _p[-1])

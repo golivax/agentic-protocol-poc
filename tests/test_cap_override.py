@@ -19,7 +19,7 @@ Proves the blocked-gate halt + /override flow through the unified NODE_PATH path
   4. next.py override on an exhausted instance (state=failed, no halted marker) →
      refuses with action=halt, "exhausted" in stderr, no state change.
 
-These tests drive the code-review protocol exclusively via NODE_PATH, reusing the
+These tests drive the code-review-v1 protocol exclusively via NODE_PATH, reusing the
 `engine_env` fixture (ENGINE_LOCAL=1, STATE_REMOTE pointing at a bare origin) from
 conftest.py. No new fixtures or protocol changes are needed.
 """
@@ -34,9 +34,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENG  = ROOT / ".github/agent-factory/engine"
 NEXT = ENG / "next.py"
 ADV  = ENG / "advance.py"
-PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
+PROTO = ROOT / ".github/agent-factory/protocols/code-review-v1/protocol.json"
 
-PID = json.loads(PROTO.read_text())["name"]   # "code-review"
+PID = json.loads(PROTO.read_text())["name"]   # "code-review-v1"
 
 
 # ---------------------------------------------------------------------------
