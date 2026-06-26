@@ -17,6 +17,28 @@ def test_status_projection_code_review_pr62():
     assert phases["approval"]["kind"] == "gate"
     assert phases["approval"]["gate"]["open"] is True
 
+def test_status_projection_head_carries_run_identity():
+    # The head must carry run identity so a client can distinguish "the previous
+    # run's terminal done" from a fresh done. head_sha comes from _instance.yaml;
+    # run_id/attempt come from the head phase node when it is a single agent.
+    out = state_reader.status_projection(load_instance_files("code-review", 62))
+    head = out["head"]
+    assert head["head_sha"] == "657e290beb6266ccd55b8bd95e247491e3468392"
+    # pr-62's head is the `approval` gate (no agent run) — run_id is absent/None,
+    # but head_sha still distinguishes the run.
+    assert head.get("run_id") is None
+
+
+def test_status_projection_agent_leaf_carries_run_id():
+    # Every agent leaf (single agent phase or fanout branch) surfaces the run_id
+    # that produced its latest attempt, sourced from history[-1].agent_run_id.
+    out = state_reader.status_projection(load_instance_files("code-review", 62))
+    phases = {p["id"]: p for p in out["phases"]}
+    assert phases["preflight"]["run_id"] == "28110616119"
+    legs = {b["id"]: b for b in phases["review"]["branches"]}
+    assert all("run_id" in leg for leg in legs.values())
+
+
 def test_status_projection_ignores_sidecars_and_join_markers():
     out = state_reader.status_projection(load_instance_files("deep-review-stub", 88))
     ids = {p["id"] for p in out["phases"]}

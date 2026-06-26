@@ -89,15 +89,15 @@ Current status of one `<protocol, PR>` — head plus a per-phase projection.
   "protocol": "code-review",
   "pr": 75,
   "instance": "pr-75",
-  "head": { "phase": "approval", "kind": "gate", "status": "running" },
+  "head": { "phase": "approval", "kind": "gate", "status": "running", "head_sha": "abc1234" },
   "phases": [
     { "id": "preflight", "kind": "agent", "status": "done",
-      "iterations": 2,
+      "iterations": 2, "run_id": "28110616119",
       "checks": { "preflight-schema-valid": "pass", "adherence-coverage": "pass" } },
     { "id": "review", "kind": "fanout", "status": "done",
       "branches": [
-        { "id": "grumpy",   "status": "done",   "iterations": 1, "checks": {"schema-valid": "pass"} },
-        { "id": "security", "status": "failed", "iterations": 3, "checks": {"traces-exist-in-diff": "fail"} }
+        { "id": "grumpy",   "status": "done",   "iterations": 1, "run_id": "28110972887", "checks": {"schema-valid": "pass"} },
+        { "id": "security", "status": "failed", "iterations": 3, "run_id": "28110981002", "checks": {"traces-exist-in-diff": "fail"} }
       ] },
     { "id": "approval", "kind": "gate", "status": "running", "gate": { "open": true } }
   ]

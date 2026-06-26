@@ -102,9 +102,15 @@ def _iterations_of(node: dict) -> int:
     hist = node.get("history") or []
     return len(hist) if hist else int(node.get("iteration", 0) or 0)
 
+def _run_id_of(node: dict):
+    """The run that produced the node's latest attempt (history[-1].agent_run_id),
+    or None for a node with no agent run yet (e.g. a gate)."""
+    hist = node.get("history") or []
+    return hist[-1].get("agent_run_id") if hist else None
+
 def _leaf_view(node: dict) -> dict:
     return {"status": _node_status(node), "iterations": _iterations_of(node),
-            "checks": _checks_of(node)}
+            "run_id": _run_id_of(node), "checks": _checks_of(node)}
 
 def status_projection(instance_files: dict[str, str]) -> dict:
     inst = yaml.safe_load(instance_files["_instance.yaml"]) or {}
@@ -144,11 +150,19 @@ def status_projection(instance_files: dict[str, str]) -> dict:
                 phases.append({"id": phase, "kind": "agent", **_leaf_view(node)})
 
     head_phase = inst.get("phase")
-    head = {"phase": head_phase}
+    # Run identity on the head lets a client distinguish "the previous run's
+    # terminal done" from a fresh done. head_sha is the instance-level run
+    # discriminator (a new commit re-seeds the instance); run_id/attempt pin the
+    # specific agent run when the head is a single agent node. (No started_at:
+    # the engine records no timestamps in state.)
+    head = {"phase": head_phase, "head_sha": inst.get("head_sha")}
     head_entry = next((p for p in phases if p["id"] == head_phase), None)
     if head_entry:
         head["kind"] = head_entry["kind"]
         head["status"] = head_entry["status"]
+        if head_entry["kind"] == "agent":
+            head["run_id"] = head_entry.get("run_id")
+            head["attempt"] = head_entry.get("iterations")
     return {
         "protocol": inst.get("protocol"),
         "pr": int(str(inst.get("instance", "pr-0")).removeprefix("pr-")),

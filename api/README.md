@@ -34,5 +34,12 @@ OpenAPI docs at `/docs`. All endpoints except `/healthz` need `Authorization: Be
   `code-review`). For deeply-nested protocols, `head.kind`/`head.status` may be
   absent when the head phase has no own node file — treat an absent value as
   `"unknown"`. See `docs/API-BACKLOG.md` (Known limitations).
+- The `head` carries run identity so a client can tell a fresh run from a stale
+  one: `head.head_sha` (the instance's head commit — changes when a new commit
+  re-seeds the run) is always present; `head.run_id`/`head.attempt` pin the
+  specific agent run/attempt when the head is a single agent node (absent on gate
+  and fanout heads). Every agent leaf (agent phase or fanout branch) also carries
+  `run_id`, the run that produced its latest attempt. (No `started_at` — the
+  engine records no timestamps in state.)
 - `action_minutes_approx` is wall-clock (`updated_at − run_started_at`), not billed
   minutes; it will differ from GitHub billing.
