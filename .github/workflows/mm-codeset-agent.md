@@ -44,9 +44,14 @@ pre-agent-steps:
       fetch-depth: 0
   - name: Install codeset-vibing
     run: |
-      # codeset-vibing is not on PyPI — install from source. It shells out to the
-      # claude CLI (already installed by the compiled lock) for synthesis.
-      python3 -m pip install --quiet "git+https://github.com/radinshayanfar/codeset-vibing.git" || \
+      # codeset-vibing is not on PyPI, and its templates/get_context.py is NOT
+      # packaged in a wheel — codeset resolves it relative to its own package dir,
+      # so a non-editable install crashes with FileNotFoundError mid-write. Clone
+      # and install EDITABLE so templates/ stays resolvable. (It shells out to the
+      # claude CLI, installed by the compiled lock, for synthesis.)
+      git clone --depth 1 https://github.com/radinshayanfar/codeset-vibing.git /tmp/codeset-src || \
+        echo "[mm-codeset] codeset clone failed" >&2
+      python3 -m pip install --quiet -e /tmp/codeset-src || \
         echo "[mm-codeset] codeset-vibing install failed — python -m codeset will be unavailable" >&2
   - name: Run codeset and stage output
     env:
