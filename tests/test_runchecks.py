@@ -393,7 +393,7 @@ def test_runner_stamps_declared_on_fail_on_passing_verdict(temp_proto_in_grumpy)
 # Tests written BEFORE implementation (TDD RED).
 # ===========================================================================
 
-SUBPIPE_PROTO_PATH = PROTOCOLS / "recover-mental-model-stub/protocol.json"
+SUBPIPE_PROTO_PATH = FIXTURES / "subpipeline-gate/protocol.json"
 EV_EMPTY = FIXTURES / "diff-pr1.txt"   # reuse as a stand-in; we just need a valid file path
 # Use /dev/null as a minimal empty evidence file
 import tempfile as _tempfile
@@ -440,7 +440,7 @@ def _empty_files(tmp_path_local=None):
 # 20
 def test_substate_draft_runs_its_check(tmp_path):
     """BRANCH=rationale SUBSTATE=draft → sub-state 'draft' has the questions-present
-    check → 1 result (recover-mental-model-stub sub-pipeline leg)."""
+    check → 1 result (subpipeline-gate fixture sub-pipeline leg)."""
     ev = _empty_evidence(tmp_path)
     diff = _empty_diff(tmp_path)
     files = _empty_files(tmp_path)

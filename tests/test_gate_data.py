@@ -18,14 +18,16 @@ import os
 import pathlib
 import sys
 
-from conftest import PROTOCOLS, read_state_yaml
+from conftest import FIXTURES, read_state_yaml
 
 ENGINE = pathlib.Path(__file__).resolve().parent.parent / ".github/agent-factory/engine"
 sys.path.insert(0, str(ENGINE))
 lib = importlib.import_module("lib")
 
-# A kept protocol with a branch-scoped gate (rationale.clarify).
-RECOVER_PROTO = PROTOCOLS / "recover-mental-model-stub/protocol.json"
+# A fixture protocol with a branch-scoped gate (rationale.clarify) — the shape the
+# real recover-mental-model protocol no longer has (it uses socratic phase1→
+# answering→phase2). Preserved here so this engine regression keeps its coverage.
+RECOVER_PROTO = FIXTURES / "subpipeline-gate/protocol.json"
 
 
 def test_open_gate_branch_scoped_with_questions(tmp_path, engine_env):

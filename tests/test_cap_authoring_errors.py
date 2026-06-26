@@ -241,7 +241,7 @@ def test_valid_fixture_not_rejected(engine_env, tmp_path, fixture):
 
 @pytest.mark.parametrize("proto_name", [
     "code-review",
-    "recover-mental-model-stub",
+    "recover-mental-model",
 ])
 def test_live_protocol_not_rejected(engine_env, tmp_path, proto_name):
     """validate_protocol must NOT error on the live production protocols."""

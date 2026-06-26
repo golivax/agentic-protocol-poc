@@ -26,7 +26,7 @@ for ((i = 0; i < ${#args[@]}; i++)); do
   fi
 done
 if [[ "$*" == *"git/trees"* ]]; then
-  json='{"tree":[{"path":"code-review","type":"tree"},{"path":"deep-review-stub","type":"tree"},{"path":"recover-mental-model-stub","type":"tree"}]}'
+  json='{"tree":[{"path":"code-review","type":"tree"},{"path":"deep-review-stub","type":"tree"},{"path":"recover-mental-model","type":"tree"}]}'
   if [[ -n "$filter" ]]; then
     printf '%s' "$json" | jq -r "$filter"
   else
@@ -48,4 +48,4 @@ def test_list_prints_protocol_names(tmp_path):
         ["bash", str(INSTALL), "list"], capture_output=True, text=True, env=env,
     )
     names = set(out.stdout.split())
-    assert {"code-review", "deep-review-stub", "recover-mental-model-stub"} <= names
+    assert {"code-review", "deep-review-stub", "recover-mental-model"} <= names
