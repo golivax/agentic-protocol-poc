@@ -161,15 +161,17 @@ env, and helpers `run_engine`/`run_check`/`read_state_yaml`). pytest is a dev-on
 dependency — it is NOT part of the vendored `.github/agent-factory/` unit, which needs
 only Python 3 + PyYAML at runtime.
 
+The repo is a [uv](https://docs.astral.sh/uv/) project (`pyproject.toml` +
+`uv.lock`); `uv run` auto-syncs the dev environment, so no manual install is needed.
+
 ```bash
-# One-time: install dev deps (pytest + PyYAML)
+# With uv (recommended) — deps come from uv.lock automatically
+uv run pytest tests/ -q              # the whole suite
+uv run pytest tests/test_engine.py -v  # one module, verbose
+
+# Without uv — install dev deps (pytest + PyYAML) into your own environment first
 python3 -m pip install -r tests/requirements-dev.txt
-
-# Run the whole suite
 pytest tests/ -q
-
-# Run one module, verbose
-pytest tests/test_engine.py -v
 ```
 
 Modules: `test_engine.py` (planner + advance writer + lib CAS, single-agent + fanout

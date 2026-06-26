@@ -1,0 +1,29 @@
+[project]
+name = "agentic-protocol-engine"
+version = "0.1.0"
+description = "A generic state machine for running reliable, multi-step agentic processes on GitHub, plus a read-only visibility REST API over the engine's state."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # Runtime deps for the visibility API service (api/).
+    # The vendored engine under .github/agent-factory/ needs only Python 3 + PyYAML;
+    # PyYAML is included here because the API reads engine state files.
+    "fastapi",
+    "httpx",
+    "PyYAML",
+    "uvicorn",
+]
+
+[dependency-groups]
+# Dev-only: pytest suite under tests/. fastapi/httpx/PyYAML come from the main
+# dependencies above, so only the test-specific extras are listed here.
+dev = [
+    "pytest",
+    "respx",
+    "jsonschema",
+]
+
+[tool.uv]
+# This is an application (scripts + a service run from the repo root), not a
+# distributable library — uv should not try to build/install the project itself.
+package = false

@@ -174,10 +174,19 @@ branch (with its design spec and `docs/API-BACKLOG.md`); not yet merged to
 The engine ships with no runtime deps beyond Python 3 + PyYAML; tests use pytest
 (a dev-only dependency, not part of the vendored unit).
 
+The repo is a [uv](https://docs.astral.sh/uv/) project (`pyproject.toml` +
+`uv.lock`). With uv, the dev environment is implicit — `uv run` syncs it:
+
+```bash
+uv run pytest tests/ -q              # the whole suite (auto-syncs deps from uv.lock)
+uv run pytest tests/test_gate.py -v  # one module, verbose
+```
+
+Without uv, install the dev deps into your own environment first:
+
 ```bash
 python3 -m pip install -r tests/requirements-dev.txt   # one-time: pytest + PyYAML
-pytest tests/ -q                                        # the whole suite
-pytest tests/test_gate.py -v                            # one module, verbose
+pytest tests/ -q
 ```
 
 The suite (400+ tests across `tests/test_*.py`) is the engine's capability
