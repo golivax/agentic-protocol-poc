@@ -218,6 +218,24 @@ def advance_node(ctx, process):
                         questions = json.load(open(qpath)).get("questions", []) or []
                     except (json.JSONDecodeError, ValueError):
                         questions = []
+            if qfrom and not questions:
+                # Auto-complete an empty DATA gate: a `questions_from` gate that
+                # resolved to ZERO questions has nothing for a human to answer, so
+                # advance past it as if already resolved — to its `next` sub-state,
+                # or (gate terminal) leg-done → join. Generic; lets a phase make its
+                # human gate engage only when the agent actually surfaced a question.
+                gate_path = parent + [nxt_sub]
+                gsf = lib.state_file(dir_, pid, instance,
+                                     path=lib.state_path(proto, gate_path))
+                lib.dump_yaml(gsf, {"protocol": pid, "instance": instance,
+                                    "state": "done", "head_sha": sha,
+                                    "gates": {"state": "auto-resolved", "history": []}})
+                cur["sub_state"] = nxt_sub
+                lib.dump_yaml(cursor_sf, cur)
+                advance_node(dataclasses.replace(
+                    ctx, substate=nxt_sub, tree_path=gate_path,
+                    cr_name=pid + "/" + "/".join(gate_path[1:])), "done")
+                return
             lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
                           questions=questions,
                           path=lib.state_path(proto, parent + [nxt_sub]))

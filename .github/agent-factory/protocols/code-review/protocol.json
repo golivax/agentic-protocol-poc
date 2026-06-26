@@ -4,7 +4,8 @@
   "_note": "All seven custody phases are migrated and at parity: preflight -> overview(+risk) -> review fanout(5 dims) -> join -> triage -> fix -> context -> mrp -> done. Each phase pairs the generic `evidence-present` form check with a deterministic per-phase gate: preflight (adherence + conclude-preflight/publish-verdict, blocking on missing/non-adherent spec/plan), overview (schema + cohort-partition + a deterministic `conclude-overview` risk scorer porting score.js/diffusion.js that owns the authoritative band and halts only on a garbled/unknown run; the agent's risk_band is an advisory hint), the 5 review dims (schema + findings-anchored + publish-review), triage (schema + conclude-triage), fix (schema + conclude-fix), context (schema + conclude-context), and mrp (schema + conclude-mrp + a deterministic acceptance_plan: engine inputs[] deliver prior-phase evidence, per-cohort bands are re-derived via the shared _risk_score, and the custody-shaped pack is emitted as the merge-readiness-pack artifact). Remaining v1 simplifications to improve per-phase later: /fix is suggest-only (no push/PR/comment write-actions), and review findings are not yet posted as inline PR comments. Agent workflows live in .github/workflows/.",
   "triggers": [
     { "on": "issue_comment", "comment_prefix": "/review", "command": "start" },
-    { "on": "issue_comment", "comment_prefix": "/override", "command": "override" }
+    { "on": "issue_comment", "comment_prefix": "/override", "command": "override" },
+    { "on": "issue_comment", "comment_prefix": "/mm-answer", "command": "answer" }
   ],
   "states": [
     {
@@ -27,6 +28,21 @@
       ],
       "conclude": "conclude-preflight",
       "publish": "publish-verdict",
+      "on_blocked": "halt",
+      "next": "mm-compliance"
+    },
+    {
+      "id": "mm-compliance",
+      "kind": "agent",
+      "label": "mental-model compliance gate",
+      "workflow": "mm-compliance-gate",
+      "evidence": "mm-compliance.evidence.schema.json",
+      "max_iterations": 2,
+      "params": { "require": ["verdict"] },
+      "checks": [
+        { "run": "evidence-present", "on_fail": "iterate" }
+      ],
+      "conclude": "conclude-mm-compliance",
       "on_blocked": "halt",
       "next": "overview"
     },
@@ -97,23 +113,54 @@
         { "run": "fix-schema-valid", "on_fail": "iterate" }
       ],
       "conclude": "conclude-fix",
-      "next": "context"
+      "next": "post-fix"
     },
     {
-      "id": "context",
-      "kind": "agent",
-      "label": "conversation phase capture",
-      "workflow": "context-agent",
-      "evidence": "context.evidence.schema.json",
-      "max_iterations": 2,
-      "params": { "require": ["phases", "transcript_present"] },
-      "checks": [
-        { "run": "evidence-present", "on_fail": "advisory" },
-        { "run": "context-schema-valid", "on_fail": "advisory" }
+      "id": "post-fix",
+      "kind": "fanout",
+      "label": "context capture ∥ mental-model update",
+      "branches": [
+        {
+          "id": "context",
+          "workflow": "context-agent",
+          "evidence": "context.evidence.schema.json",
+          "max_iterations": 2,
+          "params": { "require": ["phases", "transcript_present"] },
+          "checks": [
+            { "run": "evidence-present", "on_fail": "advisory" },
+            { "run": "context-schema-valid", "on_fail": "advisory" }
+          ]
+        },
+        {
+          "id": "mm",
+          "states": [
+            {
+              "id": "mm-updater",
+              "kind": "agent",
+              "label": "mental-model updater",
+              "workflow": "mm-updater",
+              "evidence": "mm-updater.evidence.schema.json",
+              "max_iterations": 2,
+              "params": { "require": ["mm_changed", "rationale"] },
+              "checks": [
+                { "run": "evidence-present", "on_fail": "iterate" }
+              ]
+            },
+            {
+              "id": "mm-gate",
+              "kind": "gate",
+              "label": "decide on the mental-model PR",
+              "questions_from": "mm-updater",
+              "checks": [
+                { "run": "answers-coverage", "on_fail": "iterate" }
+              ]
+            }
+          ]
+        }
       ],
-      "conclude": "conclude-context",
-      "next": "mrp"
+      "next": "join-post-fix"
     },
+    { "id": "join-post-fix", "kind": "join", "of": "post-fix", "next": "mrp" },
     {
       "id": "mrp",
       "kind": "agent",

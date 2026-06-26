@@ -279,3 +279,41 @@ def test_answer_then_continue_dispatches_finalize(tmp_path, engine_env):
     assert action.get("path") == "recover.rationale.finalize"
     names = {i["as"] for i in action.get("inputs", [])}
     assert {"answers", "draft"} <= names, f"inputs missing: {names}"
+
+
+def test_empty_data_gate_auto_completes(tmp_path, engine_env):
+    """A `questions_from` data gate that resolves to ZERO questions auto-advances
+    past the gate (→ its next sub-state) instead of opening and holding for a human.
+    Here the rationale `draft` emits an empty `questions` list, so the `clarify`
+    gate is skipped and the leg advances straight to `finalize`."""
+    passv = tmp_path / "v.json"
+    passv.write_text(json.dumps({"results": [
+        {"check": "synthetic-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+
+    def adv(branch, substate, evidence_dict):
+        ev = tmp_path / f"{branch}-{substate or 'flat'}.json"
+        ev.write_text(json.dumps(evidence_dict))
+        e = dict(engine_env)
+        e["PR_HEAD_SHA"] = "abc123"
+        e["AGENT_RUN_ID"] = "r"
+        e["NODE_PATH"] = "recover." + branch + (f".{substate}" if substate else "")
+        out, err, rc = run_engine(
+            "advance.py", tmp_path / f"dir-adv-{branch}-{substate or 'flat'}",
+            "pr-1", PROTO, passv, ev, env=e)
+        assert rc == 0, f"advance {branch}/{substate} failed:\n{err}"
+
+    out, err, rc = run_engine("next.py", tmp_path / "dir-next", "pr-1", PROTO,
+                              "start", "abc123", env=engine_env)
+    assert rc == 0, f"next start failed:\n{err}"
+    adv("summary", None, {"summary": "x"})
+    adv("rationale", "draft", {"questions": []})  # NO questions → gate must auto-skip
+
+    work = tmp_path / "verify"
+    subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(work)], check=True)
+    cursor = read_state_yaml(work / "recover-mental-model-stub/pr-1/rationale.yaml")
+    assert cursor["sub_state"] == "finalize", (
+        f"empty-questions gate should auto-skip to finalize, got {cursor.get('sub_state')}")
+    clar = work / "recover-mental-model-stub/pr-1/rationale.clarify.yaml"
+    if clar.exists():
+        assert read_state_yaml(clar)["gates"]["state"] != "open", \
+            "clarify gate should not be left open when there are no questions"

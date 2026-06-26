@@ -1,30 +1,30 @@
 ---
+name: "MM Compliance Gate (protocol state: mm-compliance)"
+run-name: "MM Compliance Gate · cid:[${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}]"
 'on':
-  # Manual dispatch only — the automatic pull_request trigger is intentionally disabled.
-  # Pass the target PR via the pr_number input when dispatching.
   workflow_dispatch:
-    inputs:
-      pr_number: { description: "PR number (manual run)", required: false }
-permissions: { contents: read, pull-requests: read, issues: read }
 engine:
-  id: claude
+  id: codex
+  model: gpt-5.5
+  # Codex (OpenAI) via the private OpenAI-compatible gateway (matches preflight +
+  # the other custody agents). gh-aw injects OPENAI_API_KEY (repo secret).
   env:
-    ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+    OPENAI_BASE_URL: https://arcyleung-ubuntu.tailb940e6.ts.net/v1/
 network:
   allowed:
     - defaults
-    - bmc-bz1.tail22da2e.ts.net
+    - arcyleung-ubuntu.tailb940e6.ts.net
+permissions: { contents: read, pull-requests: read, issues: read }
 safe-outputs:
   add-comment: { max: 1, hide-older-comments: true }
-  noop:
+  noop: {}
 tools:
   bash: [ "cat:*", "ls:*", "find:*", "echo:*", "python:*", "python3:*" ]
   edit:
 timeout-minutes: 15
 steps:
   - name: Checkout (repo workspace for the gh-aw agent + git)
-    uses: actions/checkout@v4
+    uses: actions/checkout@v5
     with: { persist-credentials: false }
   - name: Checkout the mental model
     uses: actions/checkout@v4
@@ -32,28 +32,46 @@ steps:
   - name: Prefetch PR context
     env:
       GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-      PR: "${{ github.event.pull_request.number || github.event.inputs.pr_number }}"
+      PR: "${{ fromJSON(github.event.inputs.aw_context || '{}').pr }}"
       REPO: "${{ github.repository }}"
     run: |
       set -euo pipefail
       mkdir -p /tmp/gh-aw/agent
-      gh pr view "$PR" --repo "$REPO" --json number,title,author,body,files,baseRefName,headRefName,headRefOid > /tmp/gh-aw/agent/pr.json
+      gh pr view "$PR" --repo "$REPO" --json number,title,author,body,files,headRefOid > /tmp/gh-aw/agent/pr.json
       gh pr diff "$PR" --repo "$REPO" > /tmp/gh-aw/agent/pr.diff || {
         echo "::warning::pr diff unavailable in one shot; assembling per-file patches"
         gh api "repos/$REPO/pulls/$PR/files" --paginate \
           --jq '.[] | "diff --git a/\(.filename) b/\(.filename)\n--- a/\(.filename)\n+++ b/\(.filename)\n\(.patch // "(patch omitted: too large)")\n"' \
           > /tmp/gh-aw/agent/pr.diff
       }
+  - name: Materialize task context
+    env:
+      CTX: ${{ github.event.inputs.aw_context }}
+    run: |
+      mkdir -p /tmp/gh-aw
+      if [ -z "$CTX" ]; then CTX='{}'; fi
+      printf '%s' "$CTX" > /tmp/gh-aw/task-context.json
+post-steps:
+  - name: Upload evidence artifact
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: evidence
+      path: /tmp/gh-aw/evidence.json
+      if-no-files-found: warn
 ---
 
 # Mental-Model Compliance Gate
 
 You judge whether a pull request COMPLIES with this repository's stored **mental model (MM)** — its
-architectural decisions, conventions, and constraints. This is advisory; you never modify code.
+architectural decisions, conventions, and constraints. This is advisory-but-blocking: a divergence
+halts the pipeline (until the code complies, the MM is updated, or a maintainer `/override`s). You
+never modify code.
 
 ## Inputs (already fetched for you)
 - `/tmp/gh-aw/agent/pr.json` — PR metadata (title, author, body, changed files).
 - `/tmp/gh-aw/agent/pr.diff` — the full unified diff.
+- `/tmp/gh-aw/task-context.json` — `pr`, `iteration`, `feedback` (fold prior feedback into this pass).
 - `_mm/` — the **entire** mental model, checked out from the `_mental_model` branch.
 
 ### How the mental model is organized
@@ -72,46 +90,37 @@ in `_mm/METHODS.txt`). They describe the *same* repository from different angles
    These are the explicit *decisions and constraints* a PR can uphold or diverge from.
 
 2. **`_mm/legion-map/` — a generated codebase map (orientation + retrieval, not decisions).**
-   - `_mm/legion-map/CODEBASE.md` — architecture overview, language distribution, module ownership,
-     and risk areas.
-   - `_mm/legion-map/codebase/index.jsonl` — one JSON chunk per retrievable unit (`path`, `summary`,
-     `keywords`, `symbols`, `related_files`, `risk`); `_mm/legion-map/codebase/symbols.json` — coarse
-     entry points, APIs, modules, tests, risk areas; `_mm/legion-map/config/directory-mappings.yaml`
-     — directory → category mappings.
+   - `_mm/legion-map/CODEBASE.md` — architecture overview, language distribution, module ownership.
+   - `_mm/legion-map/codebase/index.jsonl` / `symbols.json` / `config/directory-mappings.yaml`.
    Use it to orient which subsystem a changed file belongs to. It is a *map*, not a constraint set.
 
 3. **`_mm/vibed-codeset/` — a codeset-style per-file knowledge base (evidence, not decisions).**
-   A knowledge base mined from git history, static analysis (constructs + caller graph), test
-   coverage, and co-change relationships. Per file it records past bugs and their root causes, an
-   edit checklist (tests to run, constants to keep consistent), pitfalls with consequences, key
-   constructs and their callers, and files that historically change together (hidden coupling).
-   - Query it with the bundled renderer (this gate has `python3`): from the `_mm/vibed-codeset/`
-     directory, `python3 .claude/docs/get_context.py <source/path>` prints one file's record,
-     `python3 .claude/docs/get_context.py .` prints a repo overview, and
-     `python3 .claude/docs/get_context.py --list` lists the files that have context. The script just
-     renders `_mm/vibed-codeset/.claude/docs/knowledge.json` (large; 40 files), so prefer it over
-     `cat`-ing the raw JSON. A pre-rendered repo overview also lives at `_mm/vibed-codeset/CLAUDE.md`
-     (identical to `AGENTS.md`).
+   Per file: past bugs + root causes, an edit checklist, pitfalls, key constructs/callers, co-change.
+   - Query it (this gate has `python3`): from `_mm/vibed-codeset/`,
+     `python3 .claude/docs/get_context.py <source/path>` (one file), `... .` (overview),
+     `... --list` (covered files). It renders `_mm/vibed-codeset/.claude/docs/knowledge.json`; a
+     pre-rendered overview also lives at `_mm/vibed-codeset/CLAUDE.md`.
    Use this as evidence about a changed file's known pitfalls and required tests.
 
 The MM is **holistic** — it is NOT tied to this PR, and there is no per-PR ADR. Judge compliance
-against the **socratic decision corpus**; `legion-map/` and `vibed-codeset/` are supporting evidence
-(orientation, coupling, known pitfalls), not independent constraints to comply with.
+against the **socratic decision corpus**; `legion-map/` and `vibed-codeset/` are supporting evidence,
+not independent constraints.
 
 ## Procedure
-1. Read `/tmp/gh-aw/agent/pr.diff` and `/tmp/gh-aw/agent/pr.json`.
+1. Read `/tmp/gh-aw/agent/pr.diff`, `/tmp/gh-aw/agent/pr.json`, and `/tmp/gh-aw/task-context.json`.
 2. Enumerate and read the MM decision corpus: `find _mm/socratic -name '*.adoc' -not -path '*/.git/*'`,
-   then `cat` each (these are AsciiDoc). For orientation, `cat _mm/legion-map/CODEBASE.md` (which
-   subsystem a changed file belongs to). For a changed file's known pitfalls/required tests, query the
-   codeset KB: `python3 _mm/vibed-codeset/.claude/docs/get_context.py <changed/source/path>` (or read
-   `_mm/vibed-codeset/CLAUDE.md` for the overview).
-3. If the diff has no substantive code/behavior change relevant to the MM (pure docs, comments,
-   formatting, or test-only churn), call `noop` with a one-line reason and STOP.
-4. Otherwise, for each MM decision/convention the diff touches, classify it as **upheld**,
-   **diverges**, or **not applicable**.
-5. Post EXACTLY ONE comment via `add-comment`.
+   then `cat` each. For orientation, `cat _mm/legion-map/CODEBASE.md`; for a changed file's known
+   pitfalls, query the codeset KB (above).
+3. For each MM decision/convention the diff touches, classify it **upheld**, **diverges**, or **n/a**.
+   A diff with no substantive code/behavior change relevant to the MM (pure docs/comments/formatting/
+   test-only churn) has **no divergences**.
+4. **Write `/tmp/gh-aw/evidence.json`** (the engine evidence path) as ONE JSON object, using the
+   `edit` tool — this is what the engine checks and what decides blocking:
+   `{"verdict":"compliant|diverges","divergences":[{"decision":"…","detail":"…","evidence":"<file:hunk>","fix":"…"}],"examined":["<MM docs + changed files you read>"]}`
+   `verdict` is `"diverges"` iff `divergences` is non-empty; otherwise `"compliant"` with `divergences: []`.
+5. Post EXACTLY ONE advisory comment via `add-comment` mirroring the verdict:
 
-If there are NO divergences:
+If compliant:
 ~~~markdown
 ### ✅ Mental-Model Compliance — Compliant
 
@@ -129,18 +138,17 @@ If there ARE divergences:
 ### ⚠️ Mental-Model Compliance — {N} divergence(s)
 
 This PR appears to diverge from the stored mental model. Either change the code to comply, or update
-the mental model to reflect the new decision.
+the mental model to reflect the new decision (and `/override` to proceed).
 
 <details><summary>Divergences ({N})</summary>
 
 - **{MM doc, e.g. socratic/docs/specs/adrs/yuanrong-datasystem-adr-002-…}: {decision title}** —
-  {what the diff does that contradicts it}. Evidence: `{file path}` ({hunk/line summary}). Fix: {one line}.
+  {what the diff contradicts}. Evidence: `{file path}` ({hunk/line}). Fix: {one line}.
 
 </details>
 ~~~
 
 ## Rules
-- Base every verdict on real evidence from `pr.diff`. Cite file paths. Never invent MM content that
-  is not present in `_mm/`.
-- Judge ONLY against the provided MM text.
-- Always end by calling exactly one safe output (`add-comment` or `noop`).
+- ALWAYS write `/tmp/gh-aw/evidence.json` first (even when compliant — `divergences: []`), then post the comment.
+- Base every verdict on real evidence from `pr.diff`. Cite file paths. Never invent MM content not in `_mm/`.
+- End by calling exactly one safe output (`add-comment`).

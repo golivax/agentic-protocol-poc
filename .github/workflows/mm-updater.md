@@ -1,20 +1,20 @@
 ---
+name: "MM Updater (protocol leg: mm-updater)"
+run-name: "MM Updater · cid:[${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}]"
 'on':
-  # Manual dispatch only — the automatic pull_request trigger is intentionally disabled.
-  # Pass the target PR via the pr_number input when dispatching.
   workflow_dispatch:
-    inputs:
-      pr_number: { description: "PR number (manual run)", required: false }
-permissions: { contents: read, pull-requests: read, issues: read }
 engine:
-  id: claude
+  id: codex
+  model: gpt-5.5
+  # Codex (OpenAI) via the private OpenAI-compatible gateway (matches preflight +
+  # the other custody agents). gh-aw injects OPENAI_API_KEY (repo secret).
   env:
-    ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+    OPENAI_BASE_URL: https://arcyleung-ubuntu.tailb940e6.ts.net/v1/
 network:
   allowed:
     - defaults
-    - bmc-bz1.tail22da2e.ts.net
+    - arcyleung-ubuntu.tailb940e6.ts.net
+permissions: { contents: read, pull-requests: read, issues: read }
 safe-outputs:
   create-pull-request:
     base-branch: _mental_model
@@ -23,7 +23,7 @@ safe-outputs:
     draft: false
     if-no-changes: ignore
   add-comment: { max: 1, hide-older-comments: true }
-  noop:
+  noop: {}
 tools:
   bash: [ "cat:*", "ls:*", "find:*", "echo:*", "python:*", "python3:*" ]
   edit:
@@ -35,7 +35,7 @@ steps:
   - name: Prefetch PR context
     env:
       GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-      PR: "${{ github.event.pull_request.number || github.event.inputs.pr_number }}"
+      PR: "${{ fromJSON(github.event.inputs.aw_context || '{}').pr }}"
       REPO: "${{ github.repository }}"
     run: |
       set -euo pipefail
@@ -48,16 +48,34 @@ steps:
           --jq '.[] | "diff --git a/\(.filename) b/\(.filename)\n--- a/\(.filename)\n+++ b/\(.filename)\n\(.patch // "(patch omitted: too large)")\n"' \
           > /tmp/gh-aw/agent/pr.diff
       }
+  - name: Materialize task context
+    env:
+      CTX: ${{ github.event.inputs.aw_context }}
+    run: |
+      mkdir -p /tmp/gh-aw
+      if [ -z "$CTX" ]; then CTX='{}'; fi
+      printf '%s' "$CTX" > /tmp/gh-aw/task-context.json
+post-steps:
+  - name: Upload evidence artifact
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: evidence
+      path: /tmp/gh-aw/evidence.json
+      if-no-files-found: warn
 ---
 
 # Mental-Model Updater
 
 You decide INDEPENDENTLY whether a pull request changes this repository's **mental model (MM)** and,
-if so, propose the MM edits as a **separate** pull request against the `_mental_model` branch.
+if so, propose the MM edits as a **separate** pull request against the `_mental_model` branch. The
+engine then pauses for a human to decide on that MM PR before the merge-readiness pack; if no MM
+change is warranted the pipeline proceeds straight to it.
 
 ## Inputs
 - `/tmp/gh-aw/agent/pr.json` — PR metadata. `/tmp/gh-aw/agent/pr.diff` — the full diff.
 - `/tmp/gh-aw/agent/pr-number.txt` — the originating PR number (call it `N`).
+- `/tmp/gh-aw/task-context.json` — `pr`, `iteration`, `feedback` (fold prior feedback into this pass).
 - The **working tree is the `_mental_model` branch**, which holds the MM captured by **three
   independent approaches** (listed in `METHODS.txt`):
   - **`socratic/`** — the human-curated **decision corpus** in **AsciiDoc**: `socratic/docs/specs/adrs/*.adoc`
@@ -67,45 +85,48 @@ if so, propose the MM edits as a **separate** pull request against the `_mental_
   - **`legion-map/`** — a generated codebase map (`CODEBASE.md`, `codebase/index.jsonl`,
     `codebase/symbols.json`, `config/directory-mappings.yaml`) for orientation and retrieval.
   - **`vibed-codeset/`** — a codeset-style per-file knowledge base mined from git history, static
-    analysis, tests, and co-change relationships. It records, per file, past bugs, an edit checklist,
-    pitfalls, key constructs/callers, and co-changing files. Query it with the bundled renderer (this
-    workflow has `python3`): `python3 vibed-codeset/.claude/docs/get_context.py <changed/source/path>`
-    for one file's record, `... get_context.py .` for a repo overview, `... get_context.py --list` to
-    list covered files (it renders `vibed-codeset/.claude/docs/knowledge.json`; a pre-rendered
-    overview also lives in `vibed-codeset/CLAUDE.md`).
-  `legion-map/` and `vibed-codeset/` are **mechanically regenerated** by their own tooling — read
-  them for context, but **do not hand-edit them**. Propose MM changes by editing **`socratic/`**
-  only; those edits become the proposed MM PR.
+    analysis, tests, and co-change relationships. Query it (this workflow has `python3`):
+    `python3 vibed-codeset/.claude/docs/get_context.py <changed/source/path>` (one file),
+    `... get_context.py .` (overview), `... get_context.py --list` (covered files). It renders
+    `vibed-codeset/.claude/docs/knowledge.json`; an overview also lives in `vibed-codeset/CLAUDE.md`.
+  `legion-map/` and `vibed-codeset/` are **mechanically regenerated** — read them for context, but
+  **do not hand-edit them**. Propose MM changes by editing **`socratic/`** only.
 
 ## Procedure
-1. Read `pr.diff`, `pr.json`, and `pr-number.txt`. Read the current MM:
+1. Read `pr.diff`, `pr.json`, `pr-number.txt`, and `task-context.json`. Read the current MM:
    `find socratic -name '*.adoc' -not -path '*/.git/*'`, then `cat` each (AsciiDoc).
 2. Decide independently: does this PR introduce or alter an **architectural decision, convention, or
-   anti-pattern** the MM should record, or does it **contradict** existing MM content that should be
-   revised?
-3. **If NO MM change is warranted:** make NO file edits; call `noop` with a one-line reason. STOP.
+   anti-pattern** the MM should record, or **contradict** existing MM content that should be revised?
+
+3. **If NO MM change is warranted:** make NO file edits. **Write `/tmp/gh-aw/evidence.json`** (the
+   engine evidence path) via the `edit` tool as:
+   `{"mm_changed": false, "questions": [], "rationale": "<one line: why no MM change>"}`
+   Then call `noop`. STOP. (The empty `questions` makes the engine auto-skip the gate to mrp.)
+
 4. **If a change IS warranted:**
-   a. Edit the MM in the working tree, minimally and grounded in the diff. Match the existing
+   a. Edit the MM in the working tree, minimally and grounded in the diff, matching the existing
       **AsciiDoc** style (code evidence cited inline as `[file:line]`):
       - New decision → add `socratic/docs/specs/adrs/yuanrong-datasystem-adr-NNN-kebab-title.adoc`
-        in Nygard format (`== Status`, `== Context`, `== Decision`, `== Consequences`), using the
-        next free 3-digit `NNN` (inspect existing `socratic/docs/specs/adrs/` files to pick it).
-      - Changed architecture → edit the relevant section of `socratic/docs/arc42/arc42-yuanrong-datasystem.adoc`.
+        in Nygard format (`== Status`, `== Context`, `== Decision`, `== Consequences`), next free `NNN`.
+      - Changed architecture → edit `socratic/docs/arc42/arc42-yuanrong-datasystem.adoc`.
       - New or changed flow → edit `socratic/docs/specs/use-cases-yuanrong-datasystem.adoc`.
       Never add app or source files; only mental-model AsciiDoc.
-   b. Emit `create-pull-request`. Title: `Capture MM change from PR #N: {short title}` (substitute the
-      real `N`). The body MUST contain a line `Related to #N` (so GitHub cross-references the original
-      PR) plus a short rationale citing evidence from `pr.diff`.
-   c. Emit `add-comment` on the original PR:
+   b. Emit `create-pull-request`. Title: `Capture MM change from PR #N: {short title}`. The body MUST
+      contain `Related to #N` plus a short rationale citing evidence from `pr.diff`.
+   c. **Write `/tmp/gh-aw/evidence.json`** as:
+      `{"mm_changed": true, "questions": [{"id": "mm-pr", "text": "An [mm] PR with a proposed mental-model update was opened for this PR — review and decide on it (merge or close), then comment /mm-answer mm-pr: <decided> to continue."}], "rationale": "<why the MM should change, with evidence>"}`
+   d. Emit `add-comment` on the original PR:
       ~~~markdown
       ### 🧠 Mental-Model Updater
 
       This PR appears to change the mental model. I've opened a `[mm]` pull request against the
-      `_mental_model` branch with the proposed update — see the cross-reference linked here.
+      `_mental_model` branch with the proposed update — decide on it, then `/mm-answer mm-pr: <decided>`.
       ~~~
 5. Always end by calling the appropriate safe output(s).
 
 ## Rules
+- ALWAYS write `/tmp/gh-aw/evidence.json` — `mm_changed:false` + empty `questions` when no change,
+  `mm_changed:true` + exactly one `mm-pr` question when you opened an MM PR.
 - The proposed PR must contain ONLY mental-model edits (you are on the `_mental_model` branch).
 - Ground every proposed change in real evidence from `pr.diff`. Do not invent unrelated content.
-- When unsure whether a change rises to an MM update, prefer `noop` to avoid noise.
+- When unsure whether a change rises to an MM update, prefer `mm_changed:false` to avoid noise.
