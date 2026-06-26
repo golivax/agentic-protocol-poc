@@ -2,7 +2,7 @@
 
 The append-hook + run_merge_hook unit tests and the full subpipeline-mini
 walk-with-merge that once lived here moved to test_recover_mental_model.py (which
-drives the real recover-mental-model-stub protocol: flat `summary` ∥ sub-pipeline
+drives the real recover-mental-model protocol: flat `summary` ∥ sub-pipeline
 `rationale` → join → combine merge → done). What remains are the join MODE
 selectors (next is an agent vs. next is `done`), driven over inline flat
 protocols via the unified NODE_PATH coordinate.

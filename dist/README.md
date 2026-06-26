@@ -13,7 +13,7 @@ git clone https://github.com/<you>/<target> && cd <target>
 curl -fsSL https://raw.githubusercontent.com/golivax/agentic-protocol-poc/main/dist/install.sh \
   | bash -s -- install code-review
 ```
-Install several at once: `... install code-review recover-mental-model-stub`.
+Install several at once: `... install code-review recover-mental-model`.
 List what's available: `... list`. Update later: `... update`.
 
 During install you pick an engine per agent workflow (via the gh-aw wizard) and,

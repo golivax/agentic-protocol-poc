@@ -20,7 +20,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
 sys.path.insert(0, str(ROOT / "tests"))
-from conftest import PROTOCOLS  # noqa: E402
+from conftest import FIXTURES  # noqa: E402
 
 
 def _run_next(state_dir, proto, instance, cmd, env, **coords):
@@ -35,10 +35,10 @@ def test_enter_top_fanout_seeds_branches(engine_env, tmp_path):
     """start on a single-phase fanout protocol with a flat leg + a sub-pipeline
     leg seeds: run-fanout action (flat leg has no substate, sub-pipeline leg
     carries its first sub-state) + the cursor + first sub-state files on disk.
-    Driven over recover-mental-model-stub (summary flat, rationale sub-pipeline
+    Driven over the subpipeline-gate fixture (summary flat, rationale sub-pipeline
     whose first sub-state is draft)."""
     sd = tmp_path / "state"; sd.mkdir()
-    proto = PROTOCOLS / "recover-mental-model-stub" / "protocol.json"
+    proto = FIXTURES / "subpipeline-gate" / "protocol.json"
     r = _run_next(sd, proto, "pr-1", "start", engine_env)
     assert r.returncode == 0, r.stderr
     action = json.loads(r.stdout)
@@ -47,5 +47,5 @@ def test_enter_top_fanout_seeds_branches(engine_env, tmp_path):
     assert "substate" not in by["summary"]          # flat leg
     assert by["rationale"]["substate"] == "draft"   # sub-pipeline leg first sub-state
     # cursor + first sub-state files written under the instance dir
-    base = sd / "recover-mental-model-stub" / "pr-1"
+    base = sd / "subpipeline-gate" / "pr-1"
     assert (base / "rationale.yaml").exists() and (base / "rationale.draft.yaml").exists()

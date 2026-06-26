@@ -20,8 +20,12 @@ Three protocols ship under `.github/agent-factory/protocols/`:
   `approval` (human gate) → done. A live `/review` runs it via the router
   (`agentic-orchestrator.yml`), which selects the protocol through `lib.route`
   scanning `protocol.json` `triggers` blocks at runtime.
-- **`recover-mental-model-stub`** — sub-pipeline branches + a data-carrying gate
-  (`/recover`, then `/answer qID: value`). A capability example with stub agents.
+- **`recover-mental-model`** — three parallel mental-model recovery methods
+  (`legion` ∥ `codeset` ∥ `socratic` sub-pipeline) → `join` → `combine` merge that
+  collects all three outputs and pushes them to an orphan `_mental_model` branch
+  (`/recover`, then `/answer qID: value` for socratic's human-gated `answering`
+  step). The combine hook (`publish/push-mental-model.py`) is the only place that
+  writes a non-`agentic-state` branch.
 - **`deep-review-stub`** — a depth-4 nested fan-out/sub-pipeline tree
   (`/deep-review`), exercising the recursive engine. Stub agents.
 
@@ -216,6 +220,10 @@ Key frontmatter facts (see `docs/STATUS.md` for the security rationale):
 - Secrets the repo needs: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`,
   `POC_DISPATCH_TOKEN` (a PAT with repo + workflow scopes — the default
   `GITHUB_TOKEN` deliberately can't trigger workflows or read PR labels).
+  `recover-mental-model`'s combine hook additionally needs a write-capable token
+  (`contents: write` + `actions: read`) to force-push the orphan `_mental_model`
+  branch and download leg artifacts — wire `POC_DISPATCH_TOKEN` in as
+  `PUBLISH_TOKEN` for the merge step (see `docs/STATUS.md`).
 
 ## Recursive engine — the `NODE_PATH` coordinate
 

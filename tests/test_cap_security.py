@@ -40,11 +40,11 @@ FIXTURES = ROOT / "tests/fixtures"
 PROTOCOLS = ROOT / ".github/agent-factory/protocols"
 
 # Protocol that has a subpipeline so NODE_PATH (depth-3) resolves normally,
-# used by traversal tests to confirm well-formed paths still work. The kept
-# recover-mental-model-stub has the right shape: a flat `summary` leg + a
+# used by traversal tests to confirm well-formed paths still work. The
+# subpipeline-gate fixture has the right shape: a flat `summary` leg + a
 # sub-pipeline `rationale` leg whose sub-states are draft → clarify(gate) → finalize.
-SUBPIPELINE_PROTO = PROTOCOLS / "recover-mental-model-stub/protocol.json"
-SUBPIPELINE_PID = "recover-mental-model-stub"
+SUBPIPELINE_PROTO = FIXTURES / "subpipeline-gate/protocol.json"
+SUBPIPELINE_PID = "subpipeline-gate"
 # Single-agent protocol (its `name` field is "single-agent"). It has NO data
 # gate, so do_answer early-returns at _find_open_gate → None: the injection
 # tests that use it prove the do_answer PATH is inert (no exec before/around the
@@ -125,7 +125,7 @@ def _all_files_under(directory):
 
 def _seed_open_gate(tmp_path, engine_env, proto=SUBPIPELINE_PROTO):
     """Drive start → rationale.draft done → clarify gate open via the unified
-    NODE_PATH coordinate (recover-mental-model-stub: rationale is the sub-pipeline
+    NODE_PATH coordinate (subpipeline-gate: rationale is the sub-pipeline
     leg, draft → clarify(gate) → finalize)."""
     _run_next(tmp_path / "seed-dir", "pr-1", proto, "start", engine_env,
               extra_env={"PR_HEAD_SHA": "abc123"})

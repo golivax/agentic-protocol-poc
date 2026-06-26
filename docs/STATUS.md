@@ -4,6 +4,47 @@ This records what the PoC actually is, measured against the original design
 spec (`agent-factory/docs/superpowers/specs/2026-06-10-...`) and plan. Read it
 before extending the system so you know which "missing" pieces are deliberate.
 
+## `recover-mental-model` promoted from stub → real (2026-06-26)
+
+`recover-mental-model-stub` was renamed to **`recover-mental-model`** and turned
+into a real protocol. It fans out three mental-model recovery methods in
+parallel — `legion` (`/legion:map`), `codeset` (`python -m codeset .`), and
+`socratic` (the `socratic-code-theory-recovery` sub-pipeline `phase1 → answering
+(human gate) → phase2`) — then `join`s and runs a `combine` merge hook
+(`publish/push-mental-model.py`) that collects all three leg trees and
+**force-pushes a single orphan `_mental_model` branch** (one per repo, overwritten
+each run), mirroring `golivax2/yuanrong-datasystem@_mental_model`.
+
+What is / isn't covered here:
+- **Engine-testable (pytest, `ENGINE_LOCAL`):** the protocol shape, evidence
+  schemas, deterministic checks, and the push hook's tree-assembly + orphan-branch
+  git logic (`tests/test_recover_mental_model.py`, `tests/test_unified_recover_e2e.py`).
+- **New capability:** the combine hook is the **only** place the engine writes a
+  branch other than `agentic-state`. It does NOT use `cas_push`/`state_checkout`
+  (those are `agentic-state`-only); it builds a fresh orphan worktree and
+  `git push --force`es it. It reads `PUBLISH_TOKEN`, which the engine currently
+  sets to the default `GITHUB_TOKEN` — but the orchestrator's permission ceiling
+  is `contents: read`, so to actually push you must hand the merge step a
+  **write-capable PAT with `contents: write` AND `actions: read`** (the latter to
+  `gh run download` each leg's `mm-tree-*` artifact by `run_id`). The repo already
+  carries such a PAT — `POC_DISPATCH_TOKEN` — so the remaining wiring is to pass
+  it as `PUBLISH_TOKEN` for the combine/merge step in `agentic-engine.yml`
+  (deliberately NOT done here to avoid broadening the token for code-review's
+  comment-only publish hooks). Until then the hook resolves no usable remote and
+  returns a neutral verdict.
+- **Infra-dependent (NOT runnable from this repo):** the four `mm-*-agent`
+  workflows genuinely install + run the toolchains (claude CLI, legion skill,
+  codeset-vibing, socratic skill) on the runner. Their frontmatter documents the
+  prerequisites; the `dangerously-disable-sandbox-agent` justification is present
+  because the custom Anthropic endpoint cannot be expressed in AWF's egress
+  allowlist (same weakening as the code-review agents).
+- The old stub shape (flat `summary` leg + `rationale` sub-pipeline
+  `draft → clarify → finalize`) is preserved as the engine regression fixture
+  `tests/fixtures/subpipeline-gate/`; structural tests point there.
+
+The historical sections below still say `recover-mental-model-stub` — they are a
+dated record from when it was a stub and are left unchanged.
+
 **Shipped protocol (as of 2026-06-20):** `code-review`
 (`.github/agent-factory/protocols/code-review/`) — a multi-phase pipeline:
 `preflight` (agent, pre-flight gate) → `review` (fanout: `grumpy` + `security` legs)

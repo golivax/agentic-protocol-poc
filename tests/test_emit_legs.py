@@ -30,13 +30,14 @@ def test_codereview_review_legs_carry_leaf_path_and_workflow(engine_env, tmp_pat
 
 def test_recover_legs_subpipeline_branch_points_at_first_substate(engine_env, tmp_path):
     act = _emit(engine_env, tmp_path,
-                ".github/agent-factory/protocols/recover-mental-model-stub/protocol.json",
+                ".github/agent-factory/protocols/recover-mental-model/protocol.json",
                 "start", "sha1")
     assert act["action"] == "run-fanout"
     legs = {l["path"]: l["workflow"] for l in act["legs"]}
-    # flat branch → branch path; sub-pipeline branch → first sub-state (draft).
-    assert legs == {"recover.summary": "rmm-summary-agent",
-                    "recover.rationale.draft": "rmm-draft-agent"}
+    # flat branches → branch path; sub-pipeline branch → first sub-state (phase1).
+    assert legs == {"recover.legion": "mm-legion-agent",
+                    "recover.codeset": "mm-codeset-agent",
+                    "recover.socratic.phase1": "mm-socratic-phase1-agent"}
 
 def test_codereview_preflight_run_agent_carries_path_and_workflow(engine_env, tmp_path):
     act = _emit(engine_env, tmp_path,

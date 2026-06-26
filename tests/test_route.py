@@ -161,7 +161,7 @@ def test_real_protocols_grumpy_comment_no_longer_routes():
 
 def test_real_protocols_pr_opened_no_longer_routes():
     # PR auto-triggers were removed: code-review is /review-only and
-    # recover-mental-model-stub is /recover-only, so a pull_request event matches
+    # recover-mental-model is /recover-only, so a pull_request event matches
     # no protocol and routes to skip (nothing runs on PR open/sync).
     r = lib.route(REAL_PROTOCOLS, "pull_request", "opened", "")
     assert r["skip"] is True

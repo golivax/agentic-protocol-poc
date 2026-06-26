@@ -40,7 +40,7 @@ def test_output_artifact_path_answers_kind():
 # The engine-walk inputs tests (evidence persisted on done; draft output flows to
 # finalize's resolved inputs; run-agent action carries resolved inputs) drove the
 # legacy subpipeline-mini fixture via BRANCH/SUBSTATE coords. They are covered by
-# the NODE_PATH suite over recover-mental-model-stub:
+# the NODE_PATH suite over recover-mental-model:
 #   - test_recover_mental_model.test_full_pipeline persists each leg's evidence and
 #     walks draft → gate → finalize;
 #   - test_recover_mental_model.test_answer_then_continue_dispatches_finalize asserts
