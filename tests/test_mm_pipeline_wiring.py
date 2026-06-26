@@ -12,6 +12,7 @@ integration introduced into the code-review protocol (PR #108):
 """
 import importlib
 import json
+import os
 import subprocess
 import sys
 
@@ -95,3 +96,82 @@ def test_empty_terminal_gate_completes_leg_and_fires_join(tmp_path, engine_env):
         "terminal gate must be auto-resolved (not opened/held)"
     assert "event_type=protocol-join" in err_b, (
         f"completing leg b (via terminal-gate auto-skip) must fire the fan-out join:\n{err_b}")
+
+
+def test_data_gate_comment_uses_protocol_answer_prefix(tmp_path, engine_env, capfd):
+    """open_gate must instruct the protocol's CONFIGURED answer prefix (/mm-answer for
+    code-review), not a hardcoded /answer — which is not a code-review trigger and would
+    route to nothing, leaving the gate unresolvable."""
+    for k, v in engine_env.items():
+        os.environ[k] = v
+    lib.STATE_REMOTE = engine_env["STATE_REMOTE"]
+    d = tmp_path / "dir"
+    lib.state_checkout(str(d))
+    inf = lib.instance_file(str(d), "code-review", "pr-1")
+    os.makedirs(os.path.dirname(inf), exist_ok=True)
+    lib.dump_yaml(inf, {"protocol": "code-review", "instance": "pr-1", "joined": False})
+    capfd.readouterr()
+    lib.open_gate(str(d), "code-review", "pr-1", str(CODE_REVIEW), "mm-gate", "sha", "1",
+                  questions=[{"id": "mm-pr", "text": "decide on the MM PR"}],
+                  path=["post-fix", "mm", "mm-gate"])
+    cap = capfd.readouterr()
+    out = cap.out + cap.err
+    assert "/mm-answer" in out, f"gate comment should instruct /mm-answer, got:\n{out}"
+    assert "`/answer " not in out, f"gate comment must not instruct the unregistered /answer:\n{out}"
+
+
+def test_two_top_level_fanouts_second_join_advances(tmp_path, engine_env):
+    """Two top-level fanouts in sequence (f1 -> j1 -> mid -> f2 -> j2 -> done): the
+    SECOND fanout's join must advance to `done`. The instance-wide `joined` latch set
+    by f1's join is reset when f2 is ENTERED, else join.py no-ops f2's barrier and the
+    pipeline stalls — exactly the code-review review->...->post-fix->mrp stall."""
+    PROTO = FIXTURES / "two-fanout/protocol.json"
+    passv = tmp_path / "v.json"
+    passv.write_text(json.dumps({"results": [
+        {"check": "synthetic-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+
+    def adv(node_path, ev_dict=None):
+        ev = tmp_path / (node_path.replace(".", "-") + ".json")
+        ev.write_text(json.dumps(ev_dict or {"ok": True}))
+        e = dict(engine_env)
+        e.update(PR_HEAD_SHA="abc123", AGENT_RUN_ID="r", PR="1", NODE_PATH=node_path)
+        out, err, rc = run_engine("advance.py", tmp_path / ("adv-" + node_path.replace(".", "-")),
+                                  "pr-1", PROTO, passv, ev, env=e)
+        assert rc == 0, f"advance {node_path}:\n{err}"
+
+    def join():
+        e = dict(engine_env)
+        e.update(PR_HEAD_SHA="abc123", PR="1")
+        out, err, rc = run_engine("join.py", tmp_path / f"join-{join.n}", "pr-1", PROTO, env=e)
+        join.n += 1
+        assert rc == 0, f"join:\n{err}"
+        return out + err
+    join.n = 0
+
+    def cont(node_path):
+        e = dict(engine_env)
+        e.update(PR_HEAD_SHA="abc123", PR="1", NODE_PATH=node_path)
+        out, err, rc = run_engine("next.py", tmp_path / f"cont-{node_path}", "pr-1", PROTO,
+                                  "continue", env=e)
+        assert rc == 0, f"continue {node_path}:\n{err}"
+        return out + err
+
+    def phase():
+        w = tmp_path / f"verify-{phase.n}"
+        phase.n += 1
+        subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(w)], check=True)
+        return read_state_yaml(w / "two-fanout/pr-1/_instance.yaml").get("phase")
+    phase.n = 0
+
+    run_engine("next.py", tmp_path / "dir-next", "pr-1", PROTO, "start", "abc123", env=engine_env)
+    adv("f1.a1"); adv("f1.b1")
+    assert "client_payload[path]=mid" in join(), "f1 join should advance to mid"
+    cont("mid"); adv("mid")        # mid agent -> advance root cursor to f2 + dispatch continue f2
+    cont("f2")                     # ENTER f2 (must reset the joined latch)
+    adv("f2.a2"); adv("f2.b2")
+    j2 = join()
+    assert "already joined; no-op" not in j2, \
+        f"second fanout join stalled on the stale instance-wide joined latch:\n{j2}"
+    assert "client_payload[path]=final" in j2, \
+        f"second top-level fanout join must advance to its next phase (final):\n{j2}"
+    assert phase() == "final", f"instance should advance past the second fanout, got phase={phase()!r}"

@@ -208,6 +208,7 @@ def advance_node(ctx, process):
             # multi-phase protocols produce the correct filename (e.g.
             # review.B.clarify.yaml, not the legacy single-phase B.clarify.yaml).
             questions = []
+            questions_known = False  # source evidence carried an EXPLICIT `questions` list
             qfrom = (_paths.node_at_path(proto, parent + [nxt_sub]) or {}).get("questions_from")
             if qfrom:
                 qpath = lib.output_artifact_path(dir_, pid, instance,
@@ -215,23 +216,24 @@ def advance_node(ctx, process):
                                                  kind="evidence")
                 if os.path.isfile(qpath):
                     try:
-                        questions = json.load(open(qpath)).get("questions", []) or []
+                        raw = json.load(open(qpath)).get("questions", None)
                     except (json.JSONDecodeError, ValueError):
-                        questions = []
-            if qfrom and not questions:
-                # Auto-complete an empty DATA gate: a `questions_from` gate that
-                # resolved to ZERO questions has nothing for a human to answer, so
-                # advance past it as if already resolved — to its `next` sub-state,
-                # or (gate terminal) leg-done → join. Generic; lets a phase make its
-                # human gate engage only when the agent actually surfaced a question.
+                        raw = None
+                    if isinstance(raw, list):
+                        questions, questions_known = raw, True
+            if qfrom and questions_known and not questions:
+                # Auto-complete an empty DATA gate ONLY when the source agent deliberately
+                # surfaced an EXPLICIT empty `questions` list — advance past it as if
+                # resolved (→ gate.next, or leg-terminal → join). A missing / null / garbled
+                # `questions` is an agent malfunction, not a decision to skip a HUMAN gate, so
+                # fall through to open_gate (fail-closed: hold for a human) instead of silently
+                # advancing. (The cursor sub_state was already set to the gate above.)
                 gate_path = parent + [nxt_sub]
                 gsf = lib.state_file(dir_, pid, instance,
                                      path=lib.state_path(proto, gate_path))
                 lib.dump_yaml(gsf, {"protocol": pid, "instance": instance,
                                     "state": "done", "head_sha": sha,
                                     "gates": {"state": "auto-resolved", "history": []}})
-                cur["sub_state"] = nxt_sub
-                lib.dump_yaml(cursor_sf, cur)
                 advance_node(dataclasses.replace(
                     ctx, substate=nxt_sub, tree_path=gate_path,
                     cr_name=pid + "/" + "/".join(gate_path[1:])), "done")
@@ -350,6 +352,7 @@ def run_conclude_hook(proto_path, proto, state_id, evid, instance, blocking,
         return {"conclusion": "neutral", "summary": "conclude hook unresolved", "blocked": False}
     env = dict(os.environ)
     env["BLOCKING"] = "1" if blocking else "0"
+    workdir = None
     declared = lib.state_inputs(proto, state_id)
     if dir_ is not None and declared:
         fo = lib._fanout_state(proto)
@@ -368,15 +371,21 @@ def run_conclude_hook(proto_path, proto, state_id, evid, instance, blocking,
         workdir = tempfile.mkdtemp(prefix="conclude-inputs-")
         lib.materialize_inputs(resolved, workdir)
         env["CONCLUDE_INPUTS_DIR"] = os.path.join(workdir, "inputs")
-    result = subprocess.run([path, evid, instance], text=True,
-                            stdout=subprocess.PIPE, env=env)
     try:
-        parsed = json.loads(result.stdout.strip())
-        if isinstance(parsed, dict) and "blocked" in parsed:
-            return parsed
-    except (json.JSONDecodeError, ValueError):
-        pass
-    return {"conclusion": "neutral", "summary": "conclude hook returned no verdict", "blocked": False}
+        result = subprocess.run([path, evid, instance], text=True,
+                                stdout=subprocess.PIPE, env=env)
+        try:
+            parsed = json.loads(result.stdout.strip())
+            if isinstance(parsed, dict) and "blocked" in parsed:
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return {"conclusion": "neutral", "summary": "conclude hook returned no verdict", "blocked": False}
+    finally:
+        # Materialized inputs are only needed for the hook subprocess above; remove the
+        # temp dir so repeated conclude calls (triage/fix/mrp) don't leak it per run.
+        if workdir:
+            shutil.rmtree(workdir, ignore_errors=True)
 
 
 def render_status_body(sf, headline, pid, instance, max_iter, github_repository):

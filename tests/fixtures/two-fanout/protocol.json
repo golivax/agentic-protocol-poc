@@ -1,0 +1,44 @@
+{
+  "name": "two-fanout",
+  "version": "0.1.0",
+  "max_depth": 4,
+  "triggers": [],
+  "states": [
+    {
+      "id": "f1",
+      "kind": "fanout",
+      "branches": [
+        { "id": "a1", "workflow": "a-agent", "max_iterations": 2, "checks": [{ "run": "always-pass", "on_fail": "iterate" }] },
+        { "id": "b1", "workflow": "b-agent", "max_iterations": 2, "checks": [{ "run": "always-pass", "on_fail": "iterate" }] }
+      ],
+      "next": "j1"
+    },
+    { "id": "j1", "kind": "join", "of": "f1", "next": "mid" },
+    {
+      "id": "mid",
+      "kind": "agent",
+      "workflow": "mid-agent",
+      "max_iterations": 2,
+      "checks": [{ "run": "always-pass", "on_fail": "iterate" }],
+      "next": "f2"
+    },
+    {
+      "id": "f2",
+      "kind": "fanout",
+      "branches": [
+        { "id": "a2", "workflow": "a-agent", "max_iterations": 2, "checks": [{ "run": "always-pass", "on_fail": "iterate" }] },
+        { "id": "b2", "workflow": "b-agent", "max_iterations": 2, "checks": [{ "run": "always-pass", "on_fail": "iterate" }] }
+      ],
+      "next": "j2"
+    },
+    { "id": "j2", "kind": "join", "of": "f2", "next": "final" },
+    {
+      "id": "final",
+      "kind": "agent",
+      "workflow": "final-agent",
+      "max_iterations": 2,
+      "checks": [{ "run": "always-pass", "on_fail": "iterate" }],
+      "next": "done"
+    }
+  ]
+}

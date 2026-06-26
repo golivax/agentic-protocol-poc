@@ -443,9 +443,17 @@ def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, qu
         "head_sha": sha, "gates": gates,
     })
     if questions:
+        # Use the protocol's CONFIGURED answer-command prefix (e.g. /mm-answer), not a
+        # hardcoded /answer — do_answer strips that same per-protocol prefix, so a gate
+        # whose protocol registers a non-/answer verb would otherwise instruct a command
+        # that routes to nothing and the gate would sit forever.
+        try:
+            ans = command_prefix(json.load(open(proto_path)), "answer", "/answer")
+        except (OSError, ValueError):
+            ans = "/answer"
         listed = "\n".join(f"{i+1}. `{q['id']}` — {q['text']}" for i, q in enumerate(questions))
-        summary = ("Answer with `/answer <id>: <value>` (one or more per comment), e.g. "
-                   f"`/answer {questions[0]['id']}: …`.")
+        summary = (f"Answer with `{ans} <id>: <value>` (one or more per comment), e.g. "
+                   f"`{ans} {questions[0]['id']}: …`.")
         set_check_run(cr_name, sha, "in_progress", "", "Awaiting answers", summary)
         post_pr_comment(pr, f"❓ **{gate_id}** needs input:\n\n{listed}\n\n{summary}")
     else:
@@ -1022,15 +1030,20 @@ def _render_leg_section(sf, max_iter):
     return st, "\n".join(out)
 
 
-def _review_verdict_note(d, pid, instance, ph_id, bid):
-    """Surface a review fan-out branch's evidence verdict in its status header.
-
-    The per-leg checklist (_render_leg_section) reports 'all checks passed' from the
-    FORM checks only, so a dimension that returned REQUEST_CHANGES (or carries
-    critical/high findings) reads as clear even though it is not. This appends a
-    flagged note for those dimensions. Scoped to the review fan-out; returns '' for
-    APPROVE/clean dimensions or when the dimension's evidence is not available yet.
+def _evidence_status_note(d, pid, instance, ph_id, bid, cfg):
+    """Render a flagged note for a fan-out leg's status header from its evidence —
+    driven ENTIRELY by the fanout's `params.status_note` config so the generic engine
+    carries no protocol vocabulary. The per-leg checklist reports 'all checks passed'
+    from the FORM checks only, so a leg whose evidence carries a flag-worthy verdict /
+    severity reads as clear without this. cfg keys (all optional):
+      verdict_field + flag_verdicts[]   → flag when ev[verdict_field] ∈ flag_verdicts
+      severity_field + flag_severities[]→ count findings[].<severity_field> ∈ flag_severities
+      label (default "flagged"), emoji (default "⚠️").
+    Returns '' when cfg is absent (callers pass it only for opted-in fanouts), the
+    evidence is missing/malformed, or nothing matched.
     """
+    if not isinstance(cfg, dict):
+        return ""
     path = output_artifact_path(d, pid, instance, branch=bid, phase=ph_id, kind="evidence")
     if not os.path.isfile(path):
         return ""
@@ -1041,19 +1054,19 @@ def _review_verdict_note(d, pid, instance, ph_id, bid):
         return ""
     if not isinstance(ev, dict):
         return ""
-    sev = {"critical": 0, "high": 0}
-    for f in (ev.get("findings") if isinstance(ev.get("findings"), list) else []):
-        if isinstance(f, dict) and f.get("severity") in sev:
-            sev[f["severity"]] += 1
-    if ev.get("verdict") != "REQUEST_CHANGES" and not sev["critical"] and not sev["high"]:
+    vfield, flag_verdicts = cfg.get("verdict_field"), cfg.get("flag_verdicts") or []
+    sfield, flag_sev = cfg.get("severity_field"), cfg.get("flag_severities") or []
+    counts = {}
+    if sfield and flag_sev:
+        for f in (ev.get("findings") if isinstance(ev.get("findings"), list) else []):
+            if isinstance(f, dict) and f.get(sfield) in flag_sev:
+                counts[f[sfield]] = counts.get(f[sfield], 0) + 1
+    verdict_flagged = bool(vfield and ev.get(vfield) in flag_verdicts)
+    if not verdict_flagged and not counts:
         return ""
-    parts = []
-    if sev["critical"]:
-        parts.append(f"{sev['critical']} critical")
-    if sev["high"]:
-        parts.append(f"{sev['high']} high")
+    parts = [f"{counts[s]} {s}" for s in flag_sev if counts.get(s)]
     detail = f" ({', '.join(parts)})" if parts else ""
-    return f" — ⚠️ request-changes{detail}"
+    return f" — {cfg.get('emoji', '⚠️')} {cfg.get('label', 'flagged')}{detail}"
 
 
 def render_pipeline_status_body(dir_, pid, instance, proto):
@@ -1090,7 +1103,8 @@ def render_pipeline_status_body(dir_, pid, instance, proto):
                 max_iter = b.get("max_iterations", "?")
                 sf = state_file(dir_, pid, instance, bid, phase=ph_id)
                 st, lines = _render_leg_section(sf, max_iter)
-                vnote = _review_verdict_note(dir_, pid, instance, ph_id, bid)
+                vnote = _evidence_status_note(dir_, pid, instance, ph_id, bid,
+                                              (ph.get("params") or {}).get("status_note"))
                 sections += f"**{ph_id} · {bid}**{vnote}\n\n{lines}\n\n"
                 if st == "done":
                     pass

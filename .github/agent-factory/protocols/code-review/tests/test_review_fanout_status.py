@@ -29,6 +29,13 @@ PROTO = os.path.join(HERE, "..", "protocol.json")
 sys.path.insert(0, ENGINE)
 import lib  # noqa: E402
 
+# The review fanout's status-note config, mirroring protocol.json params.status_note.
+# The engine note renderer is generic (lib._evidence_status_note); the REQUEST_CHANGES /
+# critical|high vocabulary is protocol config, passed in here.
+CFG = {"verdict_field": "verdict", "flag_verdicts": ["REQUEST_CHANGES"],
+       "severity_field": "severity", "flag_severities": ["critical", "high"],
+       "label": "request-changes"}
+
 failures = []
 
 
@@ -60,24 +67,24 @@ with tempfile.TemporaryDirectory() as d:
          {"dimension": "security", "verdict": "REQUEST_CHANGES",
           "findings": [{"severity": "critical"}, {"severity": "critical"}]})
     ok("[note] REQUEST_CHANGES + 2 critical → flagged with count",
-       lib._review_verdict_note(d, pid, inst, "review", "security") == " — ⚠️ request-changes (2 critical)")
+       lib._evidence_status_note(d, pid, inst, "review", "security", CFG) == " — ⚠️ request-changes (2 critical)")
 
     _wev(d, pid, inst, "review", "security",
          {"dimension": "security", "verdict": "COMMENT",
           "findings": [{"severity": "high"}, {"severity": "low"}]})
     ok("[note] findings (1 high) drive the flag even when verdict isn't REQUEST_CHANGES",
-       lib._review_verdict_note(d, pid, inst, "review", "security") == " — ⚠️ request-changes (1 high)")
+       lib._evidence_status_note(d, pid, inst, "review", "security", CFG) == " — ⚠️ request-changes (1 high)")
 
     _wev(d, pid, inst, "review", "security",
          {"dimension": "security", "verdict": "APPROVE",
           "findings": [{"severity": "low"}, {"severity": "medium"}]})
     ok("[note] APPROVE with only low/medium → clean (no flag)",
-       lib._review_verdict_note(d, pid, inst, "review", "security") == "")
+       lib._evidence_status_note(d, pid, inst, "review", "security", CFG) == "")
 
     p = lib.output_artifact_path(d, pid, inst, branch="security", phase="review", kind="evidence")
     os.remove(p)
     ok("[note] missing evidence (in-flight) → clean",
-       lib._review_verdict_note(d, pid, inst, "review", "security") == "")
+       lib._evidence_status_note(d, pid, inst, "review", "security", CFG) == "")
 
 
 # ── Integration: render_pipeline_status_body, scoping ──
