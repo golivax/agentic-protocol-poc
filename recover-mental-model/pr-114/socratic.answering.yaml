@@ -1,7 +1,7 @@
 protocol: recover-mental-model
 instance: pr-114
 state: recover
-sub_state: answering
 iteration: 1
 gates: {}
+head_sha: 699bb165b827733877611b52e0a91f56d76543cc
 history: []
