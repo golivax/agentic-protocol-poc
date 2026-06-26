@@ -1,6 +1,11 @@
 protocol: recover-mental-model
 instance: pr-114
-state: recover
+state: done
 iteration: 1
 gates: {}
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28260081499'
+  checks:
+    legion-artifacts: pass
+  feedback: ''
