@@ -1,6 +1,6 @@
 protocol: recover-mental-model
 instance: pr-114
-state: recover
+state: done
 sub_state: phase2
 iteration: 1
 gates: {}
