@@ -1,7 +1,12 @@
 protocol: recover-mental-model
 instance: pr-114
-state: recover
+state: done
 iteration: 1
 gates: {}
 head_sha: 699bb165b827733877611b52e0a91f56d76543cc
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28260081755'
+  checks:
+    socratic-phase1-present: pass
+  feedback: ''
