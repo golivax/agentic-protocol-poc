@@ -1,12 +1,7 @@
 protocol: recover-mental-model
 instance: pr-114
-state: failed
+state: recover
 iteration: 1
 gates: {}
 head_sha: 699bb165b827733877611b52e0a91f56d76543cc
-history:
-- iteration: 1
-  agent_run_id: '28256806620'
-  checks:
-    questions-present: fail
-  feedback: questions list is empty or missing
+history: []

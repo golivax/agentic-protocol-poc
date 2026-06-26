@@ -1,11 +1,6 @@
 protocol: recover-mental-model
 instance: pr-114
-state: done
+state: recover
 iteration: 1
 gates: {}
-history:
-- iteration: 1
-  agent_run_id: '28256805634'
-  checks:
-    codeset-artifacts: fail
-  feedback: ''
+history: []
