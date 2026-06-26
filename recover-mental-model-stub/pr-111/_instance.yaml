@@ -1,0 +1,6 @@
+protocol: recover-mental-model-stub
+instance: pr-111
+head_sha: e2e1073384d59a653b8ae44eeb5e5b353ca05219
+phase: recover
+joined: false
+phase_label: recover

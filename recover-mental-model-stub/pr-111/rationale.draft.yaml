@@ -1,0 +1,7 @@
+protocol: recover-mental-model-stub
+instance: pr-111
+state: recover
+iteration: 1
+gates: {}
+head_sha: e2e1073384d59a653b8ae44eeb5e5b353ca05219
+history: []
