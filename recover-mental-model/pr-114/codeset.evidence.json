@@ -1,0 +1,22 @@
+{
+  "method": "codeset-vibing",
+  "run_id": "28257423274",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "bytes": 4986
+    },
+    {
+      "path": "build.log",
+      "bytes": 1621
+    },
+    {
+      "path": ".claude/docs/get_context.py",
+      "bytes": 3090
+    },
+    {
+      "path": ".claude/docs/knowledge.json",
+      "bytes": 80786
+    }
+  ]
+}
