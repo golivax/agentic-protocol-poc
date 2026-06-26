@@ -51,11 +51,14 @@ pre-agent-steps:
       git clone --depth 1 https://github.com/LLM-Coding/Semantic-Anchors "$tmp" || \
         echo "[mm-socratic-2] skill clone failed" >&2
       mkdir -p "$HOME/.claude/skills"
-      if [ -d "$tmp/skill" ]; then
+      # The repo's skill/ holds one subdir per skill; copy the specific one so its
+      # SKILL.md lands at ~/.claude/skills/socratic-code-theory-recovery/SKILL.md.
+      src="$tmp/skill/socratic-code-theory-recovery"
+      if [ -d "$src" ]; then
         rm -rf "$HOME/.claude/skills/socratic-code-theory-recovery"
-        cp -r "$tmp/skill" "$HOME/.claude/skills/socratic-code-theory-recovery"
+        cp -r "$src" "$HOME/.claude/skills/socratic-code-theory-recovery"
       else
-        echo "[mm-socratic-2] skill/ dir not found in repo — phase 2 will be unavailable" >&2
+        echo "[mm-socratic-2] skill dir not found in repo — phase 2 will be unavailable" >&2
       fi
   - name: Restore phase-1 tree, apply answers, run phase 2
     env:
