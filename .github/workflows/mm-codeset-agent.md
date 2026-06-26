@@ -46,7 +46,7 @@ pre-agent-steps:
     run: |
       # codeset-vibing is not on PyPI — install from source. It shells out to the
       # claude CLI (already installed by the compiled lock) for synthesis.
-      python3 -m pip install --quiet "git+https://github.com/PGCodeLLM/codeset-vibing.git" || \
+      python3 -m pip install --quiet "git+https://github.com/radinshayanfar/codeset-vibing.git" || \
         echo "[mm-codeset] codeset-vibing install failed — python -m codeset will be unavailable" >&2
   - name: Run codeset and stage output
     env:
