@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Socratic answering evidence",
+  "description": "Evidence produced by the socratic answering agent: the OPEN leaves of phase 1 answered automatically (code + web research), staged as the updated OPEN_QUESTIONS-*.adoc. Carries the run id whose `mm-tree-socratic-answering` artifact holds the answered tree.",
+  "type": "object",
+  "required": ["run_id", "files"],
+  "properties": {
+    "method": { "type": "string", "description": "Free-form method label, e.g. 'socratic:answering'." },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "GitHub Actions run id of the answering run; phase 2 downloads its `mm-tree-socratic-answering` artifact."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Manifest of the answered tree (QUESTION_TREE-*.adoc, the answered OPEN_QUESTIONS-*.adoc).",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "bytes": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -171,22 +171,26 @@ for this node's agent.
 ## A nested sub-pipeline, in miniature
 
 A fan-out leg with its own `states[]` is a full sequence — agents, gates, even
-deeper fan-outs (from `recover-mental-model-stub`):
+deeper fan-outs (from `recover-mental-model`):
 
 ```jsonc
 { "id": "recover", "kind": "fanout", "next": "join",
   "branches": [
-    { "id": "summary", "workflow": "rmm-summary-agent", "checks": [ /* … */ ] },   // flat leg
-    { "id": "rationale", "states": [                                              // sub-pipeline leg
-        { "id": "draft",    "kind": "agent", "workflow": "rmm-draft-agent", "checks": [ /* … */ ] },
-        { "id": "clarify",  "kind": "gate",  "questions_from": "draft",
-          "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }] },
-        { "id": "finalize", "kind": "agent", "workflow": "rmm-finalize-agent",
-          "inputs": [ { "from": "clarify", "as": "answers" }, { "from": "draft", "as": "draft" } ] }
+    { "id": "legion",  "workflow": "mm-legion-agent",  "checks": [ /* … */ ] },   // flat leg
+    { "id": "codeset", "workflow": "mm-codeset-agent", "checks": [ /* … */ ] },   // flat leg
+    { "id": "socratic", "states": [                                              // sub-pipeline leg
+        { "id": "phase1",    "kind": "agent", "workflow": "mm-socratic-phase1-agent", "checks": [ /* … */ ] },
+        { "id": "answering", "kind": "agent", "workflow": "mm-socratic-answering-agent",
+          "inputs": [ { "from": "phase1", "as": "tree" } ], "checks": [ /* … */ ] },
+        { "id": "phase2",    "kind": "agent", "workflow": "mm-socratic-phase2-agent",
+          "inputs": [ { "from": "phase1", "as": "tree" }, { "from": "answering", "as": "answers" } ] }
       ] }
   ]
 }
 ```
+
+(A sub-pipeline step can also be a `gate` — see the `subpipeline-gate` test fixture
+for the `draft → clarify (gate) → finalize` shape.)
 
 ---
 
@@ -233,5 +237,5 @@ with the DSL.
 - [`HOW-IT-WORKS.md` — execution model](HOW-IT-WORKS.md#execution-model-no-long-lived-driver)
   — why each run does one transition and exits.
 - The shipped protocols under `.github/agent-factory/protocols/` — `code-review`
-  (production), `recover-mental-model-stub` and `deep-review-stub` (capability
-  examples).
+  and `recover-mental-model` (production), `deep-review-stub` (a capability
+  example).

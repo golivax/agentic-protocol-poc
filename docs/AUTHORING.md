@@ -238,6 +238,6 @@ the LLM endpoint under `engine.env`, the `cid:[…]` run-name marker) live in th
 - [`STATUS.md`](STATUS.md) — what is / isn't implemented, and why. **Read it before
   extending the engine** — many "missing" pieces are deliberate.
 - The shipped protocols under `.github/agent-factory/protocols/` — `code-review`
-  (production), `recover-mental-model-stub` and `deep-review-stub` (capability
-  examples to copy from).
+  and `recover-mental-model` (production), `deep-review-stub` (a capability
+  example to copy from).
 - [`../dist/README.md`](../dist/README.md) — installing your protocol into another repo.

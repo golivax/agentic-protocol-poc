@@ -98,6 +98,57 @@ def test_empty_terminal_gate_completes_leg_and_fires_join(tmp_path, engine_env):
         f"completing leg b (via terminal-gate auto-skip) must fire the fan-out join:\n{err_b}")
 
 
+def test_empty_data_gate_with_next_advances_to_next_substate(tmp_path, engine_env):
+    """A data gate that is NOT the last sub-state (`draft -> clarify(gate) -> finalize`),
+    resolving to ZERO questions, auto-resolves and advances to the NEXT sub-state
+    (finalize) instead of opening for a human or completing the leg. This is the
+    gate-HAS-next twin of the terminal-gate case, and exercises the auto-skip's
+    recursion through the post-d1df1f7 no-pre-seed agent dispatch arm."""
+    PROTO = FIXTURES / "subpipeline-gate/protocol.json"
+    passv = tmp_path / "v.json"
+    passv.write_text(json.dumps({"results": [
+        {"check": "synthetic-pass", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+
+    def adv(node_path, evidence_dict):
+        ev = tmp_path / (node_path.replace(".", "-") + ".json")
+        ev.write_text(json.dumps(evidence_dict))
+        e = dict(engine_env)
+        e.update(PR_HEAD_SHA="abc123", AGENT_RUN_ID="r", PR="1", NODE_PATH=node_path)
+        out, err, rc = run_engine(
+            "advance.py", tmp_path / ("dir-" + node_path.replace(".", "-")),
+            "pr-1", PROTO, passv, ev, env=e)
+        assert rc == 0, f"advance {node_path} failed:\n{err}"
+        return err
+
+    out, err, rc = run_engine("next.py", tmp_path / "dir-next", "pr-1", PROTO,
+                              "start", "abc123", env=engine_env)
+    assert rc == 0, f"next start failed:\n{err}"
+    err_d = adv("recover.rationale.draft", {"questions": []})  # empty questions -> gate auto-skip
+
+    work = tmp_path / "verify"
+    subprocess.run(["git", "clone", "-q", engine_env["STATE_REMOTE"], str(work)], check=True)
+
+    # the clarify gate is auto-resolved (not opened for a human)...
+    gate = work / "subpipeline-gate/pr-1/rationale.clarify.yaml"
+    assert gate.exists(), "the auto-skipped gate file must be written"
+    gy = read_state_yaml(gate)
+    assert gy["gates"]["state"] == "auto-resolved", \
+        f"empty data gate must be auto-resolved, got {gy['gates'].get('state')!r}"
+    assert gy["state"] == "done", f"auto-skipped gate state should be done, got {gy.get('state')!r}"
+
+    # ...and the leg ADVANCES to finalize (still in flight) rather than completing/firing join.
+    leg = read_state_yaml(work / "subpipeline-gate/pr-1/rationale.yaml")
+    assert leg.get("sub_state") == "finalize", (
+        f"gate-with-next auto-skip must advance the leg cursor to finalize, "
+        f"got sub_state={leg.get('sub_state')!r}")
+    assert leg.get("state") != "done", \
+        "leg must stay in flight after auto-skipping to a non-terminal next (finalize), not complete"
+    assert "client_payload[substate]=finalize" in err_d, (
+        f"auto-skip must dispatch a protocol-continue for the finalize agent:\n{err_d}")
+    assert "event_type=protocol-join" not in err_d, \
+        "a gate-with-next auto-skip must NOT fire the join (the leg is not terminal yet)"
+
+
 def test_data_gate_comment_uses_protocol_answer_prefix(tmp_path, engine_env, capfd):
     """open_gate must instruct the protocol's CONFIGURED answer prefix (/mm-answer for
     code-review), not a hardcoded /answer — which is not a code-review trigger and would

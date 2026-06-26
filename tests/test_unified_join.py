@@ -83,7 +83,7 @@ def test_top_join_advances_to_approval_via_continue(engine_env, tmp_path):
 # merge) → protocol-continue path=combine → next.py continue NODE_PATH=combine runs the
 # reduce hook) was deleted: it is covered end-to-end by
 # test_recover_mental_model.test_full_pipeline, which drives the real
-# recover-mental-model-stub protocol's join → combine merge → done over NODE_PATH.
+# recover-mental-model protocol's join → combine merge → done over NODE_PATH.
 
 
 def test_join_sentinel_next_does_not_dispatch_continue(engine_env, tmp_path):

@@ -16,13 +16,16 @@ shape (single-agent, fan-out, multi-phase, sub-pipeline, arbitrarily-nested tree
 
 Four protocols ship under `.github/agent-factory/protocols/`:
 - **`code-review`** — the production pipeline (migrated from the custody-story
-  gh-aw pipeline): `preflight` → `overview` (+risk) → `review` (fanout to 5
-  dimension legs `correctness`/`test`/`performance`/`security`/`maintainability`)
-  → `join-review` (AND-barrier) → `triage` → `fix` → `context` → `mrp` → done.
-  Codex/gpt-5.5 agents (OpenAI gateway). A live `/review` (or `/override`) runs it
-  via the router (`agentic-orchestrator.yml`), which selects the protocol through
-  `lib.route` scanning `protocol.json` `triggers` blocks at runtime. Its `context`
-  and `security` phases vendor Bun/Node/Z3 toolchains under
+  gh-aw pipeline), live-verified end-to-end: `preflight` → `mm-compliance` (a
+  BLOCKING mental-model gate; halts on `verdict:diverges` until `/override`) →
+  `overview` (+risk) → `review` (fanout to 5 dimension legs
+  `correctness`/`test`/`performance`/`security`/`maintainability`) → `join-review`
+  (AND-barrier) → `triage` → `fix` → `post-fix` (fanout: `context` ∥ the
+  `mm-updater`→`mm-gate` sub-pipeline) → `join` → `mrp` → done. Codex/gpt-5.5 agents
+  (OpenAI gateway). A live `/review` (or `/override`, or `/mm-answer` for the
+  mm-gate) runs it via the router (`agentic-orchestrator.yml`), which selects the
+  protocol through `lib.route` scanning `protocol.json` `triggers` blocks at
+  runtime. Its `context` and `security` phases vendor Bun/Node/Z3 toolchains under
   `protocols/code-review/scripts/` — outside the engine's Python-only contract, so
   those phase checks degrade to advisory when a toolchain is absent.
 - **`code-review-v1`** — the original simpler example, preserved: `preflight` →
@@ -30,13 +33,21 @@ Four protocols ship under `.github/agent-factory/protocols/`:
   `approval` (human gate) → done. Claude/sonnet agents. Triggers `/v1-review`,
   `/v1-override`, `/approve`, `/request-changes`, `/reject` (the start/override
   commands were renamed off `/review`+`/override`, which `code-review` now owns).
-- **`recover-mental-model-stub`** — sub-pipeline branches + a data-carrying gate
-  (`/recover`, then `/answer qID: value`). A capability example with stub agents.
+- **`recover-mental-model`** — three parallel mental-model recovery methods
+  (`legion` ∥ `codeset` ∥ `socratic` sub-pipeline) → `join` → `combine` merge that
+  collects all three outputs and pushes them to an orphan `_mental_model` branch
+  (`/recover`; fully automated, no human input). The socratic sub-pipeline is
+  three agent steps — `phase1` (build the Question Tree) → `answering` (auto-answer
+  the OPEN leaves via code/web research) → `phase2` (synthesize docs). The combine
+  hook (`publish/push-mental-model.py`) is the only place that writes a
+  non-`agentic-state` branch.
 - **`deep-review-stub`** — a depth-4 nested fan-out/sub-pipeline tree
   (`/deep-review`), exercising the recursive engine. Stub agents.
 
-Two parallel side-channel agents — `mm-compliance-gate` + `mm-updater`
-(Claude/sonnet) — fire on `pull_request` events outside the engine state machine.
+The mental-model agents `mm-compliance-gate` + `mm-updater` (Codex/gpt-5.5) are
+not side-channels — they are `code-review` engine phases (the blocking
+`mm-compliance` gate and the `post-fix` `mm-updater`→`mm-gate` sub-pipeline),
+dispatched and gated by the engine like any other agent node.
 
 Two other distribution-facing components live beside the engine:
 - **`dist/`** — an installer that drops the engine + chosen protocols into any repo
@@ -227,10 +238,14 @@ Key frontmatter facts (see `docs/STATUS.md` for the security rationale):
   iteration 1 then self-recovers; security: fabricates every iteration → exhausts
   to `failed`).
 - Secrets the repo needs: `ANTHROPIC_API_KEY` + `ANTHROPIC_BASE_URL` (the
-  Claude/sonnet agents — `code-review-v1` + the two mental-model side-channels),
-  `OPENAI_API_KEY` (the Codex agents of the `code-review` custody pipeline),
+  Claude/sonnet agents — `code-review-v1`), `OPENAI_API_KEY` (the Codex agents of
+  the `code-review` custody pipeline, including the two mental-model phases),
   `POC_DISPATCH_TOKEN` (a PAT with repo + workflow scopes — the default
   `GITHUB_TOKEN` deliberately can't trigger workflows or read PR labels).
+  `recover-mental-model`'s combine hook additionally needs a write-capable token
+  (`contents: write` + `actions: read`) to force-push the orphan `_mental_model`
+  branch and download leg artifacts — wire `POC_DISPATCH_TOKEN` in as
+  `PUBLISH_TOKEN` for the merge step (see `docs/STATUS.md`).
 
 ## Recursive engine — the `NODE_PATH` coordinate
 

@@ -82,14 +82,15 @@ scanning every protocol's `triggers` block.
 
 | Protocol | Shape | Triggers | What it demonstrates |
 |----------|-------|----------|----------------------|
-| **`code-review`** | `preflight` → `overview` (+risk) → `review` fan-out (5 dimensions) → `join` (AND-barrier) → `triage` → `fix` → `context` → `mrp` → done | `/review` · `/override` | The production pipeline, migrated from the custody-story gh-aw flow: a deep multi-phase DAG with a 5-leg review fan-out, cross-phase `inputs[]`, and Codex agents. Its `context`/`security` phases vendor Bun/Node/Z3 toolchains. |
-| **`code-review-v1`** | `preflight` → `review` fan-out (`grumpy` ∥ `security`) → `join` (AND-barrier) → `approval` (human gate) → done | `/v1-review`, then `/approve` · `/request-changes` · `/reject` · `/v1-override` | The original simpler example, preserved: multi-phase, parallel agents with bounded iterate-and-publish, a strict join gate, and a pause-and-require human approval gate. |
-| **`recover-mental-model-stub`** | one automated leg ∥ one human-gated **sub-pipeline** → join → merge | `/recover`, then `/answer qID: value` | Sub-pipeline branches and a **data-carrying gate**: the agent asks questions, a human answers, and the answers feed the next step. |
+| **`code-review`** | `preflight` → `mm-compliance` (blocking) → `overview` (+risk) → `review` fan-out (5 dimensions) → `join` → `triage` → `fix` → `post-fix` fan-out (`context` ∥ `mm-updater`→`mm-gate`) → `join` → `mrp` → done | `/review` · `/override` · `/mm-answer` | The production pipeline, migrated from the custody-story gh-aw flow and live-verified end-to-end: a deep multi-phase DAG with a 5-leg review fan-out, a blocking mental-model gate, a parallel mental-model-update phase, and cross-phase `inputs[]`, on Codex agents. |
+| **`code-review-v1`** | `preflight` → `review` fan-out (`grumpy` ∥ `security`) → `join` (AND-barrier) → `approval` (human gate) → done | `/v1-review`, then `/approve` · `/request-changes` · `/reject` · `/v1-override` | The original simpler example, preserved: parallel agents with bounded iterate-and-publish, a strict join gate, and a pause-and-require human approval gate. |
+| **`recover-mental-model`** | three parallel recovery methods (`legion` ∥ `codeset` ∥ `socratic` sub-pipeline) → join → merge that pushes a `_mental_model` branch | `/recover` | A real multi-method pipeline: parallel agents and a fully-automated sub-pipeline (socratic `phase1 → answering → phase2`, all agent steps), joined into a merge hook that collects all three outputs into one orphan `_mental_model` branch. |
 | **`deep-review-stub`** | depth-4 nested fan-out / sub-pipeline tree | `/deep-review` | The recursive engine: arbitrarily-nested fan-outs and sub-pipelines on one `NODE_PATH` coordinate, bounded by `max_depth`. |
 
-The two `-stub` protocols use trivial stand-in agents — they exist to exercise and
-illustrate engine capabilities you'd compose in your own protocol. `code-review`
-(and the simpler `code-review-v1`) are the real, live-verified ones.
+The `-stub` protocol (`deep-review-stub`) uses trivial stand-in agents — it exists to
+exercise and illustrate engine capabilities you'd compose in your own protocol.
+`code-review`, `code-review-v1`, and `recover-mental-model` are the real ones
+(the first two live-verified end-to-end).
 
 ---
 
@@ -146,7 +147,7 @@ curl -fsSL https://raw.githubusercontent.com/golivax/agentic-protocol-poc/main/d
   | bash -s -- install code-review
 ```
 
-Install several at once (`... install code-review recover-mental-model-stub`),
+Install several at once (`... install code-review recover-mental-model`),
 list what's available (`... list`), or update later (`... update`). The installer
 shows exactly what it will write before doing so. Full details:
 [`dist/README.md`](dist/README.md).

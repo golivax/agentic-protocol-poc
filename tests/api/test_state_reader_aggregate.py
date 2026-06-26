@@ -24,7 +24,7 @@ def test_classify_instance_reads_phase_label_from_instance_yaml():
 
 
 def test_gate_view_open_answer_gate():
-    gv = state_reader.gate_view(load_instance_files("recover-mental-model-stub", 82))
+    gv = state_reader.gate_view(load_instance_files("recover-mental-model", 82))
     # pr-82's clarify gate is answered (closed) -> no OPEN gate
     assert gv is None
 
