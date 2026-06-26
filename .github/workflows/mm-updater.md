@@ -1,26 +1,21 @@
 ---
 'on':
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    branches-ignore: ['_mental_model']
+  # Manual dispatch only — the automatic pull_request trigger is intentionally disabled.
+  # Pass the target PR via the pr_number input when dispatching.
   workflow_dispatch:
     inputs:
       pr_number: { description: "PR number (manual run)", required: false }
 permissions: { contents: read, pull-requests: read, issues: read }
-strict: false
-sandbox:
-  agent: false
 engine:
   id: claude
   env:
     ANTHROPIC_BASE_URL: https://bmc-bz1.tail22da2e.ts.net
-    ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
 network:
   allowed:
     - defaults
     - bmc-bz1.tail22da2e.ts.net
 safe-outputs:
-  threat-detection: false
   create-pull-request:
     base-branch: _mental_model
     title-prefix: "[mm] "
@@ -30,7 +25,7 @@ safe-outputs:
   add-comment: { max: 1, hide-older-comments: true }
   noop:
 tools:
-  bash: [ "cat:*", "ls:*", "find:*", "echo:*" ]
+  bash: [ "cat:*", "ls:*", "find:*", "echo:*", "python:*", "python3:*" ]
   edit:
 timeout-minutes: 20
 steps:
@@ -63,11 +58,24 @@ if so, propose the MM edits as a **separate** pull request against the `_mental_
 ## Inputs
 - `/tmp/gh-aw/agent/pr.json` — PR metadata. `/tmp/gh-aw/agent/pr.diff` — the full diff.
 - `/tmp/gh-aw/agent/pr-number.txt` — the originating PR number (call it `N`).
-- The **working tree is the `_mental_model` branch**. The canonical decisions live under
-  `socratic/` as **AsciiDoc**: `socratic/docs/specs/adrs/*.adoc` (Nygard ADRs, named
-  `yuanrong-datasystem-adr-NNN-kebab-title.adoc`), `socratic/docs/arc42/arc42-*.adoc`,
-  `socratic/docs/specs/prd-*.adoc`, `socratic/docs/specs/use-cases-*.adoc`. Edits you make here
-  become the proposed MM PR.
+- The **working tree is the `_mental_model` branch**, which holds the MM captured by **three
+  independent approaches** (listed in `METHODS.txt`):
+  - **`socratic/`** — the human-curated **decision corpus** in **AsciiDoc**: `socratic/docs/specs/adrs/*.adoc`
+    (Nygard ADRs, named `yuanrong-datasystem-adr-NNN-kebab-title.adoc`), `socratic/docs/arc42/arc42-*.adoc`,
+    `socratic/docs/specs/prd-*.adoc`, `socratic/docs/specs/use-cases-*.adoc`, plus
+    `socratic/OPEN_QUESTIONS-*.adoc` / `socratic/QUESTION_TREE-*.adoc` (known gaps).
+  - **`legion-map/`** — a generated codebase map (`CODEBASE.md`, `codebase/index.jsonl`,
+    `codebase/symbols.json`, `config/directory-mappings.yaml`) for orientation and retrieval.
+  - **`vibed-codeset/`** — a codeset-style per-file knowledge base mined from git history, static
+    analysis, tests, and co-change relationships. It records, per file, past bugs, an edit checklist,
+    pitfalls, key constructs/callers, and co-changing files. Query it with the bundled renderer (this
+    workflow has `python3`): `python3 vibed-codeset/.claude/docs/get_context.py <changed/source/path>`
+    for one file's record, `... get_context.py .` for a repo overview, `... get_context.py --list` to
+    list covered files (it renders `vibed-codeset/.claude/docs/knowledge.json`; a pre-rendered
+    overview also lives in `vibed-codeset/CLAUDE.md`).
+  `legion-map/` and `vibed-codeset/` are **mechanically regenerated** by their own tooling — read
+  them for context, but **do not hand-edit them**. Propose MM changes by editing **`socratic/`**
+  only; those edits become the proposed MM PR.
 
 ## Procedure
 1. Read `pr.diff`, `pr.json`, and `pr-number.txt`. Read the current MM:
