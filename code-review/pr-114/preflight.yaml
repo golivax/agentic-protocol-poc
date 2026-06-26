@@ -1,7 +1,18 @@
 protocol: code-review
 instance: pr-114
-state: preflight
+state: failed
 iteration: 1
 gates: {}
 head_sha: 699bb165b827733877611b52e0a91f56d76543cc
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28265350274'
+  checks:
+    schema-valid: pass
+    adherence-coverage: pass
+    traces-exist-in-diff: pass
+    spec-present: fail
+    plan-present: fail
+    docs-updated-with-code: fail
+    tests-updated-with-code: fail
+  feedback: ''

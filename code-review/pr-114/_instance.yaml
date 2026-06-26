@@ -3,5 +3,9 @@ instance: pr-114
 head_sha: 699bb165b827733877611b52e0a91f56d76543cc
 phase: preflight
 joined: false
-phase_label: pre-flight gate
+phase_label: "\u26D4 blocked"
 status_comment_id: 4813448195
+halted:
+  phase: preflight
+  reason: blocked
+  sha: 699bb165b827733877611b52e0a91f56d76543cc
