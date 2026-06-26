@@ -28,11 +28,14 @@ jobs:
     # Catch a *-agent.md edited without recompiling its .lock.yml. gh-aw also
     # validates the lock hash at runtime (every dispatch fails on a diverged
     # source), but that only fires on the next /review; this shifts the check
-    # left to PR time. Scoped to the codex *-agent workflows, compiled with
-    # gh-aw v0.77.5 (.github/aw/actions-lock.json). The mm-* gates are compiled
-    # with a different gh-aw version (v0.80.9) and carry a post-compile lock
-    # patch (fork-checkout skip), so a v0.77.5 recompile cannot reproduce them —
-    # they rely on gh-aw's runtime hash guard and are excluded here.
+    # left to PR time. The CLI is pinned to the repo's primary compiler version
+    # (PIN below) and we recompile ONLY the agents whose committed lock was
+    # stamped with that same compiler_version. Agents compiled with a different
+    # gh-aw version — the v0.80.9 recover-mental-model agents, which also carry a
+    # post-compile lock patch — cannot be reproduced by a PIN recompile, so they
+    # are skipped here and rely on gh-aw's runtime hash guard instead. Deriving
+    # the set from each lock's stamp (rather than a hardcoded name list) keeps a
+    # newly-added agent of either version correctly classified.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,8 +46,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh extension install github/gh-aw --pin v0.77.5
       - name: Recompile agent workflows and assert no lock drift
+        env:
+          PIN: v0.77.5
         run: |
-          for md in .github/workflows/*-agent.md; do gh aw compile "$md"; done
+          for md in .github/workflows/*-agent.md; do
+            lock="${md%.md}.lock.yml"
+            # Only police locks compiled with the pinned compiler; a recompile
+            # cannot reproduce a lock built by a different gh-aw version.
+            if [ -f "$lock" ] && grep -q "\"compiler_version\":\"$PIN\"" "$lock"; then
+              gh aw compile "$md"
+            fi
+          done
           if ! git diff --exit-code -- '.github/workflows/*-agent.lock.yml'; then
             echo "::error::Stale gh-aw lock(s): a *-agent.md changed without recompiling. Run 'gh aw compile' locally and commit the regenerated .lock.yml file(s)."
             exit 1
