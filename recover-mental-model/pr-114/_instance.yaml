@@ -3,5 +3,5 @@ instance: pr-114
 head_sha: 699bb165b827733877611b52e0a91f56d76543cc
 phase: combine
 joined: true
-phase_label: Combine
+phase_label: "\u2705 done"
 status_comment_id: 4812716434
