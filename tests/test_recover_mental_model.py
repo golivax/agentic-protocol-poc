@@ -185,19 +185,30 @@ def test_full_pipeline(tmp_path, engine_env):
     adv("recover.legion", LEGION_OK)
     adv("recover.codeset", CODESET_OK)
 
-    # socratic sub-pipeline, all automated
+    # socratic sub-pipeline, all automated. advance moves the cursor + dispatches a
+    # continue; the continue SEEDS the next sub-state (engine contract — advance
+    # must NOT pre-seed, else the continue's cas_push is an empty commit).
+    def cont(node):
+        e = dict(engine_env, PR_HEAD_SHA="abc123", PR="1", NODE_PATH=node)
+        out, err, rc = run_engine("next.py", tmp_path / f"dir-cont-{node.replace('.', '_')}",
+                                  "pr-1", PROTO, "continue", env=e)
+        assert rc == 0, f"continue {node} failed:\n{err}"
+        return json.loads(out)
+
     adv("recover.socratic.phase1", PHASE1_OK)
-    w = clone()
-    cur = read_state_yaml(w / "recover-mental-model/pr-1/socratic.yaml")
-    assert cur["sub_state"] == "answering", f"expected cursor at answering, got {cur}"
-    # advance seeded the answering sub-state file (agent→agent transition)
-    assert (w / "recover-mental-model/pr-1/socratic.answering.yaml").is_file()
+    assert read_state_yaml(clone() / "recover-mental-model/pr-1/socratic.yaml")["sub_state"] == "answering"
+
+    act_a = cont("recover.socratic.answering")
+    assert act_a["action"] == "run-agent" and act_a.get("path") == "recover.socratic.answering"
+    assert "tree" in {i["as"] for i in act_a.get("inputs", [])}
+    assert (clone() / "recover-mental-model/pr-1/socratic.answering.yaml").is_file()
 
     adv("recover.socratic.answering", ANSWERING_OK)
-    w2 = clone()
-    cur2 = read_state_yaml(w2 / "recover-mental-model/pr-1/socratic.yaml")
-    assert cur2["sub_state"] == "phase2", f"expected cursor at phase2, got {cur2}"
-    assert (w2 / "recover-mental-model/pr-1/socratic.phase2.yaml").is_file()
+    assert read_state_yaml(clone() / "recover-mental-model/pr-1/socratic.yaml")["sub_state"] == "phase2"
+
+    act_p = cont("recover.socratic.phase2")
+    assert act_p["action"] == "run-agent"
+    assert {"tree", "answers"} <= {i["as"] for i in act_p.get("inputs", [])}
 
     adv("recover.socratic.phase2", PHASE2_OK)
 

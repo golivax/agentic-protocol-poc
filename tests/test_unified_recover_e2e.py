@@ -103,20 +103,32 @@ def test_recover_unified_e2e(engine_env, tmp_path):
     assert "not all terminal" in rj_early.stderr
     assert _yaml(reclone("je") / "_instance.yaml").get("joined") is not True
 
-    # 3. socratic phase1 → seeds answering (agent→agent, no gate)
-    r3 = adv("recover.socratic.phase1", PHASE1)
-    f3 = reclone("3")
-    cur3 = _yaml(f3 / "socratic.yaml")
+    # 3. socratic phase1 → advances cursor to answering (agent→agent, no gate).
+    #    advance does NOT pre-seed; the dispatched continue seeds the next sub-state.
+    adv("recover.socratic.phase1", PHASE1)
+    cur3 = _yaml(reclone("3") / "socratic.yaml")
     assert cur3["sub_state"] == "answering", cur3
     assert cur3["state"] == "recover", cur3
-    assert (f3 / "socratic.answering.yaml").is_file(), "answering sub-state not seeded"
 
-    # 4. socratic answering → seeds phase2
+    # 3b. continue → seeds answering + emits run-agent (with the phase1 tree input)
+    r3b = run(NEXT, tmp_path / "s3b", "pr-1", PROTO, "continue",
+              NODE_PATH="recover.socratic.answering")
+    act3b = json.loads(r3b.stdout)
+    assert act3b["action"] == "run-agent" and act3b.get("path") == "recover.socratic.answering"
+    assert "tree" in {i["as"] for i in act3b.get("inputs", [])}
+    assert (reclone("3b") / "socratic.answering.yaml").is_file()
+
+    # 4. socratic answering → advances cursor to phase2
     adv("recover.socratic.answering", ANSWERING)
-    f4 = reclone("4")
-    cur4 = _yaml(f4 / "socratic.yaml")
-    assert cur4["sub_state"] == "phase2", cur4
-    assert (f4 / "socratic.phase2.yaml").is_file(), "phase2 sub-state not seeded"
+    assert _yaml(reclone("4") / "socratic.yaml")["sub_state"] == "phase2"
+
+    # 4b. continue → seeds phase2 + emits run-agent (tree + answers inputs)
+    r4b = run(NEXT, tmp_path / "s4b", "pr-1", PROTO, "continue",
+              NODE_PATH="recover.socratic.phase2")
+    act4b = json.loads(r4b.stdout)
+    assert act4b["action"] == "run-agent"
+    assert {"tree", "answers"} <= {i["as"] for i in act4b.get("inputs", [])}
+    assert (reclone("4b") / "socratic.phase2.yaml").is_file()
 
     # 5. socratic phase2 → sub-pipeline ends → fire join
     r5 = adv("recover.socratic.phase2", PHASE2)
