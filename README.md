@@ -83,12 +83,12 @@ scanning every protocol's `triggers` block.
 | Protocol | Shape | Triggers | What it demonstrates |
 |----------|-------|----------|----------------------|
 | **`code-review`** | `preflight` → `review` fan-out (`grumpy` ∥ `security`) → `join` (AND-barrier) → `approval` (human gate) → done | `/review`, then `/approve` · `/request-changes` · `/reject` · `/override` | The production pipeline: multi-phase, parallel agents with bounded iterate-and-publish, a strict join gate, and a pause-and-require human approval gate. |
-| **`recover-mental-model-stub`** | one automated leg ∥ one human-gated **sub-pipeline** → join → merge | `/recover`, then `/answer qID: value` | Sub-pipeline branches and a **data-carrying gate**: the agent asks questions, a human answers, and the answers feed the next step. |
+| **`recover-mental-model`** | three parallel recovery methods (`legion` ∥ `codeset` ∥ `socratic` sub-pipeline) → join → merge that pushes a `_mental_model` branch | `/recover`, then `/answer qID: value` | A real multi-method pipeline: parallel agents, a human-gated sub-pipeline (socratic `phase1 → answering → phase2`), and a merge hook that collects all three outputs into one orphan `_mental_model` branch. |
 | **`deep-review-stub`** | depth-4 nested fan-out / sub-pipeline tree | `/deep-review` | The recursive engine: arbitrarily-nested fan-outs and sub-pipelines on one `NODE_PATH` coordinate, bounded by `max_depth`. |
 
-The two `-stub` protocols use trivial stand-in agents — they exist to exercise and
-illustrate engine capabilities you'd compose in your own protocol. `code-review`
-is the real, live-verified one.
+The `-stub` protocol (`deep-review-stub`) uses trivial stand-in agents — it exists
+to exercise and illustrate engine capabilities you'd compose in your own protocol.
+`code-review` and `recover-mental-model` are the real ones.
 
 ---
 
@@ -145,7 +145,7 @@ curl -fsSL https://raw.githubusercontent.com/golivax/agentic-protocol-poc/main/d
   | bash -s -- install code-review
 ```
 
-Install several at once (`... install code-review recover-mental-model-stub`),
+Install several at once (`... install code-review recover-mental-model`),
 list what's available (`... list`), or update later (`... update`). The installer
 shows exactly what it will write before doing so. Full details:
 [`dist/README.md`](dist/README.md).

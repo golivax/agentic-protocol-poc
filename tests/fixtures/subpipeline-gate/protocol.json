@@ -1,6 +1,6 @@
 {
-  "$schema": "../../engine/protocol.schema.json",
-  "name": "recover-mental-model-stub",
+  "$schema": "../../../.github/agent-factory/engine/protocol.schema.json",
+  "name": "subpipeline-gate",
   "version": "0.1.0",
   "min_engine_version": "1.0.0",
   "triggers": [
