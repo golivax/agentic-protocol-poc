@@ -220,6 +220,10 @@ Key frontmatter facts (see `docs/STATUS.md` for the security rationale):
 - Secrets the repo needs: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`,
   `POC_DISPATCH_TOKEN` (a PAT with repo + workflow scopes — the default
   `GITHUB_TOKEN` deliberately can't trigger workflows or read PR labels).
+  `recover-mental-model`'s combine hook additionally needs a write-capable token
+  (`contents: write` + `actions: read`) to force-push the orphan `_mental_model`
+  branch and download leg artifacts — wire `POC_DISPATCH_TOKEN` in as
+  `PUBLISH_TOKEN` for the merge step (see `docs/STATUS.md`).
 
 ## Recursive engine — the `NODE_PATH` coordinate
 
