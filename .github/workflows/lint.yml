@@ -25,13 +25,17 @@ jobs:
         working-directory: .github/workflows
 
   lock-drift:
-    # Catch a *-agent.md edited without recompiling its .lock.yml. gh-aw also
+    # Catch an agent .md edited without recompiling its .lock.yml. gh-aw also
     # validates the lock hash at runtime (every dispatch fails on a diverged
     # source), but that only fires on the next /review; this shifts the check
     # left to PR time. Every agent in the repo is compiled with a single pinned
     # gh-aw version (v0.77.5, matching .github/aw/actions-lock.json), so the CLI
-    # is pinned to it and we recompile ALL *-agent.md uniformly — any drift means
-    # a source changed without its lock being regenerated.
+    # is pinned to it and we recompile EVERY agent uniformly — any drift means a
+    # source changed without its lock being regenerated. A gh-aw agent is any
+    # workflow .md that has a sibling .lock.yml; we drive the loop off that rather
+    # than a `*-agent.md` name glob so the mm-compliance-gate / mm-updater gates
+    # (which don't follow the *-agent naming) and any future agent are covered.
+    # Hand-written workflows are .yml with no .md, so the glob never touches them.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,8 +47,10 @@ jobs:
         run: gh extension install github/gh-aw --pin v0.77.5
       - name: Recompile agent workflows and assert no lock drift
         run: |
-          for md in .github/workflows/*-agent.md; do gh aw compile "$md"; done
-          if ! git diff --exit-code -- '.github/workflows/*-agent.lock.yml'; then
-            echo "::error::Stale gh-aw lock(s): a *-agent.md changed without recompiling. Run 'gh aw compile' locally and commit the regenerated .lock.yml file(s)."
+          for md in .github/workflows/*.md; do
+            [ -f "${md%.md}.lock.yml" ] && gh aw compile "$md"
+          done
+          if ! git diff --exit-code -- '.github/workflows/*.lock.yml'; then
+            echo "::error::Stale gh-aw lock(s): an agent .md changed without recompiling. Run 'gh aw compile' locally and commit the regenerated .lock.yml file(s)."
             exit 1
           fi
