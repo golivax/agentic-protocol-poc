@@ -46,3 +46,35 @@ def test_detect_issue_link_first_ref():
 
 def test_detect_issue_link_none_when_no_keyword():
     assert _locate.detect_issue_link("see #12 for context") is None
+
+
+# --- locate: chain drops the PR-description spec fallback --------------------
+
+def test_locate_spec_default_keeps_description_fallback():
+    # existing callers (default allow_body_fallback=True) are unaffected:
+    # a body-only PR still resolves spec via the description.
+    r = _locate.locate("spec", "Some prose description, no spec file.", ["src/app.py"])
+    assert r["found"] is True and r["source"] == "pr-description"
+
+def test_locate_spec_chain_drops_description_fallback():
+    # chain mode: only a PR description, no committed spec file -> NOT found.
+    r = _locate.locate("spec", "Some prose description, no spec file.",
+                       ["src/app.py"], allow_body_fallback=False)
+    assert r["found"] is False and r["source"] is None
+
+def test_locate_spec_chain_still_finds_committed_file():
+    # a real committed spec file is found regardless of the fallback flag.
+    r = _locate.locate("spec", "", ["docs/superpowers/specs/x.md", "src/app.py"],
+                       allow_body_fallback=False)
+    assert r["found"] is True and r["source"] == "file"
+
+def test_locate_spec_chain_still_finds_body_section():
+    # a structured requirements section is association, not the fallback claim.
+    body = "## Requirements\n- must parse links\n"
+    r = _locate.locate("spec", body, ["src/app.py"], allow_body_fallback=False)
+    assert r["found"] is True and r["source"] == "body-section"
+
+def test_locate_plan_unaffected_by_flag():
+    # plan never had a fallback; the flag is a no-op for plan.
+    r = _locate.locate("plan", "prose only", ["src/app.py"], allow_body_fallback=False)
+    assert r["found"] is False

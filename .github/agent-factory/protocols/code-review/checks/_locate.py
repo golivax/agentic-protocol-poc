@@ -94,13 +94,13 @@ def _is_path(kind):
     return _paths.is_spec_path if kind == "spec" else _paths.is_plan_path
 
 
-def locate(kind, body, changed_paths):
+def locate(kind, body, changed_paths, *, allow_body_fallback=True):
     """Resolve whether a spec/plan artifact is associated with this PR.
 
     Returns {found, source, body_hit, changed_hits, evidence}; source is one of
     'file', 'body-section', 'pr-description', or None. Order mirrors custody:
     diff/body association first, then (spec only) the description-as-claim
-    fallback."""
+    fallback (controlled by allow_body_fallback)."""
     is_path = _is_path(kind)
     changed_hits = [p for p in (changed_paths or []) if is_path(p)]
     body_hit = detect_spec_in_body(body) if kind == "spec" else detect_plan_in_body(body)
@@ -117,7 +117,7 @@ def locate(kind, body, changed_paths):
     # Layer 2 (spec only): no committed spec file and no structured requirements
     # section, but the PR has a description → treat the description as the claim.
     # Plan has no such fallback — a description is a claim, not an implementation plan.
-    if kind == "spec" and body and _NON_WS.search(body):
+    if allow_body_fallback and kind == "spec" and body and _NON_WS.search(body):
         return {"found": True, "source": "pr-description", "body_hit": None, "changed_hits": [],
                 "evidence": [{"label": "PR description",
                               "detail": "No committed spec file or requirements section — "
