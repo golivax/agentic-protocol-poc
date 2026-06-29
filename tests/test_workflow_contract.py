@@ -43,11 +43,15 @@ def test_join_yml_threads_node_path_and_path_concurrency():
 
 def test_orchestrator_yml_path_concurrency_and_no_protocol_advance():
     t = _load("agentic-orchestrator.yml")
-    assert "agentic-${{ github.event.client_payload.instance" in t
+    # concurrency keyed on instance (workflow_dispatch UI id falls back to the
+    # dispatch/PR instance) + path.
+    assert "agentic-${{ github.event.inputs.instance || github.event.client_payload.instance" in t
     assert "github.event.client_payload.path }}" in t   # concurrency keyed on path
     assert "protocol-advance" not in t                  # dropped from on: types
     # protocol-continue is still accepted; protocol-join still owned by protocol-join.yml
     assert "protocol-continue" in t
+    # the UI/API entry point exists
+    assert "workflow_dispatch:" in t
 
 
 def test_no_workflow_references_retired_mechanisms():

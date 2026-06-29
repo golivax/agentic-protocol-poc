@@ -1,5 +1,21 @@
 from api import state_reader
-from tests.api.fixtures_helper import load_instance_files
+from tests.api.fixtures_helper import load_instance_files, load_instance_dir
+
+
+def test_status_projection_ref_instance_has_null_pr():
+    """A ref-targeted (non-PR) instance: projections must not crash on int(pr-…)
+    and must report pr=null + the instance id (UI polls by instance)."""
+    files = load_instance_dir("recover-mental-model", "ref-main")
+    st = state_reader.status_projection(files)
+    assert st["pr"] is None and st["instance"] == "ref-main"
+    stats = state_reader.instance_stats(files)
+    assert stats["pr"] is None and stats["instance"] == "ref-main"
+
+
+def test_pr_of_helper():
+    assert state_reader._pr_of("pr-62") == 62
+    assert state_reader._pr_of("ref-main") is None
+    assert state_reader._pr_of("ui-abc") is None
 
 
 def test_classify_label_variants():

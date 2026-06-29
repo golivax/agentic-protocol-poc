@@ -1,0 +1,5 @@
+protocol: recover-mental-model
+instance: ref-main
+head_sha: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+phase: combine
+joined: true

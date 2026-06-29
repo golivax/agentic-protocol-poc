@@ -1,0 +1,6 @@
+protocol: recover-mental-model
+instance: ref-main
+state: done
+iteration: 1
+head_sha: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+history: []

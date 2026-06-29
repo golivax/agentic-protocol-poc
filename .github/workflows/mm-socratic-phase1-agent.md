@@ -34,10 +34,10 @@ pre-agent-steps:
       if [ -z "$CTX" ]; then CTX='{}'; fi
       printf '%s' "$CTX" > /tmp/gh-aw/task-context.json
       cat /tmp/gh-aw/task-context.json
-  - name: Checkout PR head
+  - name: Checkout target ref
     uses: actions/checkout@v5
     with:
-      ref: refs/pull/${{ fromJSON(github.event.inputs.aw_context || '{}').pr }}/head
+      ref: ${{ fromJSON(github.event.inputs.aw_context || '{}').ref }}
       path: target
       persist-credentials: false
       fetch-depth: 0
