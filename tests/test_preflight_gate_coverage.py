@@ -55,3 +55,14 @@ def test_no_params_fails(tmp_path):
     ev = {"legs": [], "examined": []}
     r = _run(ev, tmp_path, params="")
     assert r["pass"] is False and "legs" in r["feedback"]
+
+
+def test_four_legs_with_scopeless_mm_cell_passes(tmp_path):
+    # Phase B: the gate declares 4 legs (params.legs); the mm-compliance cell carries
+    # scope:{} (mm evidence has no scope object). The check must accept the empty dict.
+    four = {"legs": ["spec-solves-issue", "plan-implements-spec", "code-implements-plan", "mm-compliance"]}
+    ev = {"legs": [_cell("spec-solves-issue"), _cell("plan-implements-spec", "adheres"),
+                   _cell("code-implements-plan", "adheres"),
+                   {"leg": "mm-compliance", "verdict": "compliant", "scope": {}, "summary": "ok"}],
+          "examined": ["x"]}
+    assert _run(ev, tmp_path, params=four)["pass"] is True

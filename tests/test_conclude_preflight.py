@@ -34,7 +34,7 @@ def _mm_leg(verdict):
 
 
 def _conclude(legs, blocking, tmp_path):
-    """legs = {'spec-solves-issue': obj, 'plan-implements-spec': obj, 'code-implements-plan': obj}."""
+    """legs = {'spec-solves-issue': obj, 'plan-implements-spec': obj, 'code-implements-plan': obj, 'mm-compliance': obj}."""
     inputs = tmp_path / "inputs"; inputs.mkdir()
     for name, obj in legs.items():
         (inputs / f"{name}.json").write_text(json.dumps(obj))
@@ -55,7 +55,7 @@ def _conclude(legs, blocking, tmp_path):
     return json.loads(r.stdout), (tmp_path / "verdict.json"), r.stderr
 
 
-# All three legs N/A (no issue, no code) => clear.
+# Baseline: the 3 chain legs N/A + mm-compliance compliant => clear.
 def _all_na():
     return {"spec-solves-issue": _spec_leg("n/a", issue_linked=False, spec_present=False),
             "plan-implements-spec": _plan_leg("n/a", code_changed=False, spec_present=False, plan_present=False),
@@ -129,6 +129,7 @@ def test_verdict_json_shape(tmp_path):
     v = json.loads(vpath.read_text())
     assert "records" in v and isinstance(v["records"], list)
     assert any(r.get("type") == "verdict" for r in v["records"])
+    assert any(r.get("type") == "leg" and r.get("leg") == "mm-compliance" for r in v["records"])
 
 
 def test_posts_one_comment_engine_local(tmp_path):
