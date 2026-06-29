@@ -1,0 +1,6 @@
+protocol: recover-mental-model
+instance: ui-fulltest1
+state: recover
+iteration: 1
+gates: {}
+history: []
