@@ -28,6 +28,11 @@ _CHECKLIST = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+.+$", re.M)
 _HEADING_SPLIT = re.compile(r"^#{1,6}\s", re.M)
 _NON_WS = re.compile(r"\S")
 
+# GitHub closing-keyword issue references (Closes|Fixes|Resolves[:] #N),
+# case-insensitive, keyword as a whole word. Pure — the GraphQL
+# closingIssuesReferences fetch lives in the caller (io injection).
+_CLOSING_ISSUE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s+#(\d+)", re.I)
+
 
 def detect_spec_in_body(body):
     """A requirements/spec heading whose section has content → the heading text."""
@@ -53,6 +58,36 @@ def detect_plan_in_body(body):
     if _CHECKLIST.search(body):
         return "task checklist in PR description"
     return None
+
+
+def parse_closing_issue_refs(body):
+    """Issue numbers closed by this PR via closing keywords in the body.
+
+    Detects `Closes|Fixes|Resolves [:] #N` (case-insensitive, whole word) and
+    returns the referenced issue numbers as ints, de-duplicated in first-seen
+    order. Pure: the GraphQL `closingIssuesReferences` fetch (the authoritative
+    cross-repo source) stays in the caller, which unions its result with this."""
+    if not body:
+        return []
+    seen, out = set(), []
+    for m in _CLOSING_ISSUE.finditer(body):
+        n = int(m.group(1))
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def detect_issue_link(body):
+    """The single issue number this PR closes via a body keyword, or None.
+
+    Thin wrapper over parse_closing_issue_refs returning the FIRST referenced
+    issue (the one spec-solves-issue judges against), or None when the PR body
+    carries no closing keyword. This is the exact helper the
+    spec-solves-issue-coverage check imports to recompute `issue_linked`, so the
+    agent prefetch and the check agree on the SAME body-keyword source."""
+    refs = parse_closing_issue_refs(body)
+    return refs[0] if refs else None
 
 
 def _is_path(kind):
