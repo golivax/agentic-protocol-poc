@@ -65,10 +65,13 @@ mrp → done` on Codex agents, with Bun/Node/Z3 toolchains vendored under its `s
 (outside the engine's Python-only contract — those phase checks degrade to advisory
 when a toolchain is absent). Engine backport was **cherry-picked, not bulk-copied**
 (a bulk copy would delete the engine-only `protocol-lint.py`/`protocol.schema.json`):
-`next.py` iterate-state-preserve, `advance.py` conclude-`inputs[]`, a now-generic
+`next.py` iterate-state-preserve, `advance.py` conclude-`inputs[]`, and a now-generic
 `lib._evidence_status_note` (config-driven via a fanout's `params.status_note` — no
-protocol vocabulary in the engine), and a new `prefetch-review.py` + the
-`agentic-engine.yml` preflight prefetch block.
+protocol vocabulary in the engine). The advisory `local-review-evidence` preflight
+check fetches its own PR review activity (via the protocol-owned
+`checks/_review_fetch.py`, using the checks job's read-only token + the generic
+`PR`/`GITHUB_REPOSITORY` env) — so no protocol-specific prefetch script lives in the
+engine and the reusable `agentic-engine.yml` carries no preflight-specific block.
 
 **Mental-model phases (2026-06-26, same PR):** the two mental-model agents are wired
 INTO `code-review` as phases (not standalone): `preflight → mm-compliance → overview`
