@@ -1,7 +1,12 @@
 protocol: recover-mental-model
 instance: ui-e2e3
-state: recover
+state: done
 iteration: 1
 gates: {}
 head_sha: 3e30c2f8a9659662100d60b76558df310dbfca69
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28402287088'
+  checks:
+    socratic-phase1-present: pass
+  feedback: ''
