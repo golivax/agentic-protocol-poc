@@ -7,13 +7,14 @@ before extending the system so you know which "missing" pieces are deliberate.
 ## `recover-mental-model` promoted from stub → real (2026-06-26)
 
 `recover-mental-model-stub` was renamed to **`recover-mental-model`** and turned
-into a real protocol. It fans out three mental-model recovery methods in
-parallel — `legion` (`/legion:map`), `codeset` (`python -m codeset .`), and
-`socratic` (the `socratic-code-theory-recovery` sub-pipeline `phase1 → answering
-→ phase2`, all automated agent steps — the answering step researches + fills the
-OPEN leaves, no human gate) — then `join`s and runs a `combine` merge hook
-(`publish/push-mental-model.py`) that collects all three leg trees and
-**force-pushes a single orphan `_mental_model` branch** (one per repo, overwritten
+into a real protocol. It fans out four mental-model recovery methods in
+parallel — `legion` (`/legion:map`), `codeset` (`python -m codeset .`),
+`ubiquitous-language` (the `domain-modeling` skill → a code-only domain glossary
+`CONTEXT.md`), and `socratic` (the `socratic-code-theory-recovery` sub-pipeline
+`phase1 → answering → phase2`, all automated agent steps — the answering step
+researches + fills the OPEN leaves, no human gate) — then `join`s and runs a
+`combine` merge hook (`publish/push-mental-model.py`) that collects all four leg
+trees and **force-pushes a single orphan `_mental_model` branch** (one per repo, overwritten
 each run), mirroring `golivax2/yuanrong-datasystem@_mental_model`.
 
 What is / isn't covered here:

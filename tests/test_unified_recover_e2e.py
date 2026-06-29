@@ -44,6 +44,7 @@ LEGION = {"run_id": "r", "files": [
 CODESET = {"run_id": "r", "files": [
     {"path": "AGENTS.md"}, {"path": ".claude/docs/knowledge.json"},
     {"path": ".claude/docs/get_context.py"}]}
+UBIQ = {"run_id": "r", "files": [{"path": "CONTEXT.md"}]}
 PHASE1 = {"run_id": "r", "files": [
     {"path": "QUESTION_TREE-x.adoc"}, {"path": "OPEN_QUESTIONS-x.adoc"}]}
 ANSWERING = {"run_id": "r", "files": [
@@ -87,16 +88,18 @@ def test_recover_unified_e2e(engine_env, tmp_path):
     r1 = run(NEXT, tmp_path / "s1", "pr-1", PROTO, "start", "sha2")
     assert json.loads(r1.stdout)["action"] == "run-fanout"
     f1 = reclone("1")
-    for leg in ("legion.yaml", "codeset.yaml", "socratic.yaml"):
+    for leg in ("legion.yaml", "codeset.yaml", "ubiquitous-language.yaml", "socratic.yaml"):
         assert (f1 / leg).is_file(), f"{leg} not seeded after start"
     assert _yaml(f1 / "_instance.yaml").get("joined") is False
 
     # 2. flat legs done
     adv("recover.legion", LEGION)
     adv("recover.codeset", CODESET)
+    adv("recover.ubiquitous-language", UBIQ)
     f2 = reclone("2")
     assert _yaml(f2 / "legion.yaml")["state"] == "done"
     assert _yaml(f2 / "codeset.yaml")["state"] == "done"
+    assert _yaml(f2 / "ubiquitous-language.yaml")["state"] == "done"
 
     # join now should wait (socratic still in-flight)
     rj_early = run(JOIN, tmp_path / "sj0", "pr-1", PROTO)

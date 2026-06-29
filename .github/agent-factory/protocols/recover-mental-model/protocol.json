@@ -27,6 +27,13 @@
           "checks": [{ "run": "codeset-artifacts", "on_fail": "block" }]
         },
         {
+          "id": "ubiquitous-language",
+          "workflow": "mm-ubiquitous-language-agent",
+          "evidence": "ubiquitous-language.evidence.schema.json",
+          "max_iterations": 1,
+          "checks": [{ "run": "ubiquitous-language-present", "on_fail": "block" }]
+        },
+        {
           "id": "socratic",
           "states": [
             {
@@ -71,6 +78,7 @@
       "inputs": [
         { "from": "legion", "as": "legion" },
         { "from": "codeset", "as": "codeset" },
+        { "from": "ubiquitous-language", "as": "ubiquitous-language" },
         { "from": "socratic", "as": "socratic" }
       ],
       "next": "done"
