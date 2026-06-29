@@ -11,24 +11,67 @@
   "states": [
     {
       "id": "preflight",
+      "kind": "fanout",
+      "label": "pre-flight adherence chain",
+      "branches": [
+        {
+          "id": "spec-solves-issue",
+          "workflow": "spec-solves-issue-agent",
+          "evidence": "spec-solves-issue.evidence.schema.json",
+          "max_iterations": 2,
+          "params": { "require": ["verdict", "examined"] },
+          "checks": [
+            { "run": "evidence-present",            "on_fail": "iterate" },
+            { "run": "spec-solves-issue-coverage", "on_fail": "iterate" }
+          ]
+        },
+        {
+          "id": "plan-implements-spec",
+          "workflow": "plan-implements-spec-agent",
+          "evidence": "plan-implements-spec.evidence.schema.json",
+          "max_iterations": 2,
+          "params": { "require": ["verdict", "examined"] },
+          "checks": [
+            { "run": "evidence-present",   "on_fail": "iterate" },
+            { "run": "plan-spec-coverage", "on_fail": "iterate" }
+          ]
+        },
+        {
+          "id": "code-implements-plan",
+          "workflow": "code-implements-plan-agent",
+          "evidence": "code-implements-plan.evidence.schema.json",
+          "max_iterations": 2,
+          "params": { "require": ["verdict", "examined"] },
+          "checks": [
+            { "run": "evidence-present",     "on_fail": "iterate" },
+            { "run": "code-plan-coverage",   "on_fail": "iterate" },
+            { "run": "traces-exist-in-diff", "on_fail": "iterate" }
+          ]
+        }
+      ],
+      "next": "join-preflight"
+    },
+    { "id": "join-preflight", "kind": "join", "of": "preflight", "next": "preflight-gate" },
+    {
+      "id": "preflight-gate",
       "kind": "agent",
-      "label": "pre-flight gate",
-      "workflow": "preflight-agent",
-      "evidence": "preflight.evidence.schema.json",
+      "label": "pre-flight adherence gate",
+      "workflow": "preflight-gate-agent",
+      "evidence": "preflight-gate.evidence.schema.json",
       "max_iterations": 2,
-      "params": { "ai_checks": ["spec-adherence", "plan-adherence"] },
+      "inputs": [
+        { "from": "spec-solves-issue",    "as": "spec-solves-issue" },
+        { "from": "plan-implements-spec", "as": "plan-implements-spec" },
+        { "from": "code-implements-plan", "as": "code-implements-plan" }
+      ],
+      "params": { "legs": ["spec-solves-issue", "plan-implements-spec", "code-implements-plan"] },
       "checks": [
-        { "run": "preflight-schema-valid",  "on_fail": "iterate"  },
-        { "run": "adherence-coverage",      "on_fail": "iterate"  },
-        { "run": "traces-exist-in-diff",    "on_fail": "iterate"  },
-        { "run": "spec-present",            "on_fail": "advisory" },
-        { "run": "plan-present",            "on_fail": "advisory" },
+        { "run": "preflight-gate-coverage", "on_fail": "iterate"  },
         { "run": "docs-updated-with-code",  "on_fail": "advisory" },
         { "run": "tests-updated-with-code", "on_fail": "advisory" },
         { "run": "local-review-evidence",   "on_fail": "advisory" }
       ],
       "conclude": "conclude-preflight",
-      "publish": "publish-verdict",
       "on_blocked": "halt",
       "next": "mm-compliance"
     },
@@ -172,7 +215,7 @@
       "evidence": "mrp.evidence.schema.json",
       "max_iterations": 2,
       "inputs": [
-        { "from": "preflight", "as": "preflight" },
+        { "from": "preflight-gate", "as": "preflight" },
         { "from": "overview",  "as": "overview" },
         { "from": "triage",    "as": "triage" },
         { "from": "context",   "as": "context" }
