@@ -34,8 +34,10 @@ def test_resolve_unit_by_path_flat_fanout_leg():
 
 
 def test_resolve_unit_by_path_top_level_agent():
-    """A top-level agent phase resolves to itself with its own life_state
-    (code-review: preflight is a root agent phase, max_iterations=2)."""
+    """The preflight GATE is the top-level agent phase now (preflight itself is a
+    fanout post Phase-A). The gate resolves to itself, max_iterations=2."""
     p = json.load(open(ROOT / ".github/agent-factory/protocols/code-review/protocol.json"))
-    u = lib.resolve_agent_unit_path(p, ["preflight"])
-    assert u == {"agent_state": "preflight", "max_iterations": 2, "life_state": "preflight"}
+    import paths  # engine dir already on sys.path via the module header
+    assert paths.node_kind(p, ["preflight"]) == "fanout"
+    u = lib.resolve_agent_unit_path(p, ["preflight-gate"])
+    assert u == {"agent_state": "preflight-gate", "max_iterations": 2, "life_state": "preflight-gate"}

@@ -51,7 +51,7 @@ def test_mrp_input_resolves_from_context_leg():
     assert by_as["context"]["kind"] == "evidence"  # a leg output, not a gate's answers
     # the other (top-level phase) inputs still resolve as phase evidence
     assert by_as["triage"]["path"].endswith("/triage.evidence.json")
-    assert by_as["preflight"]["path"].endswith("/preflight.evidence.json")
+    assert by_as["preflight"]["path"].endswith("/preflight-gate.evidence.json")
 
 
 def test_empty_terminal_gate_completes_leg_and_fires_join(tmp_path, engine_env):

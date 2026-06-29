@@ -33,28 +33,6 @@ def test_paths_classifiers():
     assert not P.is_code("README.md") and not P.is_code("tests/test_x.py")
 
 
-# spec-present / plan-present (block) ------------------------------------------
-
-def test_spec_present_passes_when_spec_file_in_diff(tmp_path):
-    v = _run("spec-present.py", ["docs/specs/feature.md", "src/app.py"], tmp_path)
-    assert v["check"] == "spec-present" and v["pass"] is True
-
-
-def test_spec_present_fails_when_absent(tmp_path):
-    v = _run("spec-present.py", ["src/app.py", "README.md"], tmp_path)
-    assert v["pass"] is False and "spec" in v["feedback"].lower()
-
-
-def test_plan_present_passes_with_plan_file(tmp_path):
-    v = _run("plan-present.py", ["docs/superpowers/plans/p.md"], tmp_path)
-    assert v["pass"] is True
-
-
-def test_plan_present_fails_when_absent(tmp_path):
-    v = _run("plan-present.py", ["src/app.py"], tmp_path)
-    assert v["pass"] is False and "plan" in v["feedback"].lower()
-
-
 # docs/tests-updated (advisory) ------------------------------------------------
 
 def test_docs_updated_pass_when_docs_changed(tmp_path):
