@@ -1,6 +1,6 @@
 protocol: recover-mental-model
 instance: ui-e2e3
 head_sha: 3e30c2f8a9659662100d60b76558df310dbfca69
-phase: recover
-joined: false
-phase_label: recover mental model
+phase: combine
+joined: true
+phase_label: Combine
