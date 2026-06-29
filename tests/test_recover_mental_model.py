@@ -37,6 +37,7 @@ LEGION_OK = {"run_id": "123", "files": [
 CODESET_OK = {"run_id": "123", "files": [
     {"path": "AGENTS.md"}, {"path": "CLAUDE.md"},
     {"path": ".claude/docs/knowledge.json"}, {"path": ".claude/docs/get_context.py"}]}
+UBIQ_OK = {"run_id": "123", "files": [{"path": "CONTEXT.md"}]}
 PHASE1_OK = {"run_id": "123", "files": [
     {"path": "QUESTION_TREE-x.adoc"}, {"path": "OPEN_QUESTIONS-x.adoc"}]}
 ANSWERING_OK = {"run_id": "123", "files": [
@@ -68,6 +69,20 @@ def test_codeset_artifacts_pass(tmp_path):
 def test_codeset_artifacts_fail_missing(tmp_path):
     r = _run("codeset-artifacts", dict(CODESET_OK, files=[{"path": "AGENTS.md"}]), tmp_path)
     assert r["pass"] is False and "knowledge.json" in r["feedback"]
+
+
+def test_ubiquitous_language_present_pass(tmp_path):
+    assert _run("ubiquitous-language-present", UBIQ_OK, tmp_path)["pass"] is True
+
+
+def test_ubiquitous_language_present_fail_missing(tmp_path):
+    r = _run("ubiquitous-language-present", dict(UBIQ_OK, files=[]), tmp_path)
+    assert r["pass"] is False and "CONTEXT.md" in r["feedback"]
+
+
+def test_ubiquitous_language_present_fail_no_run_id(tmp_path):
+    r = _run("ubiquitous-language-present", dict(UBIQ_OK, run_id=""), tmp_path)
+    assert r["pass"] is False and "run_id" in r["feedback"]
 
 
 def test_socratic_phase1_present_pass(tmp_path):
@@ -110,7 +125,7 @@ def test_push_mental_model_hook(tmp_path):
 
     workdir = tmp_path / "wd"
     inputs = workdir / "inputs"; inputs.mkdir(parents=True)
-    for leg in ("legion", "codeset", "socratic"):
+    for leg in ("legion", "codeset", "ubiquitous-language", "socratic"):
         (inputs / f"{leg}.json").write_text(json.dumps({"run_id": "r", "files": []}))
         tree = workdir / "trees" / leg
         tree.mkdir(parents=True)
@@ -134,10 +149,11 @@ def test_push_mental_model_hook(tmp_path):
     assert (view / "METHODS.txt").is_file()
     assert (view / "legion-map" / "FILE.txt").is_file()
     assert (view / "vibed-codeset" / "FILE.txt").is_file()
+    assert (view / "ubiquitous-language" / "FILE.txt").is_file()
     assert (view / "socratic" / "FILE.txt").is_file()
     assert (view / "socratic" / "docs" / "prd.adoc").is_file()
     methods = (view / "METHODS.txt").read_text()
-    assert "legion-map" in methods and "vibed-codeset" in methods and "socratic" in methods
+    assert all(m in methods for m in ("legion-map", "vibed-codeset", "ubiquitous-language", "socratic"))
     assert "deadbeef" in methods
 
 
@@ -184,6 +200,7 @@ def test_full_pipeline(tmp_path, engine_env):
 
     adv("recover.legion", LEGION_OK)
     adv("recover.codeset", CODESET_OK)
+    adv("recover.ubiquitous-language", UBIQ_OK)
 
     # socratic sub-pipeline, all automated. advance moves the cursor + dispatches a
     # continue; the continue SEEDS the next sub-state (engine contract — advance
@@ -245,7 +262,8 @@ def test_run_merge_hook_resolves_three_legs(tmp_path, engine_env):
     lib.state_checkout(dir_)
     base = os.path.join(dir_, "recover-mental-model", "pr-1")
     os.makedirs(base, exist_ok=True)
-    for leg, ev in (("legion", LEGION_OK), ("codeset", CODESET_OK)):
+    for leg, ev in (("legion", LEGION_OK), ("codeset", CODESET_OK),
+                    ("ubiquitous-language", UBIQ_OK)):
         with open(os.path.join(base, f"{leg}.evidence.json"), "w") as f:
             json.dump(ev, f)
     # socratic leg output is its last sub-state (phase2)
