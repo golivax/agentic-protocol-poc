@@ -67,7 +67,7 @@ tests/
 
 ## Group: _locate.py: linked-issue resolution + chain spec fallback drop
 
-### Task: Pure closing-keyword issue-link parser in _locate.py
+### Task 1: Pure closing-keyword issue-link parser in _locate.py
 
 **Files:**
 - Modify: `.github/agent-factory/protocols/code-review/checks/_locate.py`
@@ -195,7 +195,7 @@ TDD order — write the failing test first, run it red, implement, run it green,
   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   ```
 
-### Task: Drop the PR-description spec fallback for the chain (allow_body_fallback flag)
+### Task 2: Drop the PR-description spec fallback for the chain (allow_body_fallback flag)
 
 **Files:**
 - Modify: `.github/agent-factory/protocols/code-review/checks/_locate.py`
@@ -284,7 +284,7 @@ TDD order.
   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   ```
 
-### Task: Whole-suite green gate
+### Task 3: Whole-suite green gate
 
 **Files:**
 - Test: `tests/` (run only)
@@ -296,7 +296,7 @@ TDD order.
   Expected: PASS. If a sibling cluster's WIP (new coverage checks / protocol.json rewrite) is not yet landed, scope to this cluster's surface instead: `uv run pytest tests/test_locate.py tests/test_preflight_coverage.py tests/test_checks.py -q` (all PASS).
 ## Group: evidence schemas (the 4 leg/gate contracts)
 
-### Task: Create the four `*.evidence.schema.json` files
+### Task 4: Create the four `*.evidence.schema.json` files
 
 **Files:**
 - Create: `.github/agent-factory/protocols/code-review/spec-solves-issue.evidence.schema.json`
@@ -500,7 +500,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Group: agents
 
-### Task: Write spec-solves-issue-agent (the issue→spec chain leg)
+### Task 5: Write spec-solves-issue-agent (the issue→spec chain leg)
 
 **Files:**
 - Create: `.github/workflows/spec-solves-issue-agent.md`
@@ -685,7 +685,7 @@ git commit -m "feat(code-review): add spec-solves-issue preflight chain leg agen
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task: Write plan-implements-spec-agent (the spec→plan chain leg)
+### Task 6: Write plan-implements-spec-agent (the spec→plan chain leg)
 
 **Files:**
 - Create: `.github/workflows/plan-implements-spec-agent.md`
@@ -838,7 +838,7 @@ git commit -m "feat(code-review): add plan-implements-spec preflight chain leg a
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task: Write code-implements-plan-agent (the plan→code chain leg)
+### Task 7: Write code-implements-plan-agent (the plan→code chain leg)
 
 **Files:**
 - Create: `.github/workflows/code-implements-plan-agent.md`
@@ -1009,7 +1009,7 @@ git commit -m "feat(code-review): add code-implements-plan preflight chain leg a
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task: Write preflight-gate-agent (the synthesis gate)
+### Task 8: Write preflight-gate-agent (the synthesis gate)
 
 **Files:**
 - Create: `.github/workflows/preflight-gate-agent.md`
@@ -1136,7 +1136,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 ## Group: deterministic-form-checks (spec-solves-issue-coverage.py, plan-spec-coverage.py, code-plan-coverage.py, preflight-gate-coverage.py)
 
-### Task: Shared self-fetch helper `_artifact_fetch.py` (TDD)
+### Task 9: Shared self-fetch helper `_artifact_fetch.py` (TDD)
 
 **Files:**
 - Create: `.github/agent-factory/protocols/code-review/checks/_artifact_fetch.py`
@@ -1306,7 +1306,7 @@ def test_head_sha(tmp_path):
 - [ ] **Step 4: Run the test green.** `uv run pytest tests/test_artifact_fetch.py -q` — expect 5 PASS.
 - [ ] **Step 5: Commit.** `git add -A && git commit -m "feat(code-review): _artifact_fetch self-fetch helper for preflight coverage checks"`
 
-### Task: `preflight-gate-coverage.py` — one cell per declared leg (TDD; do this FIRST — no cross-cluster dep)
+### Task 10: `preflight-gate-coverage.py` — one cell per declared leg (TDD; do this FIRST — no cross-cluster dep)
 
 **Files:**
 - Create: `.github/agent-factory/protocols/code-review/checks/preflight-gate-coverage.py`
@@ -1457,7 +1457,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run green.** `uv run pytest tests/test_preflight_gate_coverage.py -q` — expect 6 PASS.
 - [ ] **Step 5: Commit.** `git add -A && git commit -m "feat(code-review): preflight-gate-coverage form-check (one cell per declared leg)"`
 
-### Task: `plan-spec-coverage.py` — bidirectional spec<->plan matrix (TDD)
+### Task 11: `plan-spec-coverage.py` — bidirectional spec<->plan matrix (TDD)
 
 **Files:**
 - Create: `.github/agent-factory/protocols/code-review/checks/plan-spec-coverage.py`
@@ -1706,7 +1706,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run green.** `uv run pytest tests/test_plan_spec_coverage.py -q` — expect 7 PASS.
 - [ ] **Step 5: Commit.** `git add -A && git commit -m "feat(code-review): plan-spec-coverage bidirectional matrix form-check"`
 
-### Task: `code-plan-coverage.py` — plan_to_code completeness + plan-quote anchoring; REUSE traces-exist-in-diff for the code side (TDD)
+### Task 12: `code-plan-coverage.py` — plan_to_code completeness + plan-quote anchoring; REUSE traces-exist-in-diff for the code side (TDD)
 
 **Files:**
 - Create: `.github/agent-factory/protocols/code-review/checks/code-plan-coverage.py`
@@ -1933,7 +1933,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run green.** `uv run pytest tests/test_code_plan_coverage.py -q` — expect 7 PASS.
 - [ ] **Step 5: Commit.** `git add -A && git commit -m "feat(code-review): code-plan-coverage form-check (plan side; traces-exist-in-diff covers code side)"`
 
-### Task: `spec-solves-issue-coverage.py` — issue->spec coverage with FAIL-CLOSED issue fetch (TDD; depends on _locate.detect_issue_link)
+### Task 13: `spec-solves-issue-coverage.py` — issue->spec coverage with FAIL-CLOSED issue fetch (TDD; depends on _locate.detect_issue_link)
 
 **Files:**
 - Create: `.github/agent-factory/protocols/code-review/checks/spec-solves-issue-coverage.py`
@@ -2177,7 +2177,7 @@ if __name__ == "__main__":
 - [ ] **Step 6: Commit.** `git add -A && git commit -m "feat(code-review): spec-solves-issue-coverage form-check (fail-closed issue fetch)"`
 ## Group: conclude-preflight rewrite + retire publish-verdict
 
-### Task: Rewrite the conclude-preflight pytest harness (table-driven, CONCLUDE_INPUTS_DIR)
+### Task 14: Rewrite the conclude-preflight pytest harness (table-driven, CONCLUDE_INPUTS_DIR)
 
 **Files:**
 - Modify: `/home/haoxiang/workspace/agentic-protocol-poc-dev/tests/test_conclude_preflight.py`
@@ -2320,7 +2320,7 @@ def test_posts_one_comment_engine_local(tmp_path):
 
 - [ ] **Step 3: Commit.** `git add tests/test_conclude_preflight.py && git commit -m "test(conclude-preflight): table-driven Phase-A 3-leg rollup harness (CONCLUDE_INPUTS_DIR)\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"`
 
-### Task: Rewrite conclude-preflight.py (Phase-A 3-leg rollup + consolidated comment + verdict.json)
+### Task 15: Rewrite conclude-preflight.py (Phase-A 3-leg rollup + consolidated comment + verdict.json)
 
 **Files:**
 - Modify: `/home/haoxiang/workspace/agentic-protocol-poc-dev/.github/agent-factory/protocols/code-review/publish/conclude-preflight.py`
@@ -2512,7 +2512,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Commit.** `git add .github/agent-factory/protocols/code-review/publish/conclude-preflight.py && git commit -m "feat(conclude-preflight): Phase-A 3-leg chain rollup + consolidated comment\n\nReads the issue->spec->plan->code legs from CONCLUDE_INPUTS_DIR, applies\nblock-gaps/warn-extras, posts one PR comment via lib.post_pr_comment, writes\nverdict.json. Presence flags read from form-verified leg scope, never recomputed.\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"`
 
-### Task: Retire publish-verdict.py
+### Task 16: Retire publish-verdict.py
 
 **Files:**
 - Modify (delete): `/home/haoxiang/workspace/agentic-protocol-poc-dev/.github/agent-factory/protocols/code-review/publish/publish-verdict.py`
@@ -2532,7 +2532,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Commit.** `git add -A && git commit -m "chore(preflight): retire publish-verdict.py (folded into conclude-preflight)\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"`
 ## Group: wiring + tests
 
-### Task: Restructure protocol.json — preflight fanout + join-preflight + preflight-gate, re-point mrp
+### Task 17: Restructure protocol.json — preflight fanout + join-preflight + preflight-gate, re-point mrp
 
 **Files:**
 - Modify: `.github/agent-factory/protocols/code-review/protocol.json`
@@ -2645,7 +2645,7 @@ sibling order, not next). Re-point mrp's preflight input to preflight-gate.
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task: Add `issues: read` to the checks job in agentic-engine.yml
+### Task 18: Add `issues: read` to the checks job in agentic-engine.yml
 
 **Files:**
 - Modify: `.github/workflows/agentic-engine.yml`
@@ -2688,7 +2688,7 @@ protocol-agnostic grant; no engine logic change.
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task: New tests/test_preflight_wiring.py (structural assertions over the REAL protocol)
+### Task 19: New tests/test_preflight_wiring.py (structural assertions over the REAL protocol)
 
 **Files:**
 - Create: `tests/test_preflight_wiring.py`
@@ -2764,7 +2764,7 @@ cd /home/haoxiang/workspace/agentic-protocol-poc-dev && git add tests/test_prefl
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task: Migrate + retire the superseded tests and check files
+### Task 20: Migrate + retire the superseded tests and check files
 
 **Files:**
 - Modify: `tests/test_resolve_agent_unit.py`, `tests/test_mm_pipeline_wiring.py`
