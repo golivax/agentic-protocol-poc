@@ -18,7 +18,7 @@ def test_preflight_is_a_fanout():
     proto = json.load(open(CODE_REVIEW))
     assert paths.node_kind(proto, ["preflight"]) == "fanout"
     legs = [b["id"] for b in paths.node_at_path(proto, ["preflight"])["branches"]]
-    assert legs == ["spec-solves-issue", "plan-implements-spec", "code-implements-plan"]
+    assert legs == ["spec-solves-issue", "plan-implements-spec", "code-implements-plan", "mm-compliance"]
 
 
 def test_preflight_gate_inputs_resolve_to_each_leg_evidence():
@@ -28,7 +28,7 @@ def test_preflight_gate_inputs_resolve_to_each_leg_evidence():
         proto, d, pid, inst, consuming_branch=None, consuming_phase=None,
         inputs=lib.state_inputs(proto, "preflight-gate"), consuming_path=["preflight-gate"])
     by_as = {r["as"]: r for r in resolved}
-    for leg in ("spec-solves-issue", "plan-implements-spec", "code-implements-plan"):
+    for leg in ("spec-solves-issue", "plan-implements-spec", "code-implements-plan", "mm-compliance"):
         leg_ev = lib.output_artifact_path(
             d, pid, inst, path=lib.state_path(proto, ["preflight", leg]), kind="evidence")
         assert by_as[leg]["path"] == leg_ev
