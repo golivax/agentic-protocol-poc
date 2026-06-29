@@ -738,6 +738,11 @@ def upsert_status_comment(sf, pr, body):
     if os.environ.get("ENGINE_LOCAL", "0") == "1":
         sys.stderr.write(f"[ENGINE_LOCAL] status comment pr#{pr}: {body}\n")
         return
+    # Ref-/UI-targeted runs have no PR to comment on — status is served by the
+    # visibility API. Skip (the gh call below uses check=True and would raise on
+    # an empty PR number, e.g. repos/<r>/issues//comments).
+    if not pr:
+        return
 
     state = load_yaml(sf)
     cid = state.get("status_comment_id", "") or ""
@@ -774,6 +779,8 @@ def post_pr_comment(pr, body):
     """
     if os.environ.get("ENGINE_LOCAL", "0") == "1":
         sys.stderr.write(f"[ENGINE_LOCAL] pr comment pr#{pr}: {body}\n")
+        return
+    if not pr:   # ref-/UI-targeted run: no PR to comment on
         return
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     publish_token = os.environ.get("PUBLISH_TOKEN", "")
