@@ -342,6 +342,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      issues: read
       pull-requests: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
