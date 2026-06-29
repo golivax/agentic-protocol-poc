@@ -47,6 +47,16 @@
             { "run": "code-plan-coverage",   "on_fail": "iterate" },
             { "run": "traces-exist-in-diff", "on_fail": "iterate" }
           ]
+        },
+        {
+          "id": "mm-compliance",
+          "workflow": "mm-compliance-gate",
+          "evidence": "mm-compliance.evidence.schema.json",
+          "max_iterations": 2,
+          "params": { "require": ["verdict"] },
+          "checks": [
+            { "run": "evidence-present", "on_fail": "iterate" }
+          ]
         }
       ],
       "next": "join-preflight"
@@ -62,9 +72,10 @@
       "inputs": [
         { "from": "spec-solves-issue",    "as": "spec-solves-issue" },
         { "from": "plan-implements-spec", "as": "plan-implements-spec" },
-        { "from": "code-implements-plan", "as": "code-implements-plan" }
+        { "from": "code-implements-plan", "as": "code-implements-plan" },
+        { "from": "mm-compliance",        "as": "mm-compliance" }
       ],
-      "params": { "legs": ["spec-solves-issue", "plan-implements-spec", "code-implements-plan"] },
+      "params": { "legs": ["spec-solves-issue", "plan-implements-spec", "code-implements-plan", "mm-compliance"] },
       "checks": [
         { "run": "preflight-gate-coverage", "on_fail": "iterate"  },
         { "run": "docs-updated-with-code",  "on_fail": "advisory" },
@@ -72,21 +83,6 @@
         { "run": "local-review-evidence",   "on_fail": "advisory" }
       ],
       "conclude": "conclude-preflight",
-      "on_blocked": "halt",
-      "next": "mm-compliance"
-    },
-    {
-      "id": "mm-compliance",
-      "kind": "agent",
-      "label": "mental-model compliance gate",
-      "workflow": "mm-compliance-gate",
-      "evidence": "mm-compliance.evidence.schema.json",
-      "max_iterations": 2,
-      "params": { "require": ["verdict"] },
-      "checks": [
-        { "run": "evidence-present", "on_fail": "iterate" }
-      ],
-      "conclude": "conclude-mm-compliance",
       "on_blocked": "halt",
       "next": "overview"
     },
