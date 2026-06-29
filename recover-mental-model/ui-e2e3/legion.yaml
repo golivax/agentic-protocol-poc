@@ -1,6 +1,11 @@
 protocol: recover-mental-model
 instance: ui-e2e3
-state: recover
+state: done
 iteration: 1
 gates: {}
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28402286540'
+  checks:
+    legion-artifacts: pass
+  feedback: ''
