@@ -415,9 +415,20 @@ jobs:
               --repo "${{ github.repository }}" -n evidence -D /tmp/agent || echo "no evidence artifact"
           fi
       - name: Fetch independent ground truth
+        env:
+          PR: ${{ needs.plan.outputs.pr }}
         run: |
-          gh pr diff "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" > /tmp/diff.txt
-          gh pr diff "${{ needs.plan.outputs.pr }}" --repo "${{ github.repository }}" --name-only > /tmp/files.txt
+          # PR-targeted runs: independently re-fetch the PR diff (the checks' ground
+          # truth, never trusting agent output). Ref-targeted runs (UI/workflow_dispatch)
+          # have no PR — write empty diff/files; those protocols' checks verify
+          # evidence manifests, not a diff.
+          if [ -n "$PR" ]; then
+            gh pr diff "$PR" --repo "${{ github.repository }}" > /tmp/diff.txt
+            gh pr diff "$PR" --repo "${{ github.repository }}" --name-only > /tmp/files.txt
+          else
+            : > /tmp/diff.txt
+            : > /tmp/files.txt
+          fi
       - name: Run checks
         env:
           RID: ${{ steps.meta.outputs.rid }}
