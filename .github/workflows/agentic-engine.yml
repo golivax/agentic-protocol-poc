@@ -187,14 +187,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ steps.ctx.outputs.pr }}
           CHECKOUT_REF: ${{ steps.ctx.outputs.checkout_ref }}
+          INSTANCE: ${{ steps.ctx.outputs.instance }}
+          PROTO: ${{ inputs.protocol }}
           REPO: ${{ github.repository }}
         run: |
-          # PR-targeted: the PR head commit. Ref-targeted (no PR): resolve the SHA
-          # of the requested ref/branch.
+          # The analyzed commit SHA, resolved per target kind:
+          #  - PR run: the PR head commit.
+          #  - ref-target START (workflow_dispatch): the requested ref/branch tip.
+          #  - ref-target CONTINUE/JOIN (repository_dispatch carries no ref, and a
+          #    ui-keyed instance has no ref to recover): read the SHA already pinned
+          #    in the instance state at start — the source of truth across all hops.
           if [ -n "$PR" ]; then
             SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq .headRefOid)
-          else
+          elif [ -n "$CHECKOUT_REF" ]; then
             SHA=$(gh api "repos/$REPO/commits/$CHECKOUT_REF" --jq .sha)
+          else
+            PID=$(jq -r .name "$PROTO")
+            SHA=$(gh api "repos/$REPO/contents/$PID/$INSTANCE/_instance.yaml?ref=agentic-state" \
+                   --jq '.content' | base64 -d | sed -n 's/^head_sha:[[:space:]]*//p' | head -1)
           fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
       - id: plan
@@ -343,12 +353,15 @@ jobs:
           [ -n "$LEGTOK" ] || LEGTOK="agent"
           CID="${{ github.run_id }}-${{ github.run_attempt }}-${LEGTOK}"
           INPUTS="$INPUTS_JSON"; [ -n "$INPUTS" ] || INPUTS='{}'
-          # ref/sha let an agent check out the analyzed code for either target kind
-          # (PR head ref or a branch/ref). Agents read these from aw_context.
+          # ref/sha let an agent check out the analyzed code for either target kind.
+          # Prefer the explicit checkout ref (PR head ref, or the ref a ref-target
+          # START requested); fall back to the resolved SHA for ref-target CONTINUE
+          # hops, where the dispatch carries no ref (the SHA is pinned in state).
+          REF="${CHECKOUT_REF:-$SHA}"
           CTX=$(jq -nc \
             --arg pr "$PR" --arg iteration "$ITERATION" --arg feedback "$FEEDBACK" \
             --argjson sabotage "$SABOTAGE" --arg cid "$CID" \
-            --argjson inputs "$INPUTS" --arg ref "$CHECKOUT_REF" --arg sha "$SHA" \
+            --argjson inputs "$INPUTS" --arg ref "$REF" --arg sha "$SHA" \
             '{pr: $pr, iteration: $iteration, feedback: $feedback, sabotage: $sabotage, cid: $cid, inputs: $inputs, ref: $ref, sha: $sha}')
           # Workflow comes from the matrix leg (next.py emits it in legs[]); read
           # via env var (never interpolated) to keep the security invariant.
