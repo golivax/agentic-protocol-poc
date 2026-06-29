@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Conclude hook for the preflight gate (Phase B: the 3-leg issue->spec->plan->code chain + mm-compliance).
+"""Conclude hook for the preflight gate (Phase C: the 3-leg issue->spec->plan->code chain + mm-compliance + docs/tests).
 
-Authoritative for blocking. Independently re-reads the three chain legs from
+Authoritative for blocking. Independently re-reads the chain legs from
 CONCLUDE_INPUTS_DIR (NOT trusting the gate agent's consolidated render in argv[1],
 which is used only as display text for the comment), reads each leg's
 form-verified `verdict` + `scope` flags, and applies the block-gaps / warn-extras
@@ -9,13 +9,15 @@ policy. Posts ONE consolidated preflight comment, writes verdict.json, and print
 {conclusion,summary,blocked,reasons,warnings}. blocked=True + the gate node's
 `on_blocked: halt` halts the run until a maintainer /overrides.
 
-Rollup (chain + mm-compliance; docs/tests are NOT in this rollup in Phase B):
+Rollup (chain + mm-compliance + docs/tests):
   block if: (issue_linked & !spec_present)
           | (spec_present & spec.verdict=='does-not-solve')
           | (code_changed & !spec_present)
           | (code_changed & !plan_present)
           | plan.verdict=='underspec' | code.verdict=='underplan'
           | mm.verdict=='diverges'
+          | docs.verdict=='inadequate'
+          | (code & tests.verdict=='inadequate')
   warn:    plan.verdict=='overspec' | code.verdict=='overplan'
   n/a contributes nothing.
 Presence flags are READ from the legs' form-verified scope objects, never recomputed
@@ -35,7 +37,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "..", "..", "engine"))
 import lib  # noqa: E402
 
-LEGS = ("spec-solves-issue", "plan-implements-spec", "code-implements-plan", "mm-compliance")
+LEGS = ("spec-solves-issue", "plan-implements-spec", "code-implements-plan", "mm-compliance",
+        "docs-updated-appropriately", "tests-updated-appropriately")
 
 
 def _load_leg(name):
@@ -67,8 +70,8 @@ def _flag(leg, key):
     return bool(_scope(leg).get(key, False))
 
 
-def rollup(spec_leg, plan_leg, code_leg, mm_leg):
-    """Return (reasons[], warnings[]) for the Phase-B preflight (chain + mm-compliance). Reasons => block."""
+def rollup(spec_leg, plan_leg, code_leg, mm_leg, docs_leg, tests_leg):
+    """Return (reasons[], warnings[]) for the Phase-C preflight (chain + mm-compliance + docs/tests). Reasons => block."""
     reasons, warnings = [], []
 
     issue_linked = _flag(spec_leg, "issue_linked")
@@ -92,6 +95,10 @@ def rollup(spec_leg, plan_leg, code_leg, mm_leg):
         reasons.append("code does not implement the plan (underplan)")
     if _verdict(mm_leg) == "diverges":
         reasons.append("the PR diverges from the stored mental model")
+    if _verdict(docs_leg) == "inadequate":
+        reasons.append("relevant docs are not updated appropriately")
+    if code_changed and _verdict(tests_leg) == "inadequate":
+        reasons.append("relevant tests are not updated appropriately")
 
     if plan_v == "overspec":
         warnings.append("plan adds items beyond the spec (overspec)")
@@ -101,14 +108,15 @@ def rollup(spec_leg, plan_leg, code_leg, mm_leg):
     return reasons, warnings
 
 
-def _render_comment(status, reasons, warnings, spec_leg, plan_leg, code_leg, mm_leg):
+def _render_comment(status, reasons, warnings, spec_leg, plan_leg, code_leg, mm_leg, docs_leg, tests_leg):
     """Build the single consolidated comment body. Agent-supplied summaries are
     concatenated into this string; the whole body is passed to lib.post_pr_comment
     as ONE `gh api -f body=BODY` argument (an argument vector, never shell-interpolated)."""
     icon = "\U0001f6d1" if status == "blocked" else "✅"
     lines = [f"{icon} **Preflight {status}** — issue → spec → plan → code + mental-model", ""]
     rows = [("spec-solves-issue", spec_leg), ("plan-implements-spec", plan_leg),
-            ("code-implements-plan", code_leg), ("mm-compliance", mm_leg)]
+            ("code-implements-plan", code_leg), ("mm-compliance", mm_leg),
+            ("docs-updated-appropriately", docs_leg), ("tests-updated-appropriately", tests_leg)]
     lines.append("| leg | verdict |")
     lines.append("|---|---|")
     for name, leg in rows:
@@ -128,8 +136,10 @@ def main():
     plan_leg = _load_leg("plan-implements-spec")
     code_leg = _load_leg("code-implements-plan")
     mm_leg = _load_leg("mm-compliance")
+    docs_leg = _load_leg("docs-updated-appropriately")
+    tests_leg = _load_leg("tests-updated-appropriately")
 
-    reasons, warnings = rollup(spec_leg, plan_leg, code_leg, mm_leg)
+    reasons, warnings = rollup(spec_leg, plan_leg, code_leg, mm_leg, docs_leg, tests_leg)
     blocked = bool(blocking or reasons)
     if blocking:
         reasons = reasons + ["engine blocking signal"]
@@ -140,7 +150,9 @@ def main():
     for name, leg in (("spec-solves-issue", spec_leg),
                       ("plan-implements-spec", plan_leg),
                       ("code-implements-plan", code_leg),
-                      ("mm-compliance", mm_leg)):
+                      ("mm-compliance", mm_leg),
+                      ("docs-updated-appropriately", docs_leg),
+                      ("tests-updated-appropriately", tests_leg)):
         records.append({"type": "leg", "leg": name,
                         "verdict": _verdict(leg), "scope": _scope(leg)})
     records.append({"type": "verdict", "status": status, "blocked": blocked,
@@ -160,7 +172,7 @@ def main():
 
     pr = os.environ.get("PR", "")
     if pr:
-        body = _render_comment(status, reasons, warnings, spec_leg, plan_leg, code_leg, mm_leg)
+        body = _render_comment(status, reasons, warnings, spec_leg, plan_leg, code_leg, mm_leg, docs_leg, tests_leg)
         lib.post_pr_comment(pr, body)
 
     summary = ("Preflight blocked: " + "; ".join(reasons)) if blocked else "Preflight clear."

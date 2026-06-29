@@ -32,6 +32,18 @@ def _mm_leg(verdict):
                             else [{"decision": "ADR-1", "detail": "contradicts X", "evidence": "f.py:1"}]),
             "examined": ["_mm/socratic/x.adoc", "f.py"]}
 
+def _docs_leg(verdict, *, code_changed=True):
+    return {"verdict": verdict, "scope": {"code_changed": code_changed},
+            "items": ([] if verdict == "adequate"
+                      else [{"path": "docs/guide.md", "status": "missing", "reason": "x"}]),
+            "examined": ["docs/guide.md"]}
+
+def _tests_leg(verdict, *, code_changed=True):
+    return {"verdict": verdict, "scope": {"code_changed": code_changed},
+            "items": ([] if verdict in ("adequate", "n/a")
+                      else [{"path": "tests/test_app.py", "status": "missing", "reason": "x"}]),
+            "examined": ["tests/test_app.py"]}
+
 
 def _conclude(legs, blocking, tmp_path):
     """legs = {'spec-solves-issue': obj, 'plan-implements-spec': obj, 'code-implements-plan': obj, 'mm-compliance': obj}."""
@@ -55,12 +67,14 @@ def _conclude(legs, blocking, tmp_path):
     return json.loads(r.stdout), (tmp_path / "verdict.json"), r.stderr
 
 
-# Baseline: the 3 chain legs N/A + mm-compliance compliant => clear.
+# Baseline: the 3 chain legs N/A + mm-compliance compliant + docs adequate + tests n/a => clear.
 def _all_na():
     return {"spec-solves-issue": _spec_leg("n/a", issue_linked=False, spec_present=False),
             "plan-implements-spec": _plan_leg("n/a", code_changed=False, spec_present=False, plan_present=False),
             "code-implements-plan": _code_leg("n/a", code_changed=False, plan_present=False),
-            "mm-compliance": _mm_leg("compliant")}
+            "mm-compliance": _mm_leg("compliant"),
+            "docs-updated-appropriately": _docs_leg("adequate", code_changed=False),
+            "tests-updated-appropriately": _tests_leg("n/a", code_changed=False)}
 
 
 CASES = [
@@ -102,6 +116,21 @@ CASES = [
     ("mm-diverges-block",
      lambda L: L | {"mm-compliance": _mm_leg("diverges")},
      True, "mental model", None),
+    ("docs-inadequate-block",
+     lambda L: L | {"docs-updated-appropriately": _docs_leg("inadequate")},
+     True, "docs", None),
+    ("docs-adequate-clear",
+     lambda L: L | {"docs-updated-appropriately": _docs_leg("adequate")},
+     False, None, None),
+    ("tests-inadequate-with-code-block",
+     lambda L: L | {"tests-updated-appropriately": _tests_leg("inadequate"),
+                    "plan-implements-spec": _plan_leg("adheres", code_changed=True, spec_present=True, plan_present=True),
+                    "code-implements-plan": _code_leg("adheres", code_changed=True, plan_present=True),
+                    "spec-solves-issue": _spec_leg("n/a", issue_linked=False, spec_present=True)},
+     True, "tests", None),
+    ("tests-inadequate-no-code-clear",
+     lambda L: L | {"tests-updated-appropriately": _tests_leg("inadequate", code_changed=False)},
+     False, None, None),
 ]
 
 
