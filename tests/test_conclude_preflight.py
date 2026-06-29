@@ -25,6 +25,13 @@ def _code_leg(verdict, *, code_changed, plan_present):
             "scope": {"code_changed": code_changed, "plan_present": plan_present},
             "plan_to_code": [], "files": [], "examined": ["plan.md", "diff"]}
 
+def _mm_leg(verdict):
+    # mm-compliance evidence has NO scope object (verdict compliant|diverges + divergences[] + examined).
+    return {"verdict": verdict,
+            "divergences": ([] if verdict == "compliant"
+                            else [{"decision": "ADR-1", "detail": "contradicts X", "evidence": "f.py:1"}]),
+            "examined": ["_mm/socratic/x.adoc", "f.py"]}
+
 
 def _conclude(legs, blocking, tmp_path):
     """legs = {'spec-solves-issue': obj, 'plan-implements-spec': obj, 'code-implements-plan': obj}."""
@@ -52,7 +59,8 @@ def _conclude(legs, blocking, tmp_path):
 def _all_na():
     return {"spec-solves-issue": _spec_leg("n/a", issue_linked=False, spec_present=False),
             "plan-implements-spec": _plan_leg("n/a", code_changed=False, spec_present=False, plan_present=False),
-            "code-implements-plan": _code_leg("n/a", code_changed=False, plan_present=False)}
+            "code-implements-plan": _code_leg("n/a", code_changed=False, plan_present=False),
+            "mm-compliance": _mm_leg("compliant")}
 
 
 CASES = [
@@ -88,6 +96,12 @@ CASES = [
      lambda L: L | {"code-implements-plan": _code_leg("overplan", code_changed=True, plan_present=True),
                     "plan-implements-spec": _plan_leg("adheres", code_changed=True, spec_present=True, plan_present=True)},
      False, None, "overplan"),
+    ("mm-compliant-clear",
+     lambda L: L | {"mm-compliance": _mm_leg("compliant")},
+     False, None, None),
+    ("mm-diverges-block",
+     lambda L: L | {"mm-compliance": _mm_leg("diverges")},
+     True, "mental model", None),
 ]
 
 
