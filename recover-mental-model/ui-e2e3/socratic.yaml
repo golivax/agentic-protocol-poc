@@ -1,6 +1,6 @@
 protocol: recover-mental-model
 instance: ui-e2e3
-state: recover
+state: done
 sub_state: phase2
 iteration: 1
 gates: {}
