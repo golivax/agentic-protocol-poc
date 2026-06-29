@@ -16,7 +16,6 @@ network:
     - arcyleung-ubuntu.tailb940e6.ts.net
 permissions: { contents: read, pull-requests: read, issues: read }
 safe-outputs:
-  add-comment: { max: 1, hide-older-comments: true }
   noop: {}
 tools:
   bash: [ "cat:*", "ls:*", "find:*", "echo:*", "python:*", "python3:*" ]
@@ -118,37 +117,8 @@ not independent constraints.
    `edit` tool — this is what the engine checks and what decides blocking:
    `{"verdict":"compliant|diverges","divergences":[{"decision":"…","detail":"…","evidence":"<file:hunk>","fix":"…"}],"examined":["<MM docs + changed files you read>"]}`
    `verdict` is `"diverges"` iff `divergences` is non-empty; otherwise `"compliant"` with `divergences: []`.
-5. Post EXACTLY ONE advisory comment via `add-comment` mirroring the verdict:
-
-If compliant:
-~~~markdown
-### ✅ Mental-Model Compliance — Compliant
-
-This PR is consistent with the stored mental model.
-
-<details><summary>What was checked</summary>
-
-- {1–4 bullets naming the relevant MM decisions/conventions and how the diff upholds them, with file paths}
-
-</details>
-~~~
-
-If there ARE divergences:
-~~~markdown
-### ⚠️ Mental-Model Compliance — {N} divergence(s)
-
-This PR appears to diverge from the stored mental model. Either change the code to comply, or update
-the mental model to reflect the new decision (and `/override` to proceed).
-
-<details><summary>Divergences ({N})</summary>
-
-- **{MM doc, e.g. socratic/docs/specs/adrs/yuanrong-datasystem-adr-002-…}: {decision title}** —
-  {what the diff contradicts}. Evidence: `{file path}` ({hunk/line}). Fix: {one line}.
-
-</details>
-~~~
 
 ## Rules
-- ALWAYS write `/tmp/gh-aw/evidence.json` first (even when compliant — `divergences: []`), then post the comment.
+- ALWAYS write `/tmp/gh-aw/evidence.json` (even when compliant — `divergences: []`).
 - Base every verdict on real evidence from `pr.diff`. Cite file paths. Never invent MM content not in `_mm/`.
-- End by calling exactly one safe output (`add-comment`).
+- This is a preflight fanout LEG: write evidence and then call `noop`. Do NOT post a comment — the preflight gate renders the mental-model verdict in the consolidated preflight comment.
