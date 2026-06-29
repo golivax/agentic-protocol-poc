@@ -44,6 +44,34 @@ What is / isn't covered here:
   `draft → clarify → finalize`) is preserved as the engine regression fixture
   `tests/fixtures/subpipeline-gate/`; structural tests point there.
 
+### UI/API trigger — `workflow_dispatch` on a branch/ref (2026-06-29)
+
+`recover-mental-model` is started from a UI with a GitHub token via
+**`workflow_dispatch`** on `agentic-orchestrator.yml`, against a **branch/ref**
+(no PR). The `/recover` comment trigger was dropped (its `triggers` block is now
+empty — workflow_dispatch is orchestrator-level, not a protocol trigger). This is
+the first **non-PR instance**: the engine is otherwise PR-keyed (`pr-<N>`, PR head,
+`refs/pull/<N>/head`, PR comments), and the change is **additive** — a run is
+either PR-targeted (code-review, unchanged) or ref-targeted (this).
+
+- **Inputs:** `protocol` (default `recover-mental-model`), `ref` (blank = default
+  branch), `instance` (UI correlation id; blank = derived `ref-<ref>`). Token
+  scope: **Actions: write**.
+- **Engine threading:** `ctx` adds a `workflow_dispatch` case (instance from the
+  input, `PR=""`, `CHECKOUT_REF` = the ref); the `head` step resolves the SHA from
+  the ref (`gh api repos/$REPO/commits/$REF`) when there's no PR; `aw_context`
+  gains `ref`+`sha`, and the 6 MM agents check out `aw_context.ref` (PR head ref
+  for PR runs, the branch/ref otherwise). PR-only side-effects (the status
+  comment) are skipped when `pr` is empty.
+- **Tracking:** both dispatch APIs return `204` with no run id, so the UI supplies
+  the `instance` and polls the visibility API. The API is **backward compatible**:
+  `…/instances/{ident}` still accepts a bare PR number (`62` → `pr-62`, response
+  still `{"pr": 62, …}`) and now also a full instance id (`ref-main`, `ui-…`,
+  response `{"pr": null, "instance": "ref-main", …}`). `instance` is an additive
+  response field; `state_reader._pr_of` makes `pr` PR-optional.
+- **Still required to actually push** the branch: the `PUBLISH_TOKEN`/PAT wiring
+  noted above.
+
 The historical sections below still say `recover-mental-model-stub` — they are a
 dated record from when it was a stub and are left unchanged.
 

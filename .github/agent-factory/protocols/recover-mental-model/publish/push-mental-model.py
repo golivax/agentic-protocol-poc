@@ -173,9 +173,12 @@ def main():
     pr = os.environ.get("PR", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     link = f"https://github.com/{repo}/tree/{BRANCH}" if repo else BRANCH
-    lib.post_pr_comment(
-        pr, f"🧠 **Mental model recovered** ({legs_done}) — pushed to "
-            f"[`{BRANCH}`]({link}).")
+    # Ref-targeted runs (UI/workflow_dispatch) have no PR to comment on — status is
+    # served by the visibility API; the branch + this verdict are the output.
+    if pr:
+        lib.post_pr_comment(
+            pr, f"🧠 **Mental model recovered** ({legs_done}) — pushed to "
+                f"[`{BRANCH}`]({link}).")
     print(json.dumps({"conclusion": "success",
                       "summary": f"Pushed {BRANCH} ({legs_done})."}))
 

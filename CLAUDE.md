@@ -23,12 +23,16 @@ Three protocols ship under `.github/agent-factory/protocols/`:
 - **`recover-mental-model`** — four parallel mental-model recovery methods
   (`legion` ∥ `codeset` ∥ `ubiquitous-language` ∥ `socratic` sub-pipeline) →
   `join` → `combine` merge that collects all four outputs and pushes them to an
-  orphan `_mental_model` branch (`/recover`; fully automated, no human input).
-  `ubiquitous-language` runs the `domain-modeling` skill to derive a code-only
-  domain glossary (`CONTEXT.md`). The socratic sub-pipeline is three agent steps —
-  `phase1` (build the Question Tree) → `answering` (auto-answer the OPEN leaves via
-  code/web research) → `phase2` (synthesize docs). The combine hook
-  (`publish/push-mental-model.py`) is the only place that writes a
+  orphan `_mental_model` branch. Fully automated, no human input. Started via
+  **`workflow_dispatch`** on `agentic-orchestrator.yml` (a UI/API with an
+  `Actions: write` token) against a **branch/ref** — not a PR; the caller passes
+  `ref` + a correlation `instance` it then polls the visibility API by. This is
+  the one protocol whose instance key is ref-/UI-keyed (`ref-<ref>`/`ui-<id>`)
+  rather than `pr-<N>`. `ubiquitous-language` runs the `domain-modeling` skill to
+  derive a code-only domain glossary (`CONTEXT.md`). The socratic sub-pipeline is
+  three agent steps — `phase1` (build the Question Tree) → `answering` (auto-answer
+  the OPEN leaves via code/web research) → `phase2` (synthesize docs). The combine
+  hook (`publish/push-mental-model.py`) is the only place that writes a
   non-`agentic-state` branch.
 - **`deep-review-stub`** — a depth-4 nested fan-out/sub-pipeline tree
   (`/deep-review`), exercising the recursive engine. Stub agents.
