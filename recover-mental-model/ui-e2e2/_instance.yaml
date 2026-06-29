@@ -1,0 +1,6 @@
+protocol: recover-mental-model
+instance: ui-e2e2
+head_sha: 2428aa415ba91c6aac7c55f51865258e36ea95a7
+phase: recover
+joined: false
+phase_label: recover mental model
