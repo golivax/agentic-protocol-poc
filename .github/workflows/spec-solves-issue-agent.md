@@ -32,10 +32,11 @@ steps:
       mkdir -p /tmp/gh-aw/agent
       gh pr view "$PR" --repo "$REPO" --json number,title,body,files,headRefOid > /tmp/gh-aw/agent/pr.json
       python3 - "$REPO" <<'PY'
-      import base64, json, os, re, subprocess, sys
+      import base64, json, os, subprocess, sys
       sys.path.insert(0, os.path.join(os.environ.get('GITHUB_WORKSPACE', '.'),
                                       '.github/agent-factory/protocols/code-review/checks'))
       import _paths
+      import _locate
       repo = sys.argv[1]
       pr = json.load(open('/tmp/gh-aw/agent/pr.json'))
       head = pr.get('headRefOid') or ''
@@ -46,10 +47,7 @@ steps:
       # (_locate.detect_issue_link, body-only), so the agent's scope.issue_linked and
       # the check's recompute always agree. GraphQL closingIssuesReferences is
       # DEFERRED to a later phase (it would desync agent vs. check otherwise).
-      issue_nums = []
-      for m in re.finditer(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+#(\d+)', body, re.I):
-          n = int(m.group(1))
-          if n not in issue_nums: issue_nums.append(n)
+      issue_nums = _locate.parse_closing_issue_refs(body)
       issue_linked = bool(issue_nums)
       # spec presence: committed is_spec_path file in the diff (NO PR-description fallback for the chain)
       spec_hits = [p for p in files if _paths.is_spec_path(p)]

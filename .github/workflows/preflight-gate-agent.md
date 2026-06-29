@@ -55,7 +55,7 @@ which re-reads the legs independently).
 ## Inputs (already gathered — inline, no network)
 Read `/tmp/gh-aw/task-context.json` (use `cat`). Its `.inputs` object carries the
 three leg evidences, keyed by leg id:
-- `.inputs.spec-solves-issue` — `{coverage[], verdict, scope, examined}`. MAY be absent.
+- `.inputs.spec-solves-issue` — `{matrix[], verdict, scope, examined}`. MAY be absent.
 - `.inputs.plan-implements-spec` — `{spec_to_plan[], plan_to_spec[], verdict, scope, examined}`. MAY be absent.
 - `.inputs.code-implements-plan` — `{plan_to_code[], files[], verdict, scope, examined}`. MAY be absent.
 Also read `.pr`, `.iteration`, `.feedback` (fold prior feedback into this pass).
