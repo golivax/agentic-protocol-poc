@@ -412,6 +412,17 @@ def route(protocols_dir, event_name, action="", comment_body="",
     return {"protocol": path, "command": cmd, "skip": False}
 
 
+def pr_from_instance(instance):
+    """Derive the PR/issue NUMBER from an instance key.
+    pr-<N> and issue-<N> -> <N> (the GitHub thread number, numeric so the engine
+    can comment/label on it). ref-*/ui-* and any other shape pass through verbatim
+    (no numeric thread)."""
+    for prefix in ("pr-", "issue-"):
+        if instance.startswith(prefix):
+            return instance[len(prefix):]
+    return instance
+
+
 def instance_file(d, pid, instance):
     """instance_file <dir> <protocol-id> <instance-key> — shared per-instance bookkeeping."""
     return f"{d}/{pid}/{instance}/_instance.yaml"
