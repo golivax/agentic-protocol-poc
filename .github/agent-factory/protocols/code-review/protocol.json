@@ -16,68 +16,164 @@
       "branches": [
         {
           "id": "spec-solves-issue",
-          "workflow": "spec-solves-issue-agent",
-          "evidence": "spec-solves-issue.evidence.schema.json",
-          "max_iterations": 2,
-          "params": { "require": ["verdict", "examined"] },
-          "checks": [
-            { "run": "evidence-present",            "on_fail": "iterate" },
-            { "run": "spec-solves-issue-coverage", "on_fail": "iterate" }
+          "states": [
+            {
+              "id": "spec-solves-issue-gather",
+              "kind": "agent",
+              "workflow": "spec-solves-issue-agent",
+              "evidence": "spec-solves-issue.evidence.schema.json",
+              "max_iterations": 2,
+              "params": { "require": ["verdict", "examined"] },
+              "checks": [
+                { "run": "evidence-present",           "on_fail": "iterate" },
+                { "run": "spec-solves-issue-coverage", "on_fail": "iterate" }
+              ]
+            },
+            {
+              "id": "spec-solves-issue-judge",
+              "kind": "agent",
+              "workflow": "spec-solves-issue-judge-agent",
+              "evidence": "judge.evidence.schema.json",
+              "max_iterations": 2,
+              "inputs": [ { "from": "spec-solves-issue-gather", "as": "gather" } ],
+              "params": { "leg": "spec-solves-issue", "mode": "spec-solves" },
+              "checks": [ { "run": "judge-coverage", "on_fail": "iterate" } ]
+            }
           ]
         },
         {
           "id": "plan-implements-spec",
-          "workflow": "plan-implements-spec-agent",
-          "evidence": "plan-implements-spec.evidence.schema.json",
-          "max_iterations": 2,
-          "params": { "require": ["verdict", "examined"] },
-          "checks": [
-            { "run": "evidence-present",   "on_fail": "iterate" },
-            { "run": "plan-spec-coverage", "on_fail": "iterate" }
+          "states": [
+            {
+              "id": "plan-implements-spec-gather",
+              "kind": "agent",
+              "workflow": "plan-implements-spec-agent",
+              "evidence": "plan-implements-spec.evidence.schema.json",
+              "max_iterations": 2,
+              "params": { "require": ["verdict", "examined"] },
+              "checks": [
+                { "run": "evidence-present",   "on_fail": "iterate" },
+                { "run": "plan-spec-coverage", "on_fail": "iterate" }
+              ]
+            },
+            {
+              "id": "plan-implements-spec-judge",
+              "kind": "agent",
+              "workflow": "plan-implements-spec-judge-agent",
+              "evidence": "judge.evidence.schema.json",
+              "max_iterations": 2,
+              "inputs": [ { "from": "plan-implements-spec-gather", "as": "gather" } ],
+              "params": { "leg": "plan-implements-spec", "mode": "plan-spec" },
+              "checks": [ { "run": "judge-coverage", "on_fail": "iterate" } ]
+            }
           ]
         },
         {
           "id": "code-implements-plan",
-          "workflow": "code-implements-plan-agent",
-          "evidence": "code-implements-plan.evidence.schema.json",
-          "max_iterations": 2,
-          "params": { "require": ["verdict", "examined"] },
-          "checks": [
-            { "run": "evidence-present",     "on_fail": "iterate" },
-            { "run": "code-plan-coverage",   "on_fail": "iterate" },
-            { "run": "traces-exist-in-diff", "on_fail": "iterate" }
+          "states": [
+            {
+              "id": "code-implements-plan-gather",
+              "kind": "agent",
+              "workflow": "code-implements-plan-agent",
+              "evidence": "code-implements-plan.evidence.schema.json",
+              "max_iterations": 2,
+              "params": { "require": ["verdict", "examined"] },
+              "checks": [
+                { "run": "evidence-present",     "on_fail": "iterate" },
+                { "run": "code-plan-coverage",   "on_fail": "iterate" },
+                { "run": "traces-exist-in-diff", "on_fail": "iterate" }
+              ]
+            },
+            {
+              "id": "code-implements-plan-judge",
+              "kind": "agent",
+              "workflow": "code-implements-plan-judge-agent",
+              "evidence": "judge.evidence.schema.json",
+              "max_iterations": 2,
+              "inputs": [ { "from": "code-implements-plan-gather", "as": "gather" } ],
+              "params": { "leg": "code-implements-plan", "mode": "code-plan" },
+              "checks": [ { "run": "judge-coverage", "on_fail": "iterate" } ]
+            }
           ]
         },
         {
           "id": "mm-compliance",
-          "workflow": "mm-compliance-gate",
-          "evidence": "mm-compliance.evidence.schema.json",
-          "max_iterations": 2,
-          "params": { "require": ["verdict"] },
-          "checks": [
-            { "run": "evidence-present", "on_fail": "iterate" }
+          "states": [
+            {
+              "id": "mm-compliance-gather",
+              "kind": "agent",
+              "workflow": "mm-compliance-gate",
+              "evidence": "mm-compliance.evidence.schema.json",
+              "max_iterations": 2,
+              "params": { "require": ["verdict"] },
+              "checks": [
+                { "run": "evidence-present", "on_fail": "iterate" }
+              ]
+            },
+            {
+              "id": "mm-compliance-judge",
+              "kind": "agent",
+              "workflow": "mm-compliance-judge-agent",
+              "evidence": "judge.evidence.schema.json",
+              "max_iterations": 2,
+              "inputs": [ { "from": "mm-compliance-gather", "as": "gather" } ],
+              "params": { "leg": "mm-compliance", "mode": "mm" },
+              "checks": [ { "run": "judge-coverage", "on_fail": "iterate" } ]
+            }
           ]
         },
         {
           "id": "docs-updated-appropriately",
-          "workflow": "docs-coherence-agent",
-          "evidence": "docs-coherence.evidence.schema.json",
-          "max_iterations": 2,
-          "params": { "require": ["verdict", "examined"] },
-          "checks": [
-            { "run": "evidence-present", "on_fail": "iterate" },
-            { "run": "docs-coverage",    "on_fail": "iterate" }
+          "states": [
+            {
+              "id": "docs-updated-appropriately-gather",
+              "kind": "agent",
+              "workflow": "docs-coherence-agent",
+              "evidence": "docs-coherence.evidence.schema.json",
+              "max_iterations": 2,
+              "params": { "require": ["verdict", "examined"] },
+              "checks": [
+                { "run": "evidence-present", "on_fail": "iterate" },
+                { "run": "docs-coverage",    "on_fail": "iterate" }
+              ]
+            },
+            {
+              "id": "docs-updated-appropriately-judge",
+              "kind": "agent",
+              "workflow": "docs-updated-appropriately-judge-agent",
+              "evidence": "judge.evidence.schema.json",
+              "max_iterations": 2,
+              "inputs": [ { "from": "docs-updated-appropriately-gather", "as": "gather" } ],
+              "params": { "leg": "docs-updated-appropriately", "mode": "coherence" },
+              "checks": [ { "run": "judge-coverage", "on_fail": "iterate" } ]
+            }
           ]
         },
         {
           "id": "tests-updated-appropriately",
-          "workflow": "tests-coherence-agent",
-          "evidence": "tests-coherence.evidence.schema.json",
-          "max_iterations": 2,
-          "params": { "require": ["verdict", "examined"] },
-          "checks": [
-            { "run": "evidence-present", "on_fail": "iterate" },
-            { "run": "tests-coverage",   "on_fail": "iterate" }
+          "states": [
+            {
+              "id": "tests-updated-appropriately-gather",
+              "kind": "agent",
+              "workflow": "tests-coherence-agent",
+              "evidence": "tests-coherence.evidence.schema.json",
+              "max_iterations": 2,
+              "params": { "require": ["verdict", "examined"] },
+              "checks": [
+                { "run": "evidence-present", "on_fail": "iterate" },
+                { "run": "tests-coverage",   "on_fail": "iterate" }
+              ]
+            },
+            {
+              "id": "tests-updated-appropriately-judge",
+              "kind": "agent",
+              "workflow": "tests-updated-appropriately-judge-agent",
+              "evidence": "judge.evidence.schema.json",
+              "max_iterations": 2,
+              "inputs": [ { "from": "tests-updated-appropriately-gather", "as": "gather" } ],
+              "params": { "leg": "tests-updated-appropriately", "mode": "coherence" },
+              "checks": [ { "run": "judge-coverage", "on_fail": "iterate" } ]
+            }
           ]
         }
       ],

@@ -50,3 +50,18 @@ def test_judge_reads_its_gather_sibling():
     assert res == [{"as": "gather",
                     "path": "/s/code-review/pr-1/plan-implements-spec.plan-implements-spec-gather.evidence.json",
                     "kind": "evidence"}]
+
+
+import json
+from conftest import PROTOCOLS
+REAL = json.loads((PROTOCOLS / "code-review/protocol.json").read_text())
+
+def test_real_protocol_gate_resolves_terminal_judges():
+    legs = ["spec-solves-issue", "plan-implements-spec", "code-implements-plan",
+            "mm-compliance", "docs-updated-appropriately", "tests-updated-appropriately"]
+    res = lib.resolve_inputs(REAL, "/s", "code-review", "pr-1",
+                             consuming_branch=None, consuming_phase=None,
+                             inputs=[{"from": l, "as": l} for l in legs])
+    paths = {r["as"]: r["path"] for r in res}
+    for l in legs:
+        assert paths[l] == f"/s/code-review/pr-1/{l}.{l}-judge.evidence.json"

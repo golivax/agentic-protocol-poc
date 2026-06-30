@@ -29,10 +29,11 @@ def test_preflight_gate_inputs_resolve_to_each_leg_evidence():
         inputs=lib.state_inputs(proto, "preflight-gate"), consuming_path=["preflight-gate"])
     by_as = {r["as"]: r for r in resolved}
     for leg in ("spec-solves-issue", "plan-implements-spec", "code-implements-plan", "mm-compliance", "docs-updated-appropriately", "tests-updated-appropriately"):
-        leg_ev = lib.output_artifact_path(
-            d, pid, inst, path=lib.state_path(proto, ["preflight", leg]), kind="evidence")
-        assert by_as[leg]["path"] == leg_ev
-        assert by_as[leg]["path"].endswith(f"/preflight.{leg}.evidence.json")
+        # Each branch is now a gather->judge sub-pipeline; the resolver returns the terminal judge.
+        judge_ev = lib.output_artifact_path(
+            d, pid, inst, path=lib.state_path(proto, ["preflight", leg, f"{leg}-judge"]), kind="evidence")
+        assert by_as[leg]["path"] == judge_ev
+        assert by_as[leg]["path"].endswith(f"/preflight.{leg}.{leg}-judge.evidence.json")
         assert by_as[leg]["kind"] == "evidence"
 
 
