@@ -1,7 +1,7 @@
 protocol: recover-mental-model
 instance: ref-main
-state: done
-sub_state: phase2
+state: recover
+sub_state: phase1
 iteration: 1
 gates: {}
 history: []
