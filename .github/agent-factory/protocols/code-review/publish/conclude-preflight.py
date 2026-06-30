@@ -56,18 +56,33 @@ def _load_leg(name):
         return {}
 
 
+def _gather(leg):
+    g = leg.get("gather")
+    return g if isinstance(g, dict) else {}
+
+
 def _verdict(leg):
-    v = leg.get("verdict")
+    v = _gather(leg).get("verdict")
     return v if isinstance(v, str) else "n/a"
 
 
 def _scope(leg):
-    s = leg.get("scope")
+    s = _gather(leg).get("scope")
     return s if isinstance(s, dict) else {}
 
 
 def _flag(leg, key):
     return bool(_scope(leg).get(key, False))
+
+
+def _has_blocking_grade(leg):
+    return any(isinstance(g, dict) and g.get("severity") == "blocking"
+               for g in (leg.get("graded_findings") or []))
+
+
+def _present(leg):
+    """A leg whose judge evidence is missing/garbled => fail-safe block."""
+    return bool(leg) and isinstance(leg.get("gather"), dict)
 
 
 def rollup(spec_leg, plan_leg, code_leg, mm_leg, docs_leg, tests_leg):
@@ -105,6 +120,21 @@ def rollup(spec_leg, plan_leg, code_leg, mm_leg, docs_leg, tests_leg):
     if code_v == "overplan":
         warnings.append("code adds changes beyond the plan (overplan)")
 
+    # fail-safe: a missing/garbled judge leg blocks (NEW — was no-signal)
+    for name, leg in (("spec-solves-issue", spec_leg), ("plan-implements-spec", plan_leg),
+                      ("code-implements-plan", code_leg), ("mm-compliance", mm_leg),
+                      ("docs-updated-appropriately", docs_leg), ("tests-updated-appropriately", tests_leg)):
+        if not _present(leg):
+            reasons.append(f"{name}: judge evidence missing or unreadable (fail-safe block)")
+
+    # escalation: an in-scope, non-floor leg the judge graded blocking
+    FLOOR_VERDICTS = {"does-not-solve", "underspec", "underplan", "diverges", "inadequate"}
+    for name, leg in (("spec-solves-issue", spec_leg), ("plan-implements-spec", plan_leg),
+                      ("code-implements-plan", code_leg), ("mm-compliance", mm_leg),
+                      ("docs-updated-appropriately", docs_leg), ("tests-updated-appropriately", tests_leg)):
+        if _present(leg) and _verdict(leg) not in FLOOR_VERDICTS and _has_blocking_grade(leg):
+            reasons.append(f"{name}: judge flagged a blocking finding")
+
     return reasons, warnings
 
 
@@ -120,7 +150,7 @@ def _render_comment(status, reasons, warnings, spec_leg, plan_leg, code_leg, mm_
     lines.append("| leg | verdict |")
     lines.append("|---|---|")
     for name, leg in rows:
-        lines.append(f"| {name} | `{_verdict(leg)}` |")
+        lines.append(f"| {name} | `{_verdict(leg)}`{' · judge:blocking' if _has_blocking_grade(leg) else ''} |")
     if reasons:
         lines += ["", "**Blocking:**"] + [f"- {r}" for r in reasons]
     if warnings:
