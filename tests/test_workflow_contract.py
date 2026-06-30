@@ -87,7 +87,10 @@ def test_engine_yml_derives_issue_instance_and_default_branch():
 def test_design_agent_lock_is_readonly_and_bundles_spec():
     t = _load("impl-feature-auto-design-agent.lock.yml")
     assert "pull-requests: write" not in t  # read-only
-    assert "create-pull-request" not in t   # design opens no PR
+    # design opens no PR — guard BOTH the hyphenated source key and the
+    # underscored token gh-aw actually compiles to (the hyphen form alone is
+    # dead, since the compiler only ever emits create_pull_request).
+    assert "create_pull_request" not in t and "create-pull-request" not in t
     assert "evidence" in t                  # uploads evidence artifact
     assert ".claude/skills" in t            # stages superpowers
 
