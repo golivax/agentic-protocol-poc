@@ -294,15 +294,17 @@ def is_multiphase(protocol):
     return len(phase_states(protocol)) > 1
 
 
-def match_trigger(protocol, event_name, action="", comment_body=""):
+def match_trigger(protocol, event_name, action="", comment_body="", is_pr_comment=True):
     """Map an ENTRY GitHub event to an engine command via protocol["triggers"].
-    Returns the command ("start"/"reset"/...) or "" if nothing matches (the
-    workflow then no-ops). Internal re-entry dispatches (protocol-continue /
-    protocol-join) are generic and NOT handled here."""
+    For issue_comment, a trigger's `target` (default "pr") must match whether the
+    comment is on a PR (is_pr_comment True) or a plain issue (False)."""
     for t in protocol.get("triggers", []):
         if t.get("on") != event_name:
             continue
         if event_name == "issue_comment":
+            want = "pr" if is_pr_comment else "issue"
+            if t.get("target", "pr") != want:
+                continue
             prefix = t.get("comment_prefix", "")
             if not prefix or comment_body.startswith(prefix):
                 return t.get("command", "")
@@ -372,21 +374,21 @@ def route(protocols_dir, event_name, action="", comment_body="",
         protocol NAME (advance.py sends pid; protocol-join.yml rebuilds the path
         the same way), so reconstruct <protocols_dir>/<name>/protocol.json — the
         engine needs a path to open. No scan; command re-derived from the type.
-      - issue_comment on a non-PR issue: skip (the engine ignores these anyway).
-      - entry event (pull_request / PR issue_comment): glob protocols in sorted
-        order, run match_trigger on each; 0 matches -> skip, exactly 1 -> route,
-        >=2 -> raise ValueError (ambiguous; the router job then fails loudly).
+      - entry event (pull_request / issue_comment): glob protocols in sorted
+        order, run match_trigger on each (forwarding is_pr_comment so a comment's
+        trigger `target` pr/issue must match a PR vs a plain issue); 0 matches ->
+        skip, exactly 1 -> route, >=2 -> raise ValueError (ambiguous; the router
+        job then fails loudly).
     """
     if dispatch_protocol:
         return {"protocol": os.path.join(protocols_dir, dispatch_protocol, "protocol.json"),
                 "command": "", "skip": False}
-    if event_name == "issue_comment" and not is_pr_comment:
-        return {"protocol": "", "command": "", "skip": True}
     matches = []
     for path in sorted(glob.glob(os.path.join(protocols_dir, "*", "protocol.json"))):
         with open(path) as f:
             proto = json.load(f)
-        cmd = match_trigger(proto, event_name, action, comment_body)
+        cmd = match_trigger(proto, event_name, action, comment_body,
+                            is_pr_comment=is_pr_comment)
         if cmd:
             matches.append((path, cmd))
     if not matches:

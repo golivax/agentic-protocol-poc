@@ -64,6 +64,42 @@ def test_non_pr_comment_skips_without_scanning():
         assert r["skip"] is True
 
 
+ISSUE_TRIGGERS = [
+    {"on": "issue_comment", "comment_prefix": "/impl-feature-auto",
+     "command": "start", "target": "issue"},
+]
+
+
+def test_issue_targeted_trigger_routes_on_plain_issue_comment():
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        pdir = _mk_protocols(Path(td), {"iface": ISSUE_TRIGGERS})
+        r = lib.route(pdir, "issue_comment", "", "/impl-feature-auto go",
+                      is_pr_comment=False)
+        assert r["skip"] is False
+        assert r["command"] == "start"
+        assert r["protocol"].endswith("iface/protocol.json")
+
+
+def test_pr_targeted_trigger_does_not_route_on_plain_issue_comment():
+    # A default (pr) trigger must NOT fire on a plain-issue comment.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        pdir = _mk_protocols(Path(td), {"fanout-demo": DEMO_TRIGGERS})
+        r = lib.route(pdir, "issue_comment", "", "/grumpy", is_pr_comment=False)
+        assert r["skip"] is True
+
+
+def test_issue_targeted_trigger_does_not_route_on_pr_comment():
+    # And the issue-targeted trigger must NOT fire on a PR comment.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        pdir = _mk_protocols(Path(td), {"iface": ISSUE_TRIGGERS})
+        r = lib.route(pdir, "issue_comment", "", "/impl-feature-auto go",
+                      is_pr_comment=True)
+        assert r["skip"] is True
+
+
 def test_dispatch_protocol_resolves_name_to_path():
     # repository_dispatch carries the protocol NAME (advance.py sends pid); route
     # reconstructs <protocols_dir>/<name>/protocol.json — the convention join uses.
