@@ -53,3 +53,50 @@ files (security-gather-agent.md, .lock.yml, schema, check, test). No other lock 
 ## Commit Hash
 
 (see below — committed after this report is written)
+
+---
+
+## FINAL-REVIEW C1 Fix: drop `anchor-engine-findings.js` post-step
+
+### What was removed
+
+From `.github/workflows/security-gather-agent.md`:
+- The entire `post-steps[0]` entry named "Anchor engine findings and assemble security-gather evidence"
+  (the `node "$SEC/anchor-engine-findings.js" ...` call that rewrote `/tmp/gh-aw/evidence.json`
+  in-place, overwriting `verdict` to `REQUEST_CHANGES` on a LOCKED violation — not in the
+  `PASS|LOCKED_VIOLATION|n/a` enum).
+- Stale mention of `anchor-engine-findings.js` in the agent prompt body.
+- Stale "fold violations into anchored findings" comment in the Cedar+Guardians step.
+
+Retained: all engine-running steps (`run-cedar.js` / `plan-extract.js` / `verify_driver.py` /
+`emit-engine-report.js`). `engine_report` is still produced and available; `anchor-engine-findings.js`
+is left on disk unused.
+
+### Other callers of `anchor-engine-findings.js`
+
+`grep -rn "anchor-engine-findings" --include="*.md" --include="*.yml"` finds:
+- `security-gather-agent.lock.yml` — compiled from `.md`; updated by `gh aw compile` to no longer call it.
+- `review-security-agent.md` / `.lock.yml` — NOT present (R2-6 already removed it from there).
+- Only docs/plans/specs (read-only). No live workflow still invokes the script.
+
+### Tests added (to `tests/test_security_gather_coverage.py`)
+
+Two new regression tests (total now 16):
+1. `test_security_gather_agent_no_anchor_engine_findings` — reads `security-gather-agent.md`, asserts
+   the string `anchor-engine-findings` is absent. Pins the clobber path as removed.
+2. `test_locked_violation_with_locked_true_passes_check` — a `LOCKED_VIOLATION` verdict + `locked:true`
+   violation in `engine_report` must PASS `security-gather-coverage`, proving no downstream step forces
+   the verdict to `REQUEST_CHANGES`.
+
+### Pytest summaries
+
+Module: `16 passed in 1.54s`
+Full suite: `696 passed, 1 warning in 71.15s`
+
+### Check exec bits (`git ls-files -s`)
+
+All three checks still 100755 after `gh aw compile` — no mode flip to restore.
+
+### Commit
+
+`79a0aac` — `fix(security-gather): drop anchor-engine-findings post-step (clobbered the LOCKED_VIOLATION verdict)`
