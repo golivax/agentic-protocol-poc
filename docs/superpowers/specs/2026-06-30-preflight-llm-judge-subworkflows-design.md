@@ -475,11 +475,13 @@ Cedar+Guardians security gate forward out of the `review` phase into preflight.
 
 ```
 preflight   kind: fanout              max_depth: 6
-  ├─ adherence     states: [ adherence-fanout (fanout: spec-solves-issue ∥ plan-implements-spec ∥ code-implements-plan, each [<leg>-gather → <leg>-judge])
+  ├─ adherence     states: [ adherence-intro (agent)            ← REQUIRED leading agent (see dispatch constraint)
+  │                          → adherence-fanout (fanout: spec-solves-issue ∥ plan-implements-spec ∥ code-implements-plan, each [<leg>-gather → <leg>-judge])
   │                          → join-adherence (join, of: adherence-fanout)
   │                          → adherence-rollup (agent) ]
   ├─ mm-compliance states: [ mm-compliance-gather → mm-compliance-judge ]
-  ├─ consistency   states: [ consistency-fanout (fanout: docs-updated-appropriately ∥ tests-updated-appropriately, each [<leg>-gather → <leg>-judge])
+  ├─ consistency   states: [ consistency-intro (agent)
+  │                          → consistency-fanout (fanout: docs-updated-appropriately ∥ tests-updated-appropriately, each [<leg>-gather → <leg>-judge])
   │                          → join-consistency (join, of: consistency-fanout)
   │                          → consistency-rollup (agent) ]
   └─ security      states: [ security-gather → security-judge ]
@@ -491,7 +493,21 @@ preflight-gate   kind: agent (root halt-bearer)
      conclude: conclude-preflight    on_blocked: halt    next: overview
 ```
 
-**The inputs-resolution rule that forces this shape** (verified against
+**The dispatch constraint that forces the leading agents** (live-discovered on
+SiRumCz PR #7, 2026-06-30): the engine cannot ENTER a fanout-branch whose first
+sub-state is itself a fanout — when `preflight` fans out, each branch's entry
+sub-state is dispatched as an agent, and a fanout has no `workflow`, so the
+dispatch fails (`adherence`/`consistency` failed; the agent-first `mm-compliance`/
+`security` branches dispatched fine). `deep-review-stub` works because its `deep`
+branch leads with an agent (`triage`) before its inner fanout. So each cluster
+sub-pipeline MUST lead with a dispatchable **agent** (`adherence-intro`,
+`consistency-intro`); the engine dispatches it, then the sequencer enters the
+inner fanout. The intros are thin structural glue (emit a minimal evidence, pass
+`evidence-present`, reach `done`); nothing consumes their evidence. (The R2-1
+de-risk gate tested `inputs` resolution but NOT the dispatch/enter path — hence
+this surfaced only in the live run; the re-test must exercise dispatch.)
+
+**The inputs-resolution rule that forces the rollups** (verified against
 `lib._resolve_input_ref_pathaware`): the resolver descends **one fanout level**
 from the consuming scope, and a `join` writes **no** evidence. Therefore:
 - `preflight-gate` (root) reads each branch's **terminal sub-state**, which must
