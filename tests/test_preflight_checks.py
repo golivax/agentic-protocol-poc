@@ -31,30 +31,3 @@ def test_paths_classifiers():
     assert P.is_test("tests/test_x.py") and P.is_test("foo.test.js")
     assert P.is_code("src/app.py")
     assert not P.is_code("README.md") and not P.is_code("tests/test_x.py")
-
-
-# docs/tests-updated (advisory) ------------------------------------------------
-
-def test_docs_updated_pass_when_docs_changed(tmp_path):
-    v = _run("docs-updated-with-code.py", ["src/app.py", "docs/guide.md"], tmp_path)
-    assert v["pass"] is True
-
-
-def test_docs_updated_warn_when_code_only(tmp_path):
-    v = _run("docs-updated-with-code.py", ["src/app.py"], tmp_path)
-    assert v["pass"] is False and "doc" in v["feedback"].lower()
-
-
-def test_docs_updated_pass_when_no_code(tmp_path):
-    v = _run("docs-updated-with-code.py", ["README.md"], tmp_path)
-    assert v["pass"] is True  # no code changed → not applicable → pass
-
-
-def test_tests_updated_pass_when_tests_changed(tmp_path):
-    v = _run("tests-updated-with-code.py", ["src/app.py", "tests/test_app.py"], tmp_path)
-    assert v["pass"] is True
-
-
-def test_tests_updated_warn_when_code_only(tmp_path):
-    v = _run("tests-updated-with-code.py", ["src/app.py"], tmp_path)
-    assert v["pass"] is False and "test" in v["feedback"].lower()

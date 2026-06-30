@@ -57,6 +57,28 @@
           "checks": [
             { "run": "evidence-present", "on_fail": "iterate" }
           ]
+        },
+        {
+          "id": "docs-updated-appropriately",
+          "workflow": "docs-coherence-agent",
+          "evidence": "docs-coherence.evidence.schema.json",
+          "max_iterations": 2,
+          "params": { "require": ["verdict", "examined"] },
+          "checks": [
+            { "run": "evidence-present", "on_fail": "iterate" },
+            { "run": "docs-coverage",    "on_fail": "iterate" }
+          ]
+        },
+        {
+          "id": "tests-updated-appropriately",
+          "workflow": "tests-coherence-agent",
+          "evidence": "tests-coherence.evidence.schema.json",
+          "max_iterations": 2,
+          "params": { "require": ["verdict", "examined"] },
+          "checks": [
+            { "run": "evidence-present", "on_fail": "iterate" },
+            { "run": "tests-coverage",   "on_fail": "iterate" }
+          ]
         }
       ],
       "next": "join-preflight"
@@ -70,16 +92,16 @@
       "evidence": "preflight-gate.evidence.schema.json",
       "max_iterations": 2,
       "inputs": [
-        { "from": "spec-solves-issue",    "as": "spec-solves-issue" },
-        { "from": "plan-implements-spec", "as": "plan-implements-spec" },
-        { "from": "code-implements-plan", "as": "code-implements-plan" },
-        { "from": "mm-compliance",        "as": "mm-compliance" }
+        { "from": "spec-solves-issue",         "as": "spec-solves-issue" },
+        { "from": "plan-implements-spec",       "as": "plan-implements-spec" },
+        { "from": "code-implements-plan",       "as": "code-implements-plan" },
+        { "from": "mm-compliance",             "as": "mm-compliance" },
+        { "from": "docs-updated-appropriately",  "as": "docs-updated-appropriately" },
+        { "from": "tests-updated-appropriately", "as": "tests-updated-appropriately" }
       ],
-      "params": { "legs": ["spec-solves-issue", "plan-implements-spec", "code-implements-plan", "mm-compliance"] },
+      "params": { "legs": ["spec-solves-issue", "plan-implements-spec", "code-implements-plan", "mm-compliance", "docs-updated-appropriately", "tests-updated-appropriately"] },
       "checks": [
         { "run": "preflight-gate-coverage", "on_fail": "iterate"  },
-        { "run": "docs-updated-with-code",  "on_fail": "advisory" },
-        { "run": "tests-updated-with-code", "on_fail": "advisory" },
         { "run": "local-review-evidence",   "on_fail": "advisory" }
       ],
       "conclude": "conclude-preflight",
