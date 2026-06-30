@@ -191,6 +191,10 @@
           "type": "string",
           "description": "gate: makes this a DATA gate — names a sibling node whose evidence carries the questions to ask (answered via the command's /answer prefix). Omit for a human-APPROVAL gate."
         },
+        "channel": {
+          "enum": ["comment", "issue"],
+          "description": "gate: where to ask. 'comment' (default) posts on the PR; 'issue' opens a dedicated GitHub issue (for ref/UI-keyed runs with no PR) and routes the answer back via a marker in the issue body."
+        },
         "approve_excludes_author": {
           "type": "boolean",
           "description": "gate (approval): if true, the PR author cannot approve their own gate."

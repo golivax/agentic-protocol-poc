@@ -86,7 +86,7 @@ pre-agent-steps:
                             "bytes": os.path.getsize(ap)})
       json.dump({"method": "socratic:phase1",
                  "run_id": os.environ.get("GITHUB_RUN_ID", ""),
-                 "files": files}, sys.stdout)
+                 "questions": [], "files": files}, sys.stdout)
       PY
       cat /tmp/gh-aw/evidence.json
 post-steps:
@@ -111,22 +111,29 @@ timeout-minutes: 30
 
 Phase 1 of the skill already ran in the setup steps and staged
 `QUESTION_TREE-*.adoc` + `OPEN_QUESTIONS-*.adoc` into `/tmp/gh-aw/out`, and seeded
-`/tmp/gh-aw/evidence.json` with a `run_id` + a `files` manifest. The OPEN leaves
-are answered automatically by the downstream `answering` step (no human gate).
+`/tmp/gh-aw/evidence.json` with a `run_id`, a `files` manifest, and an empty
+`questions` array.
 
 ## Task context
 
 Read `/tmp/gh-aw/task-context.json` (`pr`, `iteration`, `feedback`).
 
-## Your job (verify-and-repair only)
+## Your job
 
 1. Confirm `/tmp/gh-aw/evidence.json` is valid JSON with a non-empty `run_id`
-   and a `files` array.
-2. Confirm the staged tree at `/tmp/gh-aw/out` contains `QUESTION_TREE-*.adoc`
-   and `OPEN_QUESTIONS-*.adoc` — what the `socratic-phase1-present` check requires.
-3. If the manifest does not reflect the files actually on disk, regenerate
-   `/tmp/gh-aw/evidence.json` from the real contents of `/tmp/gh-aw/out`
-   (paths relative to that dir), keeping `run_id` = `GITHUB_RUN_ID`.
-4. Do NOT post comments or touch GitHub. The engine dispatches the `answering`
-   step next; it downloads your `mm-tree-socratic-phase1` artifact by `run_id`,
-   answers the OPEN leaves automatically, and hands the answered tree to phase 2.
+   and a `files` array; confirm `/tmp/gh-aw/out` contains `QUESTION_TREE-*.adoc`
+   and `OPEN_QUESTIONS-*.adoc` (what the `socratic-phase1-present` check requires).
+   If the manifest doesn't reflect the files on disk, regenerate it (keep
+   `run_id` = `GITHUB_RUN_ID`).
+2. **Surface the OPEN leaves as questions.** Read the staged `OPEN_QUESTIONS-*.adoc`;
+   for EACH `[OPEN]` leaf produce one `{ "id": <Q-ID>, "text": <question, with the
+   role to ask in parentheses> }` (use the leaf's Q-ID, e.g. `Q1.4.1`; synthesize
+   `q1`,`q2`,… in document order if a leaf has none). Write them into the
+   `questions` array of `/tmp/gh-aw/evidence.json`, preserving `run_id` + `files`.
+   There must be ≥1 (the `questions-present` check rejects an empty list).
+3. Do NOT post comments or touch GitHub.
+
+The `questions` array is consumed two ways depending on the protocol: the
+**non-interactive** `answering` agent auto-answers them; the **interactive**
+`answering` gate posts them on an issue for a human to answer. Either way phase 1
+is identical — just surface the OPEN leaves accurately.

@@ -555,6 +555,10 @@ def do_answer():
     gsf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, gate_path))
     gdata = lib.load_yaml(gsf)
     questions = gdata.get("gates", {}).get("questions", []) or []
+    # Interactive (issue-channel) gate: feedback goes to the question issue, not a PR.
+    # `fb` is the comment target (the gate's issue if present, else the PR).
+    issue_no = gdata.get("gates", {}).get("issue")
+    fb = issue_no or pr
 
     # Merge new answers into the persisted answers artifact.
     apath = lib.output_artifact_path(DIR, PID, INSTANCE,
@@ -591,7 +595,7 @@ def do_answer():
     if not verdict.get("pass"):
         lib.dump_yaml(gsf, gdata)
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} partial answers")
-        lib.post_pr_comment(pr, f"Recorded. Still needed: {verdict.get('feedback', '')}.")
+        lib.post_pr_comment(fb, f"Recorded. Still needed: {verdict.get('feedback', '')}.")
         print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
                           "reason": "answer: partial"}))
         return
@@ -652,7 +656,10 @@ def do_answer():
         lib.set_check_run(f"{PID}/{branch}/{gate}", sha, "completed", "success",
                           "Answered", f"Answered by @{actor}.")
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered -> {nxt_sub}")
-        lib.post_pr_comment(pr, f"{gate} answered by @{actor}; continuing to {nxt_sub}.")
+        # Interactive gate: close the question issue now that it's fully answered.
+        if issue_no:
+            lib.close_issue(issue_no, f"Answered by @{actor} — resuming mental-model recovery.")
+        lib.post_pr_comment(fb, f"{gate} answered by @{actor}; continuing to {nxt_sub}.")
         # Path-only dispatch: the unified `continue` handler requires NODE_PATH.
         # nxt_path is the next sub-state's full tree path (e.g. recover.rationale.finalize).
         lib.dispatch_continue(PID, INSTANCE, path=".".join(nxt_path))
@@ -660,6 +667,8 @@ def do_answer():
         cur["state"] = "done"
         lib.dump_yaml(cf, cur)
         lib.cas_push(DIR, f"{INSTANCE}: branch {branch} gate {gate} answered -> leg done")
+        if issue_no:
+            lib.close_issue(issue_no, f"Answered by @{actor} — resuming mental-model recovery.")
         lib.fire_join_dispatch(PID, INSTANCE)
     print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
                       "reason": "answer: complete"}))

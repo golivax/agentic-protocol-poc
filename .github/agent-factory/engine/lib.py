@@ -415,15 +415,34 @@ def instance_file(d, pid, instance):
     return f"{d}/{pid}/{instance}/_instance.yaml"
 
 
+def issue_question_body(pid, instance, gate_id, questions):
+    """The body of an interactive-gate question issue: a machine marker (so the
+    answer comment can be routed back to this run) + a parseable YAML block of the
+    questions (for a UI to render) + the /answer instructions."""
+    marker = f"<!-- agentic-mm: protocol={pid} instance={instance} gate={gate_id} -->"
+    qlines = "\n".join(f"  - id: {q['id']}\n    text: {json.dumps(q['text'])}" for q in questions)
+    eg = questions[0]["id"] if questions else "q1"
+    return (
+        f"{marker}\n\n"
+        f"## Open questions — answer to resume mental-model recovery (`{instance}`)\n\n"
+        f"```yaml\nquestions:\n{qlines}\n```\n\n"
+        f"Reply with one or more `/answer <id>: <value>` lines in a single comment, "
+        f"e.g. `/answer {eg}: …`. The run resumes automatically and this issue is "
+        f"closed once every question is answered."
+    )
+
+
 def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, questions=None,
-              phase=None, path=None):
+              phase=None, path=None, channel="comment"):
     """Seed a gate state file (gates.state=open), emit the awaiting check-run, and
     refresh the status comment. `branch` scopes the gate to a sub-pipeline leg.
     `phase` qualifies the path for multi-phase fan-out legs (e.g. review.B.clarify.yaml).
     `path` is the canonical FILE-NAMING path (already converted via state_path); when
     given it takes precedence over branch/phase/gate_id for the state file and check-run
     name. `questions` (a list of {id,text}) turns this into a data-carrying gate whose
-    comment lists them with the /answer syntax. Caller owns the cursor + cas_push."""
+    comment lists them with the /answer syntax. `channel="issue"` opens a dedicated
+    GitHub issue (for ref/UI-keyed runs that have no PR) instead of posting to `pr`,
+    and records its number on `gates.issue`. Caller owns the cursor + cas_push."""
     if path is not None:
         sf = state_file(dir_, pid, instance, path=path)
         # Build check-run name from path segments: pid + path elements joined by "/"
@@ -438,6 +457,19 @@ def open_gate(dir_, pid, instance, proto_path, gate_id, sha, pr, branch=None, qu
     gates = {"state": "open", "history": []}
     if questions:
         gates["questions"] = questions
+    if questions and channel == "issue":
+        # Interactive (no-PR) gate: open a dedicated question issue; the answer
+        # comment is routed back via the marker in its body (mm-interactive-resume.yml).
+        num = create_issue(f"Mental model — open questions ({instance})",
+                           issue_question_body(pid, instance, gate_id, questions))
+        gates["channel"] = "issue"
+        if num:
+            gates["issue"] = num
+        dump_yaml(sf, {"protocol": pid, "instance": instance, "state": gate_id,
+                       "head_sha": sha, "gates": gates})
+        set_check_run(cr_name, sha, "in_progress", "", "Awaiting answers",
+                      f"Answer the questions on issue #{num or '(created)'} with `/answer <id>: <value>`.")
+        return
     dump_yaml(sf, {
         "protocol": pid, "instance": instance, "state": gate_id,
         "head_sha": sha, "gates": gates,
@@ -799,6 +831,51 @@ def post_pr_comment(pr, body):
     )
     if result.returncode != 0:
         sys.stderr.write(f"[engine] pr comment post failed (needs issues:write): {result.stderr.strip()}\n")
+
+
+def _gh_env():
+    env = dict(os.environ)
+    tok = os.environ.get("PUBLISH_TOKEN", "")
+    if tok:
+        env["GH_TOKEN"] = tok
+    return env
+
+
+def create_issue(title, body):
+    """Open a GitHub issue; return its number as a string (or "" on failure).
+    Used by interactive (no-PR) question gates. Best-effort; ENGINE_LOCAL → log +
+    return a stub number so the gate still records an issue locally."""
+    if os.environ.get("ENGINE_LOCAL", "0") == "1":
+        sys.stderr.write(f"[ENGINE_LOCAL] create issue: {title}\n")
+        return "0"
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    r = subprocess.run(
+        ["gh", "api", f"repos/{repo}/issues", "-f", f"title={title}",
+         "-f", f"body={body}", "--jq", ".number"],
+        text=True, capture_output=True, env=_gh_env(),
+    )
+    if r.returncode != 0:
+        sys.stderr.write(f"[engine] create issue failed (needs issues:write): {r.stderr.strip()}\n")
+        return ""
+    return r.stdout.strip()
+
+
+def close_issue(number, comment=""):
+    """Comment (optional) then close an issue. Best-effort; ENGINE_LOCAL → log."""
+    if not str(number).strip():
+        return
+    if os.environ.get("ENGINE_LOCAL", "0") == "1":
+        sys.stderr.write(f"[ENGINE_LOCAL] close issue #{number}: {comment}\n")
+        return
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    env = _gh_env()
+    if comment:
+        subprocess.run(["gh", "api", f"repos/{repo}/issues/{number}/comments",
+                        "-f", f"body={comment}"], text=True, capture_output=True, env=env)
+    r = subprocess.run(["gh", "api", "-X", "PATCH", f"repos/{repo}/issues/{number}",
+                        "-f", "state=closed"], text=True, capture_output=True, env=env)
+    if r.returncode != 0:
+        sys.stderr.write(f"[engine] close issue failed (needs issues:write): {r.stderr.strip()}\n")
 
 
 def finalize_superseded_comment(pr, cid, body):
