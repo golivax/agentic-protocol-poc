@@ -16,6 +16,7 @@
 - **Conclude-hook ABI:** `<hook> <evidence.json> <instance-key>`; inherits env incl. `PUBLISH_TOKEN`, `GH_TOKEN`, `GITHUB_REPOSITORY`, `PR`, `PR_HEAD_SHA`, `ENGINE_LOCAL`, and (for states with `inputs`) `CONCLUDE_INPUTS_DIR`; must print `{"conclusion","summary","blocked"}` on stdout. Runs **once on the final passing iteration**.
 - **`ENGINE_LOCAL=1` must short-circuit every network/git side effect** to a `*_OUT` file (mirrors existing hooks). Tests rely on this.
 - **Security:** agent-derived strings (titles, findings, branch names) are passed to `subprocess` via argument lists / env, never interpolated into a shell string.
+- **`gh aw compile` flips check exec bits:** every `gh aw compile` resets `*.py` (incl. our `code-review-demo/checks/*.py` and `publish/*.py`) to `100644`. After ANY compile step, restore exec bits and re-stage: `chmod 755 .github/agent-factory/protocols/code-review-demo/checks/*.py .github/agent-factory/protocols/code-review-demo/publish/conclude-*.py` and `git add` the mode change. Otherwise the engine reports checks as non-executable.
 - **Trigger:** `code-review-demo` uses `/demo-review` (not `/review`) to avoid router overlap with `code-review`.
 - **Engine version:** `code-review-demo/protocol.json` sets `"min_engine_version": "1.0.0"` (matching `code-review`).
 
@@ -946,15 +947,26 @@ Expected: exits 0; prints the `review → triage → fix` tree.
 Run: `uv run pytest tests/ -q`
 Expected: all pass (630 prior + the new demo tests; 0 failures).
 
-- [ ] **Step 4: Compile all gh-aw agents and confirm clean**
+- [ ] **Step 4: Compile all gh-aw agents, then restore check exec bits**
 
-Run: `gh aw compile`
-Expected: no errors; `git status` shows only expected `.lock.yml` changes (the 5 demo review agents + fix-agent).
+Run:
+```bash
+gh aw compile
+chmod 755 .github/agent-factory/protocols/code-review-demo/checks/*.py \
+          .github/agent-factory/protocols/code-review-demo/publish/conclude-*.py
+git diff --stat
+```
+Expected: no compile errors; `git status` shows the expected `.lock.yml` changes (5 demo review agents + fix-agent) and the chmod restores any flipped `100644` check bits back to `100755`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Verify the demo check scripts are executable in git**
+
+Run: `git ls-files -s .github/agent-factory/protocols/code-review-demo/checks .github/agent-factory/protocols/code-review-demo/publish | grep -v '100755' | grep -E '\.py$' || echo "all .py are 100755"`
+Expected: prints `all .py are 100755` (every check/conclude script keeps its exec bit).
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add tests/test_dist_min_engine_version.py
+git add tests/test_dist_min_engine_version.py .github/agent-factory/protocols/code-review-demo
 git commit -m "test(demo): cover code-review-demo in min-engine-version + lint gate"
 ```
 
