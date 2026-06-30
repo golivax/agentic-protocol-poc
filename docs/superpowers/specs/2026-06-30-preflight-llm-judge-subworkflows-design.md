@@ -625,3 +625,69 @@ dead text removed.
   per `docs/STATUS.md` these degrade to advisory when a toolchain is absent — the
   `security-gather` agent inherits that behavior; the deterministic `verdict`
   must fail-open to `n/a` (never silently `PASS`) when an engine could not run.
+
+---
+
+# Revision 3 — lighten the judge contract (live-found fragility fix)
+
+**Status:** approved (supersedes R1/R2's judge evidence shape + the
+"`judge-coverage` re-runs the gather check on `evidence.gather`" mechanism;
+everything else — the 4-cluster topology, leading agents, rollups, the floor
+policy, trust zones — carries forward).
+
+## Why
+Live test (SiRumCz PR #7, 2026-06-30): the chain/coherence judges **exhausted**
+`judge-coverage` at iteration 2 because the LLM could not reproduce the gather
+evidence verbatim — iter 1 `judge evidence needs a 'gather' object` (dropped the
+copy), iter 2 `gather copy fails its own check: no linked issue but verdict is
+not n/a with empty matrix` (mangled the verdict). The simple-evidence judges
+(`mm`, `security`) PASSED. Conclusion: requiring the LLM to copy a complex gather
+evidence object verbatim is unreliable; shrink what it must reproduce.
+
+## New judge evidence shape
+```json
+{ "leg": "<leg>",
+  "scope": { "...echoed verbatim from the gather's scope (small object; {} for mm/security)..." },
+  "gather_verdict": "<echoed verbatim from the gather's verdict>",
+  "graded_findings": [ { "ref": "<finding key>", "severity": "blocking|advisory|noise", "rationale": "..." } ],
+  "examined": [ ... ] }
+```
+The judge no longer copies matrices/items/divergences — only the two small fields
+(`scope`, `gather_verdict`) plus its grades. Copying two scalars/small-object is
+the reliability level the `mm`/`security` judges already demonstrated.
+
+## `judge-coverage` (reworked, per-leg mode)
+1. **Re-derive `scope` independently** from the diff + PR_BODY (the same
+   `_locate`/`_paths` primitives the gather checks use) and assert
+   `evidence.scope == recompute`. This is the robustness win — a mangled scope is
+   caught, and the scope floors (no-spec/no-plan) are deterministically re-verified.
+2. **`gather_verdict` ∈ the leg's valid enum** (per mode).
+3. **scope→verdict consistency** (cheap, catches the observed mangle without the
+   cells): per leg, the out-of-scope/absence cases pin the verdict — e.g.
+   `spec-solves`: `!issue_linked ⇒ verdict == "n/a"`; the chain legs:
+   `!code_changed ⇒ "n/a"`; etc. (the same out-of-scope rules the gather checks
+   already encode, applied to scope alone).
+4. **Grade form**: each `graded_findings` severity ∈ enum, `ref` non-empty,
+   `examined` non-empty.
+It NO LONGER re-runs the full gather check (there are no copied cells to check) —
+verdict-vs-cells consistency was already verified on the gather node itself.
+
+## Downstream
+- `conclude-preflight`: read `leg["scope"]` + `leg["gather_verdict"]` (was
+  `leg["gather"]["scope"]`/`["verdict"]`). Floor + escalation policy UNCHANGED.
+- Rollups: copy each inner judge's `{leg, scope, gather_verdict, graded_findings}`;
+  `cluster-coverage` cell shape becomes `{leg, scope, gather_verdict, graded_findings}`.
+- `preflight-gate` renderer: cell `{leg, verdict: <gather_verdict>, scope}`.
+
+## Trust
+`scope` is re-derived (fully robust — drives the PR-#7 floors). `gather_verdict`
+is enum + scope-consistency checked; the residual (a mangled-but-scope-consistent
+verdict on an in-scope PR) is the `mm`/`security` trust level already accepted in
+R2. The gather node's own check still verified verdict-vs-cells when the gather ran.
+
+## Re-test
+Unit tests can't prove LLM reliability — the decisive validation is the live
+re-run: the lightened judges must reach `done` (pass `judge-coverage`) where the
+full-copy judges exhausted. Re-deploy to SiRumCz + `/review` on PR #7; the
+adherence/consistency clusters should now complete → rollups → gate → conclude
+block (no spec/plan).
