@@ -109,7 +109,6 @@ post-steps:
     with:
       name: mm-tree-socratic-answering
       path: /tmp/gh-aw/out
-      include-hidden-files: true   # codeset writes .claude/ (dotfiles); v4 excludes them by default
       if-no-files-found: warn
 timeout-minutes: 45
 ---
