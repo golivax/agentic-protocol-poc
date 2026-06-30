@@ -49,8 +49,7 @@ steps:
       GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
       REPO: "${{ github.repository }}"
     run: |
-      # Two off-the-shelf engines audit the change for security data-flow risks, BEFORE the agent
-      # writes evidence, so the agent can fold violations into anchored findings. Every line is
+      # Two off-the-shelf engines audit the change for security data-flow risks. Every line is
       # fail-open (|| true / fallback JSON): a missing transcript/plan/dep never fails the run.
       SEC=.github/agent-factory/protocols/code-review/scripts/security
       CTX=.github/agent-factory/protocols/code-review/scripts/context
@@ -89,16 +88,6 @@ steps:
       printf '%s' "$CTX" > /tmp/gh-aw/task-context.json
       cat /tmp/gh-aw/task-context.json
 post-steps:
-  - name: Anchor engine findings and assemble security-gather evidence
-    if: always()
-    run: |
-      # Deterministically assemble the security-gather evidence object from the engine outputs.
-      # The verdict is derived by the deterministic rule (LOCKED_VIOLATION / n/a / PASS).
-      # anchor-engine-findings.js also injects any LOCKED violations as anchored findings
-      # so the zone-3 check can verify the verdict without re-running the engines.
-      A=/tmp/gh-aw/agent
-      SEC=.github/agent-factory/protocols/code-review/scripts/security
-      node "$SEC/anchor-engine-findings.js" "$A/engine-report.json" "$A/pr.diff" /tmp/gh-aw/evidence.json || true
   - name: Upload evidence artifact
     if: always()
     uses: actions/upload-artifact@v4
@@ -116,8 +105,7 @@ deterministic engine evidence object, then call `noop`. You do NOT perform
 code review — that is the separate `security-judge` step.
 
 The deterministic engines (Cedar + Guardians) have already run in `steps:` and
-their outputs are on disk. A post-step (`anchor-engine-findings.js`) will inject
-LOCKED violations as anchored findings and assemble `/tmp/gh-aw/evidence.json`.
+their outputs are on disk.
 
 **Your only task:** write the evidence object and call `noop`.
 

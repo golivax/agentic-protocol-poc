@@ -183,3 +183,43 @@ def test_evidence_unreadable_fails(tmp_path):
     files = tmp_path / "f.txt"; files.write_text("")
     r = run_check(CHECK, ev, diff, files)
     assert r["pass"] is False
+
+
+# ---------------------------------------------------------------------------
+# C1 regression: anchor-engine-findings.js must NOT be in the gather agent
+# ---------------------------------------------------------------------------
+
+
+def test_security_gather_agent_no_anchor_engine_findings():
+    """Pins the removal of anchor-engine-findings.js from security-gather-agent.md.
+
+    If anchor-engine-findings.js is ever re-added as a post-step, it would
+    overwrite evidence.verdict with REQUEST_CHANGES (not in the PASS|LOCKED_VIOLATION|n/a
+    enum), causing security-gather-coverage to fail → on_fail:iterate → exhaustion.
+    """
+    agent_md = (
+        Path(__file__).parent.parent
+        / ".github/workflows/security-gather-agent.md"
+    )
+    content = agent_md.read_text()
+    assert "anchor-engine-findings" not in content, (
+        "anchor-engine-findings.js must not appear in security-gather-agent.md — "
+        "it clobbers the LOCKED_VIOLATION verdict with REQUEST_CHANGES, breaking "
+        "the security-gather-coverage check enum validation."
+    )
+
+
+def test_locked_violation_with_locked_true_passes_check(tmp_path):
+    """C1 regression: a LOCKED_VIOLATION verdict + locked:true in engine_report
+    must PASS security-gather-coverage — proving no downstream step forces the
+    verdict to a non-enum value (REQUEST_CHANGES).
+    """
+    violations = [
+        {"id": "cedar-no-exfil", "locked": True, "rule": "no_secret_exfiltration",
+         "detail": "secret forwarded to external endpoint"}
+    ]
+    ev = _base_evidence("LOCKED_VIOLATION", violations=violations)
+    r = _run(ev, tmp_path)
+    assert r["pass"] is True, (
+        f"LOCKED_VIOLATION evidence should PASS security-gather-coverage, got: {r['feedback']}"
+    )
