@@ -1067,3 +1067,110 @@ git add -A && git commit -m "chore(preflight-judge): integration fixups" --allow
 
 - **mm-compliance (Open Question Option A vs B):** this plan implements **Option A** (mm keeps its judge; `judge-coverage` mode `mm` enum-checks the copied verdict and requires divergence grades; the mm floor `mm==diverges` trusts the copied verdict at the same level as today). To switch to Option B (mm gather-only, no judge), drop the `mm-compliance-judge` sub-state in Task 6 (leave `mm-compliance` a flat branch) and skip the mm judge agent in Task 5 — `conclude` then reads mm from the flat gather (adjust `_gather` to accept a leg with no `gather` wrapper for mm, or special-case it). Decide before Task 5.
 - **Anchorless cells:** `spec-solves-issue` `not_addressed` and docs/tests `items[].status=="missing"` have no diff anchor — they are graded by `ref` + severity only. The Task-4 design handles this automatically: `judge-coverage` re-runs the gather check (which already accepts those statuses) and only adds severity-coverage by `ref`, so no anchor is required of the judge.
+
+---
+
+# Revision 2 tasks — 4-branch clustered preflight + security relocation
+
+> Implements spec **Revision 2**. Tasks 1–7 are built (HEAD `51b796d`: flat 6-leg
+> preflight + conclude floor/escalation). R2 **re-parents** the 5 legs + `mm` into
+> two cluster fanouts, adds rollup agents + a `security` gather→judge (Cedar+Guardians
+> lifted from `review`), and **reworks** `protocol.json` (old T6) + `conclude` (old
+> T7) + the gate (old T8). The legs / judge agents / `judge-coverage` / judge schema
+> (T2–T5) are reused unchanged. **Task R2-1 is a hard gate — stop if it fails.**
+
+### Task R2-1: De-risk the nested inputs resolution (GATE, pure-lib)
+
+**Files:** Modify (extend) `tests/test_preflight_judge_inputs.py`.
+
+**Interfaces:** consumes `lib.resolve_inputs` / `lib.branch_output_substate`. Proves the rollup-agent pattern resolves before anything is built.
+
+- [ ] **Step 1: add the nested-shape test** — a `PROTO_R2` dict mirroring the R2 tree: `preflight` fanout with branch `adherence` `states:[ {id:adherence-fanout, kind:fanout, branches:[ {id:spec-solves-issue, states:[gather,judge]}, {id:plan-implements-spec, states:[…]}, {id:code-implements-plan, states:[…]} ]}, {id:join-adherence, kind:join, of:adherence-fanout}, {id:adherence-rollup, kind:agent, workflow:adherence-rollup-agent, inputs:[{from:spec-solves-issue,as:spec-solves-issue},…]} ]`, branch `security` `states:[security-gather, security-judge]`, and a root `preflight-gate` reading `{from:adherence}` etc.
+
+```python
+def test_r2_gate_reads_cluster_terminals():
+    assert lib.branch_output_substate(PROTO_R2, "adherence") == "adherence-rollup"
+    assert lib.branch_output_substate(PROTO_R2, "security") == "security-judge"
+    res = lib.resolve_inputs(PROTO_R2, "/s", "code-review", "pr-1", consuming_branch=None, consuming_phase=None,
+                             inputs=[{"from": "adherence", "as": "adherence"}, {"from": "security", "as": "security"}])
+    p = {r["as"]: r["path"] for r in res}
+    assert p["adherence"] == "/s/code-review/pr-1/adherence.adherence-rollup.evidence.json"
+    assert p["security"] == "/s/code-review/pr-1/security.security-judge.evidence.json"
+
+def test_r2_rollup_reads_inner_judge():
+    res = lib.resolve_inputs(PROTO_R2, "/s", "code-review", "pr-1", consuming_branch="adherence", consuming_phase=None,
+                             inputs=[{"from": "spec-solves-issue", "as": "spec-solves-issue"}])
+    # rollup (inside adherence) reaches the inner fanout one level down → that leg's terminal judge
+    assert res[0]["path"] == "/s/code-review/pr-1/adherence.adherence-fanout.spec-solves-issue.spec-solves-issue-judge.evidence.json"
+```
+
+- [ ] **Step 2: run** `uv run pytest tests/test_preflight_judge_inputs.py -v`. **If `test_r2_rollup_reads_inner_judge` fails** (the resolver can't reach the inner judge from the rollup, or the path differs), **STOP and report BLOCKED** — the nested+rollup shape needs rethinking; do not build it. (Adjust the EXPECTED path in the assert to whatever `resolve_inputs` actually returns ONLY if it returns a real terminal-judge path for that leg — i.e. confirm the shape resolves, then pin the exact string; do not weaken to `is not None`.)
+- [ ] **Step 3: commit** `git add tests/test_preflight_judge_inputs.py && git commit -m "test(preflight-r2): pin nested cluster + rollup inputs resolution"`
+
+### Task R2-2: Cluster evidence schema + `cluster-coverage` check
+
+**Files:** Create `.github/agent-factory/protocols/code-review/cluster.evidence.schema.json`; create `checks/cluster-coverage.py` (`100755`); create `tests/test_cluster_coverage.py`.
+
+**Interfaces:** the rollup evidence shape `{cluster: str, legs: [{leg: str, gather: object, graded_findings: array}]}`; `cluster-coverage` reads `CHECK_PARAMS.legs` (the cluster's declared inner legs).
+
+- [ ] Schema: `cluster` (str), `legs` (array of `{leg, gather(object), graded_findings(array)}`), all required. Test it with `jsonschema` (mirror `tests/test_judge_schema.py`).
+- [ ] `cluster-coverage.py`: **mirror `checks/preflight-gate-coverage.py`** (read `CHECK_PARAMS.legs`; require exactly one well-formed cell per declared leg — a cell is well-formed iff `leg` non-empty + `gather` is an object + `graded_findings` is an array; flag missing/dup/unexpected/malformed). Tests mirror `tests/test_preflight_gate_coverage.py` (pass; missing-leg fail; dup fail). `chmod +x` + verify `100755` on commit.
+
+### Task R2-3: Rollup agents (`adherence-rollup`, `consistency-rollup`)
+
+**Files:** Create `.github/workflows/adherence-rollup-agent.md` + `consistency-rollup-agent.md` (+ committed locks); create `tests/test_rollup_agents_compiled.py`.
+
+**Interfaces:** each reads its inner judges via `inputs[]` (wired in R2-7); emits the cluster evidence (R2-2 schema); checked by `cluster-coverage`.
+
+- [ ] Frontmatter: copy `.github/workflows/preflight-gate-agent.md` verbatim (codex/`gpt-5.5`, `OPENAI_BASE_URL` gateway, `network.allowed` arcyleung, `safe-outputs:{staged:true,noop:{}}`, checkout + materialize-context + evidence upload). Body: read `.inputs.<inner-leg>` (each a judge evidence `{leg, gather, graded_findings}`); emit `{cluster:"adherence", legs:[ {leg, gather, graded_findings} COPIED VERBATIM per inner leg ]}`; call `noop`; post nothing. `adherence` lists the 3 adherence legs; `consistency` the 2.
+- [ ] `gh aw compile`; **verify `git status` shows only the new rollup `.md`/`.lock.yml`** (no other lock drift, same guard as T5). Test (mirror `tests/test_judge_agents_compiled.py`): both `.md`+`.lock.yml` exist, codex/`gpt-5.5`/gateway, lock carries `"targets":{"openai":{"host":"arcyleung-ubuntu.tailb940e6.ts.net"}}`.
+
+### Task R2-4: `security-gather` (Cedar+Guardians lift)
+
+**Files:** Create `.github/workflows/security-gather-agent.md` (+ lock); create `security-gather.evidence.schema.json`; create `checks/security-gather-coverage.py` (`100755`); create `tests/test_security_gather_coverage.py`.
+
+**Interfaces:** emits `{scope, cedar, guardians, engine_report, verdict: "PASS"|"LOCKED_VIOLATION"|"n/a", examined}`; `security-gather-coverage` verifies `verdict` matches a recompute over `engine_report`.
+
+- [ ] **Lift** the deterministic block from `.github/workflows/review-security-agent.md` (the Python-setup step + the "Run Cedar + Guardians security engines" shell `steps:` block that runs `run-cedar.js`/`plan-extract.js`/`verify_driver.py`/`emit-engine-report.js`, and the `anchor-engine-findings.js` post-step) into `security-gather-agent.md`. `scripts/security/**` already travels with the protocol (no move needed). The agent's job is only to assemble the evidence object; the engines + verdict are deterministic.
+- [ ] **Deterministic `verdict`:** `LOCKED_VIOLATION` iff `engine_report.violations` has any `locked:true`; `n/a` if neither engine could run (fail-OPEN to `n/a`, never silent `PASS`); else `PASS`.
+- [ ] `security-gather-coverage.py`: parse `engine_report` from the evidence, recompute the verdict by the rule above, assert `evidence.verdict == recompute`; assert the engine sub-objects are present. `chmod +x`, `100755`. Tests: LOCKED detected; PASS; n/a; verdict-mismatch rejected. (Engines need Node/Python/Z3 — the TEST feeds a synthetic `engine_report`; it does NOT run the real engines.)
+- [ ] `gh aw compile`; lock-drift guard; commit.
+
+### Task R2-5: `security-judge` + `judge-coverage` security mode
+
+**Files:** Create `.github/workflows/security-judge-agent.md` (+ lock); modify `checks/judge-coverage.py`; extend `tests/test_judge_coverage.py`.
+
+- [ ] `security-judge-agent.md`: mirror a judge agent (e.g. `code-implements-plan-judge-agent.md`); reads `{from: security-gather, as: gather}`; one `graded_findings` entry per `engine_report.violations` (`ref` = the violation id/index), `severity blocking|advisory|noise`; emits `judge.evidence.schema.json`.
+- [ ] `judge-coverage.py`: add a `security` arm to the mode dispatch and to `_gather_refs` — re-run `security-gather-coverage`'s recompute on `evidence.gather` (import it like the other checks), then severity-coverage over `gather.engine_report.violations` refs. Test the security mode (pass; gather-verdict-mismatch fail; ungraded-violation fail). `gh aw compile` the judge; commit.
+
+### Task R2-6: Slim `review-security-agent`
+
+**Files:** Modify `.github/workflows/review-security-agent.md` (+ recompiled lock); modify `rubrics/security.md`.
+
+- [ ] Remove the Python-setup step, the Cedar+Guardians shell block, and the `anchor-engine-findings.js` post-step from `review-security-agent.md`; remove the "do not duplicate engine findings" dead text from `rubrics/security.md`. The `review` security agent keeps its LLM code-review + its three checks (`evidence-present`, `review-schema-valid`, `review-findings-anchored`).
+- [ ] `gh aw compile`; run the review-phase security tests (`uv run pytest tests/ -k "review" -q` or the specific module) — they must stay green. Commit.
+
+### Task R2-7: Wire `protocol.json` nested tree (+ `max_depth: 6`)
+
+**Files:** Modify `protocol.json`; extend `tests/test_preflight_judge_inputs.py` (real-protocol R2 assertions).
+
+- [ ] Restructure `preflight` to 4 branches: `adherence` `states:[adherence-fanout(spec-solves-issue ∥ plan-implements-spec ∥ code-implements-plan, each the existing `[<leg>-gather→<leg>-judge]` block moved verbatim) → join-adherence(of:adherence-fanout) → adherence-rollup(inputs from the 3 inner legs, evidence cluster.evidence.schema.json, checks:[{run:cluster-coverage}], params:{legs:[the 3]})]`; `consistency` analogously (docs ∥ tests); `mm-compliance` `states:[mm-compliance-gather → mm-compliance-judge]`; `security` `states:[security-gather → security-judge]`. `preflight.next → join-preflight(of:preflight) → preflight-gate`.
+- [ ] `preflight-gate.inputs` → `{from:adherence}`, `{from:mm-compliance}`, `{from:consistency}`, `{from:security}`; `params.legs` → the **7 leaf legs** (gate-coverage/comment operate per leaf). Set top-level `max_depth: 6`.
+- [ ] Validate: `python3 .github/agent-factory/engine/protocol-lint.py …/protocol.json` (0 errors; joins name in-scope sibling fanouts at each level; depth 5 ≤ 6); extend the real-protocol test to assert the gate resolves the 4 branch outputs to the cluster terminals. Commit.
+
+### Task R2-8: `conclude-preflight` cluster rework
+
+**Files:** Modify `publish/conclude-preflight.py`; extend `tests/test_conclude_preflight.py`.
+
+- [ ] Load the **4 branch outputs** (`adherence.json`, `mm-compliance.json`, `consistency.json`, `security.json`) from `CONCLUDE_INPUTS_DIR`. **Flatten** the two cluster rollups' `legs[]` into the 7 per-leg records (`mm-compliance`/`security` are single judge evidences → one record each). Then apply the existing leaf-granular floor/escalation (read `leg.gather.scope`/`leg.gather.verdict`) — all nine floors unchanged — **plus** a security floor: `security gather.verdict == "LOCKED_VIOLATION"` ⇒ block. missing-cluster OR missing-inner-leg ⇒ fail-safe block. Comment groups rows under the 4 cluster headings.
+- [ ] Tests (extend the existing `_conclude`/`_j` harness; rollups wrap their inner legs as `{cluster, legs:[…]}`): the 9 floors still block via the cluster path; security `LOCKED_VIOLATION` blocks; escalation; missing-cluster fail-safe; cluster-grouped comment text.
+
+### Task R2-9: Gate renders cluster cells (was old T8)
+
+**Files:** Modify `.github/workflows/preflight-gate-agent.md` (+ lock); `checks/preflight-gate-coverage.py` (likely unchanged — `params.legs` now the 7 leaves); extend `tests/test_preflight_gate_coverage.py`.
+
+- [ ] Gate reads `.inputs.{adherence,mm-compliance,consistency,security}`, flattens the two clusters' `legs[]`, and emits one `legs[]` cell `{leg, verdict: <gather.verdict>, scope: <gather.scope>}` per **leaf** leg (7 cells). `gh aw compile`. Test: a 7-cell gate evidence passes `preflight-gate-coverage` with `params.legs` = the 7 leaves.
+
+### Task R2-10: Integration (controller-run)
+
+- [ ] `uv run pytest tests/ -q` (all green); `protocol-lint` clean; `git status --porcelain .github/agent-factory/engine/` empty (no engine edits); new checks `100755`. Then the final whole-branch review (opus) over `merge-base..HEAD` + `superpowers:finishing-a-development-branch`. **Live:** `/review` on SiRumCz PR #7 → 4 clusters run, `security-gather` runs Cedar+Guardians, gate blocks with a cluster-grouped table.
