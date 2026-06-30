@@ -2,8 +2,13 @@
 """Conclude hook for fix: completeness against real triage input + suggestions."""
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _apply_fixes  # noqa: E402
 
 CODE_FIXABLE = {"correctness", "security", "performance", "maintainability"}
 
@@ -128,6 +133,131 @@ def _post_review(payload):
     )
 
 
+def _triage_clusters():
+    return _triage_input().get("clusters") or []
+
+
+def _issue_targets(applied_cluster_ids):
+    """Map applied cluster_ids -> issue close-targets {label,title} via triage members."""
+    targets = []
+    seen = set()
+    for cluster in _triage_clusters():
+        if not isinstance(cluster, dict) or cluster.get("cluster_id") not in applied_cluster_ids:
+            continue
+        for m in cluster.get("member_findings") or []:
+            if not isinstance(m, dict):
+                continue
+            dim, title = m.get("dimension"), m.get("title")
+            if not dim or not title:
+                continue
+            key = (f"review:{dim}", title)
+            if key not in seen:
+                seen.add(key)
+                targets.append({"label": key[0], "title": title})
+    return targets
+
+
+def _git(args, cwd, token=None):
+    env = dict(os.environ)
+    if token:
+        env["GIT_TERMINAL_PROMPT"] = "0"
+    return subprocess.run(["git", *args], cwd=cwd, env=env,
+                          text=True, capture_output=True)
+
+
+def _apply_commit_close(evidence):
+    """Apply fixes to the PR head, push a commit, close resolved issues.
+    Returns a report dict. ENGINE_LOCAL short-circuits to APPLY_WORKDIR/APPLY_OUT."""
+    fixes = evidence.get("fixes") if isinstance(evidence.get("fixes"), list) else []
+    report = {"applied": 0, "skipped": [], "pushed": False, "close": []}
+    if not fixes:
+        _write_apply(report)
+        return report
+
+    local = os.environ.get("ENGINE_LOCAL", "0") == "1"
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    pr = os.environ.get("PR", "")
+    token = os.environ.get("GH_TOKEN") or os.environ.get("PUBLISH_TOKEN")
+
+    if local:
+        workdir = os.environ.get("APPLY_WORKDIR")
+        results = _apply_fixes.apply_all(workdir, fixes) if workdir else []
+    else:
+        if not repo or not pr or not token:
+            _write_apply(report)
+            return report
+        head = _pr_head_ref(repo, pr, token)
+        if not head:
+            _write_apply(report)
+            return report
+        workdir = tempfile.mkdtemp(prefix="fix-apply-")
+        url = f"https://x-access-token:{token}@github.com/{repo}.git"
+        if _git(["clone", "--depth", "1", "--branch", head, url, workdir]).returncode != 0:
+            shutil.rmtree(workdir, ignore_errors=True)
+            _write_apply(report)
+            return report
+        results = _apply_fixes.apply_all(workdir, fixes)
+
+    applied = [r for r in results if r["status"] == "applied"]
+    report["applied"] = len(applied)
+    report["skipped"] = [r for r in results if r["status"] != "applied"]
+    report["close"] = _issue_targets({r["cluster_id"] for r in applied})
+
+    if applied and not local:
+        _commit_push(workdir, repo, pr, token)
+        report["pushed"] = True
+        _close_issues(repo, report["close"], token)
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    _write_apply(report)
+    return report
+
+
+def _pr_head_ref(repo, pr, token):
+    env = dict(os.environ); env["GH_TOKEN"] = token
+    r = subprocess.run(["gh", "pr", "view", pr, "--repo", repo, "--json", "headRefName",
+                        "--jq", ".headRefName"], text=True, capture_output=True, env=env)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _commit_push(workdir, repo, pr, token):
+    _git(["config", "user.name", "agentic-fix-bot"], workdir)
+    _git(["config", "user.email", "agentic-fix-bot@users.noreply.github.com"], workdir)
+    _git(["add", "-A"], workdir)
+    msg = f"fix: apply AI review remediations (PR #{pr})"
+    _git(["commit", "-m", msg], workdir)
+    _git(["push", "origin", "HEAD"], workdir, token=token)
+
+
+def _close_issues(repo, targets, token):
+    env = dict(os.environ); env["GH_TOKEN"] = token
+    for t in targets:
+        listing = subprocess.run(
+            ["gh", "issue", "list", "--repo", repo, "--label", t["label"],
+             "--state", "open", "--json", "number,title"],
+            text=True, capture_output=True, env=env)
+        try:
+            items = json.loads(listing.stdout or "[]")
+        except ValueError:
+            items = []
+        for it in items:
+            if t["title"].strip().lower() in (it.get("title") or "").strip().lower():
+                subprocess.run(["gh", "issue", "close", str(it["number"]), "--repo", repo,
+                                "--comment", "Resolved by the AI fix phase (committed to the PR)."],
+                               text=True, capture_output=True, env=env)
+
+
+def _write_apply(report):
+    out = os.environ.get("APPLY_OUT")
+    if not out:
+        return
+    try:
+        with open(out, "w") as fh:
+            json.dump(report, fh)
+    except OSError:
+        pass
+
+
 def main():
     evidence = _load_json(sys.argv[1] if len(sys.argv) > 1 else "")
     triage = _triage_input()
@@ -141,6 +271,7 @@ def main():
         "commit_id": os.environ.get("HEAD_SHA") or os.environ.get("PR_HEAD_SHA", ""),
     }
     _post_review(payload)
+    apply_report = _apply_commit_close(evidence)
     print(
         json.dumps(
             {
@@ -149,6 +280,7 @@ def main():
                     f"Fix suggestions: applied={len(report['applied'])}, "
                     f"skipped={len(report['skipped'])}, dropped={len(report['dropped'])}, "
                     f"unknown={len(report['unknown']['fixes']) + len(report['unknown']['skipped'])}."
+                    f" applied={apply_report['applied']}, pushed={apply_report['pushed']}."
                 ),
                 "blocked": False,
             }
