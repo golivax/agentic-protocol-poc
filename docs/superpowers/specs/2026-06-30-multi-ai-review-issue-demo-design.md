@@ -81,11 +81,36 @@ review (5-dim fanout) → join-review → triage → fix → done
 - preflight/preflight-gate/overview/post-fix/mrp nodes are dropped from
   `states[]` (their files stay on disk, unused).
 
-**Decision D2 (implementation form):** edit `code-review/protocol.json` in place
-on this demo branch (the branch *is* the demo deliverable; the full pipeline
-remains intact on `feat/backport-protocol-from-yuanrong`). Rationale: a separate
-protocol id would force new triggers/agent wiring for no demo benefit. The
-slimmed `protocol.json` is what `dist/install.sh` ships to yuanrong.
+**Decision D2 (implementation form) — REVISED after exploration:** build a
+**self-contained sibling protocol** `code-review-demo/` (name `code-review-demo`,
+trigger `/demo-review`) rather than editing `code-review/protocol.json` in place.
+Reason: ~12 regression tests pin the full `code-review` shape
+(`test_preflight_wiring`, `test_unified_codereview_e2e`, `test_route`,
+`test_protocol_lint`, `test_resolve_agent_unit`, `test_mm_pipeline_wiring`, …); an
+in-place slim would gut the suite. The sibling dir is fully self-contained
+(its own copies of the checks, evidence schemas, rubrics, and the *modified*
+conclude hooks), so `dist/install.sh install code-review-demo` ships a single,
+standalone protocol and `code-review` stays byte-for-byte intact.
+
+Consequences:
+- Trigger is **`/demo-review`** (not `/review`) — avoids router trigger-overlap
+  with the still-present `code-review` protocol on the dev repo and keeps
+  `test_route` green. (On yuanrong it can be renamed to `/review` post-install if
+  desired, since `code-review` isn't installed there.)
+- The 5 review legs need **demo-specific agent workflows**
+  (`demo-review-<dim>-agent`) because the stock review agents hard-code the rubric
+  path `…/protocols/code-review/rubrics/…`; the demo agents stage from
+  `…/code-review-demo/rubrics/…` and add the `create-issue` safe-output. `triage`
+  and `fix` agents are **reused unmodified** (their demo behavior changes live in
+  the demo's *conclude* hooks, not the agents).
+- **No change to `.github/agent-factory/engine/` or `agentic-engine.yml`:** the
+  fix applier runs in the existing `advance` job and pushes/closes using the
+  PAT already exported there as `GH_TOKEN` (`POC_DISPATCH_TOKEN`, repo scope),
+  so no new job permission is required.
+- `fix` evidence gains an **optional** `original_line` field (verbatim current
+  content of the target line) so the applier can verify-before-replace (mitigates
+  R2). The shared `fix-agent.md` prompt gets one additive bullet to emit it;
+  back-compatible (optional), so `code-review`'s fix check stays valid.
 
 **Verification:** `protocol-lint.py` passes on the slimmed protocol; the existing
 fanout/triage/fix pytest regressions still pass.
