@@ -76,3 +76,23 @@ def test_wellformed_assumption_requires_verified_true(tmp_path):
 def test_wellformed_fails_empty_ledger(tmp_path):
     out = run_check("ledger-wellformed", good_evidence(ledger=[]), tmp_path)
     assert out["pass"] is False
+
+# ---- ledger-consistent ----
+def test_consistent_passes_clean(tmp_path):
+    out = run_check("ledger-consistent", good_evidence(), tmp_path)
+    assert out["pass"] is True, out
+
+def test_consistent_fails_unknown_high_confidence(tmp_path):
+    it = good_item(id="L1", category="UNKNOWN", confidence="high")
+    out = run_check("ledger-consistent", good_evidence(ledger=[it]), tmp_path)
+    assert out["pass"] is False and "UNKNOWN" in out["feedback"]
+
+def test_consistent_passes_unknown_low_confidence(tmp_path):
+    it = good_item(id="L1", category="UNKNOWN", confidence="low")
+    out = run_check("ledger-consistent", good_evidence(ledger=[it]), tmp_path)
+    assert out["pass"] is True
+
+def test_consistent_fails_duplicate_ids(tmp_path):
+    led = [good_item(id="L1"), good_item(id="L1")]
+    out = run_check("ledger-consistent", good_evidence(ledger=led), tmp_path)
+    assert out["pass"] is False and "L1" in out["feedback"]
