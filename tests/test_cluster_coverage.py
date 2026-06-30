@@ -45,22 +45,23 @@ def test_unexpected_leg_fails(tmp_path):
     assert r["pass"] is False and "bogus-leg" in r["feedback"]
 
 
-def test_malformed_cell_missing_scope_fails(tmp_path):
-    bad = {"leg": "consistency", "gather_verdict": "n/a", "graded_findings": []}  # no scope
-    ev = {"cluster": "adherence", "legs": [_cell("adherence"), bad]}
-    r = _run(ev, tmp_path)
-    assert r["pass"] is False and "consistency" in r["feedback"]
+# Option 2: the rollup only forwards grades; a cell needs just a non-empty `leg`.
+# scope / gather_verdict are no longer required (conclude reads them from gathers).
+
+def test_cell_without_scope_passes(tmp_path):
+    bare = {"leg": "consistency"}  # grades-only cell, no scope/gather_verdict/grades
+    ev = {"cluster": "adherence", "legs": [_cell("adherence"), bare]}
+    assert _run(ev, tmp_path)["pass"] is True
 
 
-def test_malformed_cell_missing_gather_verdict_fails(tmp_path):
-    bad = {"leg": "consistency", "scope": {}, "graded_findings": []}  # no gather_verdict
-    ev = {"cluster": "adherence", "legs": [_cell("adherence"), bad]}
-    r = _run(ev, tmp_path)
-    assert r["pass"] is False and "consistency" in r["feedback"]
+def test_cell_without_gather_verdict_passes(tmp_path):
+    bare = {"leg": "consistency", "graded_findings": []}
+    ev = {"cluster": "adherence", "legs": [_cell("adherence"), bare]}
+    assert _run(ev, tmp_path)["pass"] is True
 
 
-def test_malformed_cell_missing_graded_findings_fails(tmp_path):
-    bad = {"leg": "consistency", "scope": {}, "gather_verdict": "n/a"}  # no graded_findings
+def test_cell_graded_findings_not_a_list_fails(tmp_path):
+    bad = {"leg": "consistency", "graded_findings": {"ref": "x"}}  # not a list
     ev = {"cluster": "adherence", "legs": [_cell("adherence"), bad]}
     r = _run(ev, tmp_path)
     assert r["pass"] is False and "consistency" in r["feedback"]
