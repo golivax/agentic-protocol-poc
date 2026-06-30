@@ -108,3 +108,85 @@ def test_code_plan_anchor_error_fails(tmp_path):
     changed = ["docs/superpowers/plans/p.md", "src/x.py"]
     r = _run(ev, changed, tmp_path, {"leg": "code-implements-plan", "mode": "code-plan"})
     assert r["pass"] is False and "anchor" in r["feedback"].lower()
+
+
+# ── security mode ────────────────────────────────────────────────────────────
+
+def _sec_gather(violations=None, verdict="PASS"):
+    """Minimal well-formed security-gather evidence."""
+    vlist = violations if violations is not None else []
+    return {
+        "scope": {},
+        "cedar": {"status": "ok", "flags": []},
+        "guardians": {"ok": True, "violations": [], "warnings": []},
+        "engine_report": {"violations": vlist, "summary": {}},
+        "verdict": verdict,
+        "examined": ["policy/cedar/default"],
+    }
+
+
+def _sec_judge(gather, graded):
+    return {
+        "leg": "security",
+        "gather": gather,
+        "graded_findings": graded,
+        "verdict": "clear",
+        "examined": [g["ref"] for g in graded],
+    }
+
+
+def test_security_judge_no_violations_passes(tmp_path):
+    """PASS verdict + empty violations + no graded findings → pass."""
+    gather = _sec_gather(violations=[], verdict="PASS")
+    ev = _sec_judge(gather, [])
+    r = _run(ev, ["src/x.py"], tmp_path, {"leg": "security", "mode": "security"})
+    assert r["pass"] is True
+
+
+def test_security_judge_violations_all_graded_passes(tmp_path):
+    """Two violations each graded → pass."""
+    gather = _sec_gather(
+        violations=[
+            {"id": "v1", "locked": False, "rule": "R1", "detail": "d1"},
+            {"id": "v2", "locked": True,  "rule": "R2", "detail": "d2"},
+        ],
+        verdict="LOCKED_VIOLATION",
+    )
+    graded = [
+        {"ref": "0", "severity": "advisory", "rationale": "minor issue"},
+        {"ref": "1", "severity": "blocking", "rationale": "locked violation must block"},
+    ]
+    ev = _sec_judge(gather, graded)
+    r = _run(ev, ["src/x.py"], tmp_path, {"leg": "security", "mode": "security"})
+    assert r["pass"] is True
+
+
+def test_security_judge_gather_verdict_mismatch_fails(tmp_path):
+    """Gather says PASS but violations contain locked:true → recompute gives LOCKED_VIOLATION → fail."""
+    gather = _sec_gather(
+        violations=[{"id": "v1", "locked": True, "rule": "R1", "detail": "d1"}],
+        verdict="PASS",  # wrong — should be LOCKED_VIOLATION
+    )
+    graded = [{"ref": "0", "severity": "blocking", "rationale": "locked"}]
+    ev = _sec_judge(gather, graded)
+    r = _run(ev, ["src/x.py"], tmp_path, {"leg": "security", "mode": "security"})
+    assert r["pass"] is False
+    fb = r["feedback"].lower()
+    assert "mismatch" in fb or "verdict" in fb
+
+
+def test_security_judge_ungraded_violation_fails(tmp_path):
+    """Two violations but only one graded → fail."""
+    gather = _sec_gather(
+        violations=[
+            {"id": "v1", "locked": False, "rule": "R1", "detail": "d1"},
+            {"id": "v2", "locked": False, "rule": "R2", "detail": "d2"},
+        ],
+        verdict="PASS",
+    )
+    graded = [{"ref": "0", "severity": "advisory", "rationale": "noted"}]
+    # violation index 1 not graded
+    ev = _sec_judge(gather, graded)
+    r = _run(ev, ["src/x.py"], tmp_path, {"leg": "security", "mode": "security"})
+    assert r["pass"] is False
+    assert "grade" in r["feedback"].lower() or "1" in r["feedback"]

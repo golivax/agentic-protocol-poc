@@ -34,6 +34,8 @@ def _gather_refs(mode, gather):
         return [c.get("problem") for c in gather.get("matrix", []) if isinstance(c, dict)]
     if mode == "mm":
         return [str(i) for i, _ in enumerate(gather.get("divergences", []))]
+    if mode == "security":
+        return [str(i) for i, _ in enumerate(gather.get("engine_report", {}).get("violations", []))]
     return []
 
 def main():
@@ -76,6 +78,23 @@ def main():
     elif mode == "mm":
         v = gather.get("verdict")
         ok = v in ("compliant", "diverges"); fb = "ok" if ok else f"mm verdict not in enum: {v!r}"
+    elif mode == "security":
+        sgc = _load("security-gather-coverage")
+        # Re-run required sub-object presence checks
+        for key in ("cedar", "guardians", "engine_report"):
+            val = gather.get(key)
+            if val is None:
+                _emit(False, f"gather copy fails its own check: missing required field: {key!r}"); return
+            if not isinstance(val, dict):
+                _emit(False, f"gather copy fails its own check: {key!r} must be a JSON object"); return
+        v = gather.get("verdict")
+        if v not in sgc.VALID_VERDICTS:
+            _emit(False, f"gather copy fails its own check: verdict {v!r} not in allowed enum {sorted(sgc.VALID_VERDICTS)}"); return
+        recomputed = sgc._recompute_verdict(gather.get("engine_report", {}))
+        if v != recomputed:
+            ok = False; fb = f"verdict mismatch: evidence says {v!r} but recompute gives {recomputed!r}"
+        else:
+            ok = True; fb = f"security-gather form valid: verdict={v!r}"
     else:
         _emit(False, f"unknown mode {mode!r}"); return
     if not ok:
