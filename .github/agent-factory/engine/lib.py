@@ -624,6 +624,8 @@ def _ensure_and_add_label(text, pr):
     if os.environ.get("ENGINE_LOCAL", "0") == "1":
         sys.stderr.write(f"[ENGINE_LOCAL] add-label pr={pr}: {text}\n")
         return
+    if not str(pr).isdigit():   # ref-/UI-targeted run: no PR to label
+        return
     # gh pr edit --add-label errors on a nonexistent label, so create-first.
     _gh_label_cmd(["label", "create", text, "--color", PHASE_LABEL_COLOR, "--force"])
     ok, err = _gh_label_cmd(["pr", "edit", str(pr), "--add-label", text])
@@ -637,6 +639,8 @@ def remove_pr_label(pr, label):
         return
     if os.environ.get("ENGINE_LOCAL", "0") == "1":
         sys.stderr.write(f"[ENGINE_LOCAL] remove-label pr={pr}: {label}\n")
+        return
+    if not str(pr).isdigit():   # ref-/UI-targeted run: no PR to label
         return
     _gh_label_cmd(["pr", "edit", str(pr), "--remove-label", label])
 
