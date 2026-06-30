@@ -1087,24 +1087,34 @@ git add -A && git commit -m "chore(preflight-judge): integration fixups" --allow
 
 - [ ] **Step 1: add the nested-shape test** — a `PROTO_R2` dict mirroring the R2 tree: `preflight` fanout with branch `adherence` `states:[ {id:adherence-fanout, kind:fanout, branches:[ {id:spec-solves-issue, states:[gather,judge]}, {id:plan-implements-spec, states:[…]}, {id:code-implements-plan, states:[…]} ]}, {id:join-adherence, kind:join, of:adherence-fanout}, {id:adherence-rollup, kind:agent, workflow:adherence-rollup-agent, inputs:[{from:spec-solves-issue,as:spec-solves-issue},…]} ]`, branch `security` `states:[security-gather, security-judge]`, and a root `preflight-gate` reading `{from:adherence}` etc.
 
+**IMPORTANT — use the PATH-AWARE form.** The engine passes `consuming_path=tree_path`
+when it dispatches an agent (`next.py:751-754`) and runs conclude (`advance.py:361-370`);
+that is what activates `_resolve_input_ref_pathaware`, which can reach an inner-fanout
+leg from a rollup. The legacy `consuming_branch`-only call canNOT and must NOT be used
+here. (These exact resolutions were verified directly before this task was written.)
+
 ```python
 def test_r2_gate_reads_cluster_terminals():
     assert lib.branch_output_substate(PROTO_R2, "adherence") == "adherence-rollup"
     assert lib.branch_output_substate(PROTO_R2, "security") == "security-judge"
-    res = lib.resolve_inputs(PROTO_R2, "/s", "code-review", "pr-1", consuming_branch=None, consuming_phase=None,
-                             inputs=[{"from": "adherence", "as": "adherence"}, {"from": "security", "as": "security"}])
+    res = lib.resolve_inputs(PROTO_R2, "/s", "code-review", "pr-1",
+                             consuming_branch=None, consuming_phase=None,
+                             inputs=[{"from": "adherence", "as": "adherence"}, {"from": "security", "as": "security"}],
+                             consuming_path=["preflight-gate"])
     p = {r["as"]: r["path"] for r in res}
-    assert p["adherence"] == "/s/code-review/pr-1/adherence.adherence-rollup.evidence.json"
-    assert p["security"] == "/s/code-review/pr-1/security.security-judge.evidence.json"
+    assert p["adherence"] == "/s/code-review/pr-1/preflight.adherence.adherence-rollup.evidence.json"
+    assert p["security"] == "/s/code-review/pr-1/preflight.security.security-judge.evidence.json"
 
 def test_r2_rollup_reads_inner_judge():
-    res = lib.resolve_inputs(PROTO_R2, "/s", "code-review", "pr-1", consuming_branch="adherence", consuming_phase=None,
-                             inputs=[{"from": "spec-solves-issue", "as": "spec-solves-issue"}])
-    # rollup (inside adherence) reaches the inner fanout one level down → that leg's terminal judge
-    assert res[0]["path"] == "/s/code-review/pr-1/adherence.adherence-fanout.spec-solves-issue.spec-solves-issue-judge.evidence.json"
+    # rollup (inside adherence) reaches the inner fanout one level down → that leg's terminal judge.
+    res = lib.resolve_inputs(PROTO_R2, "/s", "code-review", "pr-1",
+                             consuming_branch="adherence", consuming_phase=None,
+                             inputs=[{"from": "spec-solves-issue", "as": "spec-solves-issue"}],
+                             consuming_path=["preflight", "adherence", "adherence-rollup"])
+    assert res[0]["path"] == "/s/code-review/pr-1/preflight.adherence.adherence-fanout.spec-solves-issue.spec-solves-issue-judge.evidence.json"
 ```
 
-- [ ] **Step 2: run** `uv run pytest tests/test_preflight_judge_inputs.py -v`. **If `test_r2_rollup_reads_inner_judge` fails** (the resolver can't reach the inner judge from the rollup, or the path differs), **STOP and report BLOCKED** — the nested+rollup shape needs rethinking; do not build it. (Adjust the EXPECTED path in the assert to whatever `resolve_inputs` actually returns ONLY if it returns a real terminal-judge path for that leg — i.e. confirm the shape resolves, then pin the exact string; do not weaken to `is not None`.)
+- [ ] **Step 2: run** `uv run pytest tests/test_preflight_judge_inputs.py -v` — all green. (The path-aware resolutions above are pre-verified, so this is a regression pin; if a path genuinely differs, confirm it is still a real terminal-judge artifact before re-pinning — never weaken to `is not None`.)
 - [ ] **Step 3: commit** `git add tests/test_preflight_judge_inputs.py && git commit -m "test(preflight-r2): pin nested cluster + rollup inputs resolution"`
 
 ### Task R2-2: Cluster evidence schema + `cluster-coverage` check
