@@ -168,3 +168,46 @@ def test_rtf_exits_zero_on_nondict_ledger_item(tmp_path):
                     extra_files={"spec.md": "# Spec\n"})
     # run_check asserts exit 0 internally; just confirm we got a verdict dict
     assert out["pass"] in (True, False)
+
+# ---- spec-present ----
+FULL_SPEC = """# Feature X — design
+## Summary
+...
+## Scope
+...
+## Behavior / acceptance criteria
+...
+## Accountability Ledger
+- L1: ...
+## READ THESE FIRST
+- L1
+"""
+
+def test_spec_present_passes_with_all_sections(tmp_path):
+    out = run_check("spec-present", good_evidence(), tmp_path,
+                    extra_files={"spec.md": FULL_SPEC})
+    assert out["pass"] is True, out
+
+def test_spec_present_fails_missing_section(tmp_path):
+    spec = FULL_SPEC.replace("## READ THESE FIRST", "## Other")
+    out = run_check("spec-present", good_evidence(), tmp_path, extra_files={"spec.md": spec})
+    assert out["pass"] is False and "read these first" in out["feedback"].lower()
+
+def test_spec_present_fails_no_spec_file(tmp_path):
+    out = run_check("spec-present", good_evidence(), tmp_path)
+    assert out["pass"] is False and "spec.md" in out["feedback"]
+
+# ---- plan-present ----
+def test_plan_present_passes(tmp_path):
+    out = run_check("plan-present", good_evidence(), tmp_path,
+                    extra_files={"plan.md": "# Plan\n## Task 1\n..."})
+    assert out["pass"] is True, out
+
+def test_plan_present_fails_no_plan_file(tmp_path):
+    out = run_check("plan-present", good_evidence(), tmp_path)
+    assert out["pass"] is False
+
+def test_plan_present_fails_empty_plan_path(tmp_path):
+    out = run_check("plan-present", good_evidence(plan_path=""), tmp_path,
+                    extra_files={"plan.md": "# Plan\n"})
+    assert out["pass"] is False and "plan_path" in out["feedback"]
