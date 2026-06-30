@@ -6,11 +6,12 @@ from conftest import PROTOCOLS
 SCHEMA = json.loads((PROTOCOLS / "code-review/judge.evidence.schema.json").read_text())
 
 def _valid():
+    # Revision 3 lightened shape: scope + gather_verdict instead of gather object
     return {"leg": "plan-implements-spec",
-            "gather": {"scope": {"spec_present": True, "plan_present": True, "code_changed": True},
-                       "verdict": "underspec", "spec_to_plan": [], "plan_to_spec": [], "examined": ["x"]},
+            "scope": {"spec_present": True, "plan_present": True, "code_changed": True},
+            "gather_verdict": "underspec",
             "graded_findings": [{"ref": "REQ-1", "severity": "blocking", "rationale": "no plan item"}],
-            "verdict": "block", "examined": ["REQ-1"]}
+            "examined": ["REQ-1"]}
 
 def test_valid_judge_evidence_passes():
     jsonschema.validate(_valid(), SCHEMA)
@@ -22,9 +23,22 @@ def test_bad_severity_rejected():
     except jsonschema.ValidationError:
         pass
 
-def test_missing_gather_rejected():
-    ev = _valid(); del ev["gather"]
+def test_missing_scope_rejected():
+    ev = _valid(); del ev["scope"]
     try:
         jsonschema.validate(ev, SCHEMA); assert False
     except jsonschema.ValidationError:
         pass
+
+def test_missing_gather_verdict_rejected():
+    ev = _valid(); del ev["gather_verdict"]
+    try:
+        jsonschema.validate(ev, SCHEMA); assert False
+    except jsonschema.ValidationError:
+        pass
+
+def test_old_gather_field_is_not_required():
+    """The old 'gather' object is no longer required (R3 lightening)."""
+    ev = _valid()
+    # Should pass without a 'gather' key
+    jsonschema.validate(ev, SCHEMA)
