@@ -37,6 +37,8 @@ def main():
 
     # every high-risk item must be surfaced
     for it in ledger:
+        if not isinstance(it, dict):
+            continue
         if _common.RISK(it) >= HIGH_RISK and it.get("id") not in rtf:
             problems.append(f"high-risk item {it.get('id')!r} (risk "
                             f"{_common.RISK(it)}) buried — must be in read_these_first")
@@ -54,6 +56,8 @@ def main():
     else:
         spec = open(spec_path, encoding="utf-8", errors="replace").read()
         for it in ledger:
+            if not isinstance(it, dict):
+                continue
             i = it.get("id", "")
             w = (it.get("what") or "").strip()
             if i and i not in spec:

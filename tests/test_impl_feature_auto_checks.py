@@ -153,3 +153,18 @@ def test_rtf_fails_when_spec_missing(tmp_path):
     ev = good_evidence(ledger=[it], read_these_first=[])
     out = run_check("read-these-first-consistent", ev, tmp_path)  # no spec.md bundled
     assert out["pass"] is False and "spec.md" in out["feedback"]
+
+def test_rtf_fails_what_divergence(tmp_path):
+    it = good_item(id="L1", what="A decision phrased one way in JSON")
+    ev = good_evidence(ledger=[it], read_these_first=[])
+    # spec mentions the id but NOT the `what` text
+    out = run_check("read-these-first-consistent", ev, tmp_path,
+                    extra_files={"spec.md": "# Spec\n## Accountability Ledger\n- L1: a totally different phrasing\n"})
+    assert out["pass"] is False and "spec" in out["feedback"].lower()
+
+def test_rtf_exits_zero_on_nondict_ledger_item(tmp_path):
+    ev = {"ledger": [123], "read_these_first": []}
+    out = run_check("read-these-first-consistent", ev, tmp_path,
+                    extra_files={"spec.md": "# Spec\n"})
+    # run_check asserts exit 0 internally; just confirm we got a verdict dict
+    assert out["pass"] in (True, False)
