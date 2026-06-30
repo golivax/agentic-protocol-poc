@@ -250,7 +250,7 @@ def _close_issues(repo, targets, token):
         except ValueError:
             items = []
         for it in items:
-            if t["title"].strip().lower() in (it.get("title") or "").strip().lower():
+            if (it.get("title") or "").strip().lower().endswith(t["title"].strip().lower()):
                 subprocess.run(["gh", "issue", "close", str(it["number"]), "--repo", repo,
                                 "--comment", "Resolved by the AI fix phase (committed to the PR)."],
                                text=True, capture_output=True, env=env)

@@ -1,5 +1,8 @@
 import importlib.util
+import os
 import pathlib
+
+import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MOD = ROOT / ".github/agent-factory/protocols/code-review-demo/publish/_apply_fixes.py"
@@ -62,3 +65,17 @@ def test_apply_all_returns_one_result_per_fix(tmp_path):
     ]
     out = af.apply_all(str(tmp_path), fixes)
     assert [r["status"] for r in out] == ["applied", "skipped"]
+
+
+def test_apply_skips_on_write_error(tmp_path):
+    target = _write(tmp_path, "a.py", "x = 0\n")
+    os.chmod(target, 0o444)  # read-only: read succeeds, write fails
+    if os.access(target, os.W_OK):
+        os.chmod(target, 0o644)
+        pytest.skip("filesystem/user (likely root) ignores read-only bit")
+    fix = {"cluster_id": "c1", "path": "a.py", "line": 1,
+           "suggested_patch": "x = 1", "original_line": "x = 0"}
+    res = af.apply_fix(str(tmp_path), fix)
+    os.chmod(target, 0o644)  # restore so tmp cleanup works
+    assert res["status"] == "skipped" and res["detail"] == "write-error"
+    assert target.read_text() == "x = 0\n"

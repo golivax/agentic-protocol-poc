@@ -2,7 +2,7 @@
   "name": "code-review-demo",
   "version": "0.1.0",
   "min_engine_version": "1.0.0",
-  "_note": "Demo slice of code-review: review (5 dims, each opens domain-labeled issues via gh-aw create-issue) -> join -> triage (consolidate, link issues) -> fix (apply patches to the PR head, push, close resolved issues) -> done. Self-contained: its own checks/schemas/rubrics so dist installs it standalone. preflight/overview/post-fix/mrp are intentionally absent. Review legs run at max_iterations:1 so a retried agent run cannot double-open issues (create-issue fires in the agent job before checks). Reuses the stock triage-agent and fix-agent; the fix commit/close lives in this dir's conclude-fix.",
+  "_note": "Demo slice of code-review: review (5 dims, each opens domain-labeled issues via gh-aw create-issue) -> join -> triage (consolidate, link issues) -> fix (apply patches to the PR head, push, close resolved issues) -> done. Self-contained: its own checks/schemas/rubrics so dist installs it standalone. preflight/overview/post-fix/mrp are intentionally absent. Review legs run at max_iterations:1 so a retried agent run cannot double-open issues (create-issue fires in the agent job before checks). Reuses the stock triage-agent and fix-agent; the fix commit/close lives in this dir's conclude-fix. NOTE: the security leg's deterministic Cedar/Guardians engines depend on code-review/scripts/ and are NOT part of this standalone unit — for full security analysis install alongside code-review; otherwise the security leg runs as an AI-only reviewer.",
   "triggers": [
     { "on": "issue_comment", "comment_prefix": "/demo-review", "command": "start" }
   ],

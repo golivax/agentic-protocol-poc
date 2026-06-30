@@ -26,8 +26,13 @@ def apply_fix(workdir, fix):
         out["detail"] = "missing-file"
         return out
 
-    with open(target) as fh:
-        lines = fh.readlines()  # each retains its "\n"
+    try:
+        with open(target) as fh:
+            lines = fh.readlines()  # each retains its "\n"
+    except OSError:
+        out["detail"] = "io-error"
+        return out
+
     if line > len(lines):
         out["detail"] = "line-out-of-range"
         return out
@@ -44,14 +49,19 @@ def apply_fix(workdir, fix):
     if not trailing_nl:
         new_block[-1] = new_block[-1].rstrip("\n")
     lines[line - 1:line] = new_block
-    with open(target, "w") as fh:
-        fh.writelines(lines)
+    try:
+        with open(target, "w") as fh:
+            fh.writelines(lines)
+    except OSError:
+        out["detail"] = "write-error"
+        return out
 
     out["status"] = "applied"
     return out
 
 
 def apply_all(workdir, fixes):
+    """Apply fixes in order; a multiline patch shifts later same-file line numbers, so a now-mismatched original_line causes the drift guard to skip rather than corrupt."""
     results = []
     for fix in fixes or []:
         if isinstance(fix, dict):
