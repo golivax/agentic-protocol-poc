@@ -57,14 +57,20 @@ from conftest import PROTOCOLS
 REAL = json.loads((PROTOCOLS / "code-review/protocol.json").read_text())
 
 def test_real_protocol_gate_resolves_terminal_judges():
-    legs = ["spec-solves-issue", "plan-implements-spec", "code-implements-plan",
-            "mm-compliance", "docs-updated-appropriately", "tests-updated-appropriately"]
+    """Revision 2: gate reads the 4 cluster terminals (adherence-rollup, mm-compliance-judge,
+    consistency-rollup, security-judge), not the old flat-6 leg judges."""
     res = lib.resolve_inputs(REAL, "/s", "code-review", "pr-1",
                              consuming_branch=None, consuming_phase=None,
-                             inputs=[{"from": l, "as": l} for l in legs])
-    paths = {r["as"]: r["path"] for r in res}
-    for l in legs:
-        assert paths[l] == f"/s/code-review/pr-1/{l}.{l}-judge.evidence.json"
+                             inputs=[{"from": "adherence",     "as": "adherence"},
+                                     {"from": "mm-compliance", "as": "mm-compliance"},
+                                     {"from": "consistency",   "as": "consistency"},
+                                     {"from": "security",      "as": "security"}],
+                             consuming_path=["preflight-gate"])
+    p = {r["as"]: r["path"] for r in res}
+    assert p["adherence"]    == "/s/code-review/pr-1/preflight.adherence.adherence-rollup.evidence.json"
+    assert p["mm-compliance"] == "/s/code-review/pr-1/preflight.mm-compliance.mm-compliance-judge.evidence.json"
+    assert p["consistency"]  == "/s/code-review/pr-1/preflight.consistency.consistency-rollup.evidence.json"
+    assert p["security"]     == "/s/code-review/pr-1/preflight.security.security-judge.evidence.json"
 
 
 # ---------------------------------------------------------------------------
