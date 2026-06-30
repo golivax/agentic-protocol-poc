@@ -82,3 +82,16 @@ def test_engine_yml_derives_issue_instance_and_default_branch():
     t = _load("agentic-engine.yml")
     assert "issue-$" in t              # INSTANCE="issue-$N" path exists
     assert "default_branch" in t       # checkout the default branch for the issue case
+
+
+def test_design_agent_lock_is_readonly_and_bundles_spec():
+    t = _load("impl-feature-auto-design-agent.lock.yml")
+    assert "pull-requests: write" not in t  # read-only
+    assert "create-pull-request" not in t   # design opens no PR
+    assert "evidence" in t                  # uploads evidence artifact
+    assert ".claude/skills" in t            # stages superpowers
+
+
+def test_implement_agent_lock_opens_pr():
+    t = _load("impl-feature-auto-implement-agent.lock.yml")
+    assert "create-pull-request" in t       # implement opens the PR via safe-outputs
