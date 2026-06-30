@@ -119,3 +119,36 @@ def test_na_no_code_spec_present_passes(tmp_path):
     r = _run(ev, ["README.md", "docs/superpowers/specs/s.md"], tmp_path)
     # The check passes as verified N/A (no code change; empty matrices).
     assert r["pass"] is True
+
+
+def test_code_changed_no_spec_no_plan_passes(tmp_path):
+    # Regression (live-found): a PR with code changes but NO committed spec/plan —
+    # the common case for a normal repo. The agent correctly recomputes
+    # spec_present/plan_present=False with empty matrices; the form-check MUST accept
+    # it. Blocking on the missing spec/plan is conclude-preflight's job (it fires on
+    # the code & !spec / code & !plan scope flags), NOT the form-check's. Before the
+    # fix this emitted "in-scope leg must have non-empty …", making the leg
+    # un-passable on any PR lacking docs/superpowers/specs|plans.
+    ev = {"scope": {"code_changed": True, "spec_present": False, "plan_present": False},
+          "spec_to_plan": [], "plan_to_spec": [], "verdict": "underspec",
+          "examined": ["src/auth.py"]}
+    assert _run(ev, ["src/auth.py"], tmp_path)["pass"] is True
+
+
+def test_spec_present_plan_absent_passes(tmp_path):
+    # spec committed but no plan: spec_to_plan has no (missing) plan to map to, so
+    # empty matrices are correct. conclude blocks on (code & !plan).
+    ev = {"scope": {"code_changed": True, "spec_present": True, "plan_present": False},
+          "spec_to_plan": [], "plan_to_spec": [], "verdict": "underspec",
+          "examined": ["docs/superpowers/specs/s.md"]}
+    assert _run(ev, ["docs/superpowers/specs/s.md", "src/auth.py"], tmp_path)["pass"] is True
+
+
+def test_absent_artifact_with_nonempty_matrix_fails(tmp_path):
+    # spec/plan absent but the agent fabricated a non-empty matrix (nothing to map
+    # against) → rejected.
+    ev = {"scope": {"code_changed": True, "spec_present": False, "plan_present": False},
+          "spec_to_plan": [{"requirement": "x", "status": "covered", "plan_quote": "y"}],
+          "plan_to_spec": [], "verdict": "underspec", "examined": ["src/auth.py"]}
+    r = _run(ev, ["src/auth.py"], tmp_path)
+    assert r["pass"] is False and "empty" in r["feedback"].lower()

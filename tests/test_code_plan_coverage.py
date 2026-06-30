@@ -76,6 +76,26 @@ def test_empty_plan_to_code_in_scope_fails(tmp_path):
     assert _run(ev, CHANGED, tmp_path)["pass"] is False
 
 
+def test_code_changed_no_plan_passes(tmp_path):
+    # Regression (live-found): code changed but NO committed plan. The agent
+    # correctly recomputes plan_present=False with an empty plan_to_code; the
+    # form-check MUST accept it (conclude blocks on code & !plan). Before the fix
+    # this emitted "in-scope leg must have a non-empty plan_to_code array", making
+    # the leg un-passable on any PR lacking a committed plan.
+    ev = {"scope": {"code_changed": True, "plan_present": False},
+          "plan_to_code": [], "files": [], "verdict": "overplan", "examined": ["src/auth.py"]}
+    assert _run(ev, ["src/auth.py"], tmp_path)["pass"] is True
+
+
+def test_plan_absent_with_nonempty_p2c_fails(tmp_path):
+    # plan absent but the agent fabricated a non-empty plan_to_code → rejected.
+    ev = {"scope": {"code_changed": True, "plan_present": False},
+          "plan_to_code": [{"plan_item": "x", "status": "implemented"}],
+          "files": [], "verdict": "overplan", "examined": ["src/auth.py"]}
+    r = _run(ev, ["src/auth.py"], tmp_path)
+    assert r["pass"] is False and "empty" in r["feedback"].lower()
+
+
 # --- the mandated traces-exist-in-diff reuse proof: a BAD anchor in the leg-3
 #     files[] shape must be REJECTED (not vacuously passed) ---
 def test_traces_rejects_bad_anchor_on_leg3_shape(tmp_path):
