@@ -198,16 +198,22 @@ def _apply_commit_close(evidence):
             return report
         results = _apply_fixes.apply_all(workdir, fixes)
 
-    applied = [r for r in results if r["status"] == "applied"]
-    report["applied"] = len(applied)
-    report["skipped"] = [r for r in results if r["status"] != "applied"]
-    report["close"] = _issue_targets({r["cluster_id"] for r in applied})
+    try:
+        applied = [r for r in results if r["status"] == "applied"]
+        report["applied"] = len(applied)
+        report["skipped"] = [r for r in results if r["status"] != "applied"]
+        report["close"] = _issue_targets({r["cluster_id"] for r in applied})
 
-    if applied and not local:
-        _commit_push(workdir, repo, pr, token)
-        report["pushed"] = True
-        _close_issues(repo, report["close"], token)
-        shutil.rmtree(workdir, ignore_errors=True)
+        if applied and not local:
+            paths = sorted({r["path"] for r in applied})
+            _commit_push(workdir, repo, pr, token, paths=paths)
+            report["pushed"] = True
+            _close_issues(repo, report["close"], token)
+            shutil.rmtree(workdir, ignore_errors=True)
+    except Exception as e:
+        report["error"] = str(e)
+        _write_apply(report)
+        return report
 
     _write_apply(report)
     return report
@@ -220,10 +226,13 @@ def _pr_head_ref(repo, pr, token):
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def _commit_push(workdir, repo, pr, token):
+def _commit_push(workdir, repo, pr, token, paths=()):
+    paths = sorted(set(paths))
+    if not paths:
+        return
     _git(["config", "user.name", "agentic-fix-bot"], workdir)
     _git(["config", "user.email", "agentic-fix-bot@users.noreply.github.com"], workdir)
-    _git(["add", "-A"], workdir)
+    _git(["add", "--", *paths], workdir)
     msg = f"fix: apply AI review remediations (PR #{pr})"
     _git(["commit", "-m", msg], workdir)
     _git(["push", "origin", "HEAD"], workdir, token=token)
@@ -277,10 +286,10 @@ def main():
             {
                 "conclusion": "neutral",
                 "summary": (
-                    f"Fix suggestions: applied={len(report['applied'])}, "
+                    f"Fix suggestions: clusters_fixed={len(report['applied'])}, "
                     f"skipped={len(report['skipped'])}, dropped={len(report['dropped'])}, "
                     f"unknown={len(report['unknown']['fixes']) + len(report['unknown']['skipped'])}."
-                    f" applied={apply_report['applied']}, pushed={apply_report['pushed']}."
+                    f" files_patched={apply_report['applied']}, pushed={apply_report['pushed']}."
                 ),
                 "blocked": False,
             }
