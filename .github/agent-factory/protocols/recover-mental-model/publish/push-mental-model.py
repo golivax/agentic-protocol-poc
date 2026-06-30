@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Merge hook for the `combine` state of recover-mental-model.
 
-Collects the three method outputs (legion-map, codeset-vibing, socratic) and
-pushes them, all at once, into a single orphan `_mental_model` branch on the
-target repo — recreated/overwritten every run. Mirrors the layout of
+Collects the four method outputs (legion-map, codeset-vibing, ubiquitous-language,
+socratic) and pushes them, all at once, into a single orphan `_mental_model` branch
+on the target repo — recreated/overwritten every run. Mirrors the layout of
 golivax2/yuanrong-datasystem@_mental_model:
 
     _mental_model/
       METHODS.txt
-      legion-map/      <- legion leg tree
-      vibed-codeset/   <- codeset leg tree
-      socratic/        <- socratic leg (phase-2) tree
+      legion-map/           <- legion leg tree
+      vibed-codeset/        <- codeset leg tree
+      ubiquitous-language/  <- domain-modeling leg tree (CONTEXT.md)
+      socratic/             <- socratic leg (phase-2) tree
 
 ABI: <hook> <workdir> <instance>
-  <workdir>/inputs/{legion,codeset,socratic}.json   leg evidence (engine-materialized);
+  <workdir>/inputs/{legion,codeset,ubiquitous-language,socratic}.json  leg evidence (engine-materialized);
                                                     each carries a `run_id`.
 Env: ENGINE_LOCAL, GITHUB_REPOSITORY, PUBLISH_TOKEN, PR, PR_HEAD_SHA (inherited).
 
@@ -45,13 +46,15 @@ BRANCH = "_mental_model"
 LEGS = [
     ("legion", "legion", "mm-tree-legion", "legion-map"),
     ("codeset", "codeset", "mm-tree-codeset", "vibed-codeset"),
+    ("ubiquitous-language", "ubiquitous-language", "mm-tree-ubiquitous-language", "ubiquitous-language"),
     ("socratic", "socratic", "mm-tree-socratic", "socratic"),
 ]
 
 METHOD_LINES = {
-    "legion": "legion-map   : claude -p /legion:map  (9thLevelSoftware/legion)",
-    "codeset": "vibed-codeset: python -m codeset .   (codeset-vibing)",
-    "socratic": "socratic     : /socratic-code-theory-recovery  (LLM-Coding/Semantic-Anchors)",
+    "legion": "legion-map         : claude -p /legion:map  (9thLevelSoftware/legion)",
+    "codeset": "vibed-codeset      : python -m codeset .   (codeset-vibing)",
+    "ubiquitous-language": "ubiquitous-language: /domain-modeling  (mattpocock/skills)",
+    "socratic": "socratic           : /socratic-code-theory-recovery  (LLM-Coding/Semantic-Anchors)",
 }
 
 
@@ -170,9 +173,12 @@ def main():
     pr = os.environ.get("PR", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     link = f"https://github.com/{repo}/tree/{BRANCH}" if repo else BRANCH
-    lib.post_pr_comment(
-        pr, f"🧠 **Mental model recovered** ({legs_done}) — pushed to "
-            f"[`{BRANCH}`]({link}).")
+    # Ref-targeted runs (UI/workflow_dispatch) have no PR to comment on — status is
+    # served by the visibility API; the branch + this verdict are the output.
+    if pr:
+        lib.post_pr_comment(
+            pr, f"🧠 **Mental model recovered** ({legs_done}) — pushed to "
+                f"[`{BRANCH}`]({link}).")
     print(json.dumps({"conclusion": "success",
                       "summary": f"Pushed {BRANCH} ({legs_done})."}))
 

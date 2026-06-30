@@ -3,6 +3,13 @@ import json
 import yaml
 from datetime import datetime
 
+
+def _pr_of(instance) -> int | None:
+    """PR number for a `pr-<N>` instance, else None (ref-/ui-keyed runs have no PR)."""
+    s = str(instance or "")
+    rest = s[len("pr-"):] if s.startswith("pr-") else ""
+    return int(rest) if rest.isdigit() else None
+
 def _trigger_summary(proto: dict) -> list[dict]:
     out = []
     for t in proto.get("triggers", []) or []:
@@ -165,7 +172,7 @@ def status_projection(instance_files: dict[str, str]) -> dict:
             head["attempt"] = head_entry.get("iterations")
     return {
         "protocol": inst.get("protocol"),
-        "pr": int(str(inst.get("instance", "pr-0")).removeprefix("pr-")),
+        "pr": _pr_of(inst.get("instance")),
         "instance": inst.get("instance"),
         "head": head,
         "phases": phases,
@@ -196,7 +203,7 @@ def instance_stats(instance_files: dict[str, str]) -> dict:
     failed = sum(1 for p in proj["phases"] if p["status"] == "failed")
     return {
         "protocol": inst.get("protocol"),
-        "pr": int(str(inst.get("instance", "pr-0")).removeprefix("pr-")),
+        "pr": _pr_of(inst.get("instance")),
         "instance": inst.get("instance"),
         "state_transitions": transitions,
         "total_iterations": sum(iters_by_phase.values()),

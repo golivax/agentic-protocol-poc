@@ -38,12 +38,18 @@ def create_app(settings: Settings, client=None) -> FastAPI:
         except NotFound:
             raise HTTPException(status_code=404, detail=f"unknown protocol: {name}")
 
-    def _instance_files(client, protocol, pr):
+    def _resolve_instance(ident: str) -> str:
+        # Back-compat: a bare integer addresses the PR instance `pr-<N>`; any other
+        # string (e.g. `ref-main`, `ui-<uuid>`) is the instance dir name verbatim.
+        # Our instance dirs are never bare digits, so this is unambiguous.
+        return f"pr-{ident}" if str(ident).isdigit() else str(ident)
+
+    def _instance_files(client, protocol, inst):
         _validate_protocol(protocol)
-        paths = client.list_tree(f"{protocol}/pr-{pr}/")
+        paths = client.list_tree(f"{protocol}/{inst}/")
         files = {p.split("/")[-1]: client.get_text(p, settings.state_branch) for p in paths}
         if "_instance.yaml" not in files:
-            raise HTTPException(status_code=404, detail=f"no instance {protocol} pr-{pr}")
+            raise HTTPException(status_code=404, detail=f"no instance {protocol} {inst}")
         return files
 
     def _pr_numbers(client, protocol):
@@ -100,18 +106,25 @@ def create_app(settings: Settings, client=None) -> FastAPI:
         _proto_json(cl(request), protocol)  # 404 if unknown protocol
         return {"protocol": protocol, "instances": _pr_numbers(cl(request), protocol)}
 
-    @app.get("/protocols/{protocol}/instances/{pr}/status", dependencies=[Depends(require_auth)])
-    def instance_status(protocol: str, pr: int, request: Request):
-        return state_reader.status_projection(_instance_files(cl(request), protocol, pr))
+    # The path segment accepts a bare PR number (back-compat, e.g. `62` → `pr-62`)
+    # OR a full instance id (e.g. `ref-main`, `ui-<uuid>`) for ref-targeted runs.
+    @app.get("/protocols/{protocol}/instances/{ident}/status", dependencies=[Depends(require_auth)])
+    def instance_status(protocol: str, ident: str, request: Request):
+        inst = _resolve_instance(ident)
+        return state_reader.status_projection(_instance_files(cl(request), protocol, inst))
 
-    @app.get("/protocols/{protocol}/instances/{pr}/stats", dependencies=[Depends(require_auth)])
-    def instance_stats(protocol: str, pr: int, request: Request):
-        return state_reader.instance_stats(_instance_files(cl(request), protocol, pr))
+    @app.get("/protocols/{protocol}/instances/{ident}/stats", dependencies=[Depends(require_auth)])
+    def instance_stats(protocol: str, ident: str, request: Request):
+        inst = _resolve_instance(ident)
+        return state_reader.instance_stats(_instance_files(cl(request), protocol, inst))
 
-    @app.get("/protocols/{protocol}/instances/{pr}/evidence", dependencies=[Depends(require_auth)])
-    def instance_evidence(protocol: str, pr: int, request: Request):
-        proj = state_reader.evidence_projection(_instance_files(cl(request), protocol, pr))
-        return {"protocol": protocol, "pr": pr, **proj}
+    @app.get("/protocols/{protocol}/instances/{ident}/evidence", dependencies=[Depends(require_auth)])
+    def instance_evidence(protocol: str, ident: str, request: Request):
+        inst = _resolve_instance(ident)
+        proj = state_reader.evidence_projection(_instance_files(cl(request), protocol, inst))
+        # Keep `pr` (int or null for ref runs) and add the `instance` id (additive).
+        return {"protocol": protocol, "pr": state_reader._pr_of(inst),
+                "instance": inst, **proj}
 
     @app.get("/stats", dependencies=[Depends(require_auth)])
     def global_stats(request: Request):
@@ -152,7 +165,7 @@ def create_app(settings: Settings, client=None) -> FastAPI:
         out = []
         for name in names:
             for pr in _pr_numbers(client, name):
-                gv = state_reader.gate_view(_instance_files(client, name, pr))
+                gv = state_reader.gate_view(_instance_files(client, name, f"pr-{pr}"))
                 if gv and (status != "open" or gv["open"]):
                     out.append({"protocol": name, "pr": pr, **gv})
         return {"gates": out}

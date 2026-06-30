@@ -178,6 +178,7 @@ deeper fan-outs (from `recover-mental-model`):
   "branches": [
     { "id": "legion",  "workflow": "mm-legion-agent",  "checks": [ /* … */ ] },   // flat leg
     { "id": "codeset", "workflow": "mm-codeset-agent", "checks": [ /* … */ ] },   // flat leg
+    { "id": "ubiquitous-language", "workflow": "mm-ubiquitous-language-agent", "checks": [ /* … */ ] },  // flat leg
     { "id": "socratic", "states": [                                              // sub-pipeline leg
         { "id": "phase1",    "kind": "agent", "workflow": "mm-socratic-phase1-agent", "checks": [ /* … */ ] },
         { "id": "answering", "kind": "agent", "workflow": "mm-socratic-answering-agent",

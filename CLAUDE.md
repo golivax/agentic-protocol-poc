@@ -16,27 +16,34 @@ shape (single-agent, fan-out, multi-phase, sub-pipeline, arbitrarily-nested tree
 
 Four protocols ship under `.github/agent-factory/protocols/`:
 - **`code-review`** — the production pipeline (migrated from the custody-story
-  gh-aw pipeline), live-verified end-to-end: `preflight` → `mm-compliance` (a
-  BLOCKING mental-model gate; halts on `verdict:diverges` until `/override`) →
-  `overview` (+risk) → `review` (fanout to 5 dimension legs
-  `correctness`/`test`/`performance`/`security`/`maintainability`) → `join-review`
-  (AND-barrier) → `triage` → `fix` → `post-fix` (fanout: `context` ∥ the
-  `mm-updater`→`mm-gate` sub-pipeline) → `join` → `mrp` → done. Codex/gpt-5.5 agents
-  (OpenAI gateway). A live `/review` (or `/override`, or `/mm-answer` for the
-  mm-gate) runs it via the router (`agentic-orchestrator.yml`), which selects the
-  protocol through `lib.route` scanning `protocol.json` `triggers` blocks at
-  runtime. Its `context` and `security` phases vendor Bun/Node/Z3 toolchains under
-  `protocols/code-review/scripts/` — outside the engine's Python-only contract, so
-  those phase checks degrade to advisory when a toolchain is absent.
+  gh-aw pipeline), live-verified end-to-end: `preflight` (6-leg fanout:
+  `spec-solves-issue` ∥ `plan-implements-spec` ∥ `code-implements-plan` ∥
+  `mm-compliance` ∥ `docs-updated-appropriately` ∥ `tests-updated-appropriately`)
+  → `join-preflight` → `preflight-gate` → `overview` (+risk) → `review` (fanout
+  to 5 dimension legs `correctness`/`test`/`performance`/`security`/`maintainability`)
+  → `join-review` (AND-barrier) → `triage` → `fix` → `post-fix` (fanout: `context`
+  ∥ the `mm-updater`→`mm-gate` sub-pipeline) → `join-post-fix` → `mrp` → done.
+  Codex/gpt-5.5 agents (OpenAI gateway). A live `/review` (or `/override`, or
+  `/mm-answer` for the mm-gate) runs it via the router (`agentic-orchestrator.yml`),
+  which selects the protocol through `lib.route` scanning `protocol.json` `triggers`
+  blocks at runtime. Its `context` and `security` phases vendor Bun/Node/Z3 toolchains
+  under `protocols/code-review/scripts/` — outside the engine's Python-only contract,
+  so those phase checks degrade to advisory when a toolchain is absent.
 - **`code-review-v1`** — the original simpler example, preserved: `preflight` →
   `review` (fanout to `grumpy` + `security` legs) → `join` (AND-barrier) →
   `approval` (human gate) → done. Claude/sonnet agents. Triggers `/v1-review`,
   `/v1-override`, `/approve`, `/request-changes`, `/reject` (the start/override
   commands were renamed off `/review`+`/override`, which `code-review` now owns).
-- **`recover-mental-model`** — three parallel mental-model recovery methods
-  (`legion` ∥ `codeset` ∥ `socratic` sub-pipeline) → `join` → `combine` merge that
-  collects all three outputs and pushes them to an orphan `_mental_model` branch
-  (`/recover`; fully automated, no human input). The socratic sub-pipeline is
+- **`recover-mental-model`** — four parallel mental-model recovery methods
+  (`legion` ∥ `codeset` ∥ `ubiquitous-language` ∥ `socratic` sub-pipeline) →
+  `join` → `combine` merge that collects all four outputs and pushes them to an
+  orphan `_mental_model` branch. Fully automated, no human input. Started via
+  **`workflow_dispatch`** on `agentic-orchestrator.yml` (a UI/API with an
+  `Actions: write` token) against a **branch/ref** — not a PR; the caller passes
+  `ref` + a correlation `instance` it then polls the visibility API by. This is
+  the one protocol whose instance key is ref-/UI-keyed (`ref-<ref>`/`ui-<id>`)
+  rather than `pr-<N>`. `ubiquitous-language` runs the `domain-modeling` skill to
+  derive a code-only domain glossary (`CONTEXT.md`). The socratic sub-pipeline is
   three agent steps — `phase1` (build the Question Tree) → `answering` (auto-answer
   the OPEN leaves via code/web research) → `phase2` (synthesize docs). The combine
   hook (`publish/push-mental-model.py`) is the only place that writes a

@@ -37,6 +37,7 @@ def test_recover_legs_subpipeline_branch_points_at_first_substate(engine_env, tm
     # flat branches → branch path; sub-pipeline branch → first sub-state (phase1).
     assert legs == {"recover.legion": "mm-legion-agent",
                     "recover.codeset": "mm-codeset-agent",
+                    "recover.ubiquitous-language": "mm-ubiquitous-language-agent",
                     "recover.socratic.phase1": "mm-socratic-phase1-agent"}
 
 def test_codereview_preflight_run_agent_carries_path_and_workflow(engine_env, tmp_path):

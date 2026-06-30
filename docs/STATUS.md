@@ -7,13 +7,14 @@ before extending the system so you know which "missing" pieces are deliberate.
 ## `recover-mental-model` promoted from stub → real (2026-06-26)
 
 `recover-mental-model-stub` was renamed to **`recover-mental-model`** and turned
-into a real protocol. It fans out three mental-model recovery methods in
-parallel — `legion` (`/legion:map`), `codeset` (`python -m codeset .`), and
-`socratic` (the `socratic-code-theory-recovery` sub-pipeline `phase1 → answering
-→ phase2`, all automated agent steps — the answering step researches + fills the
-OPEN leaves, no human gate) — then `join`s and runs a `combine` merge hook
-(`publish/push-mental-model.py`) that collects all three leg trees and
-**force-pushes a single orphan `_mental_model` branch** (one per repo, overwritten
+into a real protocol. It fans out four mental-model recovery methods in
+parallel — `legion` (`/legion:map`), `codeset` (`python -m codeset .`),
+`ubiquitous-language` (the `domain-modeling` skill → a code-only domain glossary
+`CONTEXT.md`), and `socratic` (the `socratic-code-theory-recovery` sub-pipeline
+`phase1 → answering → phase2`, all automated agent steps — the answering step
+researches + fills the OPEN leaves, no human gate) — then `join`s and runs a
+`combine` merge hook (`publish/push-mental-model.py`) that collects all four leg
+trees and **force-pushes a single orphan `_mental_model` branch** (one per repo, overwritten
 each run), mirroring `golivax2/yuanrong-datasystem@_mental_model`.
 
 What is / isn't covered here:
@@ -42,6 +43,34 @@ What is / isn't covered here:
 - The old stub shape (flat `summary` leg + `rationale` sub-pipeline
   `draft → clarify → finalize`) is preserved as the engine regression fixture
   `tests/fixtures/subpipeline-gate/`; structural tests point there.
+
+### UI/API trigger — `workflow_dispatch` on a branch/ref (2026-06-29)
+
+`recover-mental-model` is started from a UI with a GitHub token via
+**`workflow_dispatch`** on `agentic-orchestrator.yml`, against a **branch/ref**
+(no PR). The `/recover` comment trigger was dropped (its `triggers` block is now
+empty — workflow_dispatch is orchestrator-level, not a protocol trigger). This is
+the first **non-PR instance**: the engine is otherwise PR-keyed (`pr-<N>`, PR head,
+`refs/pull/<N>/head`, PR comments), and the change is **additive** — a run is
+either PR-targeted (code-review, unchanged) or ref-targeted (this).
+
+- **Inputs:** `protocol` (default `recover-mental-model`), `ref` (blank = default
+  branch), `instance` (UI correlation id; blank = derived `ref-<ref>`). Token
+  scope: **Actions: write**.
+- **Engine threading:** `ctx` adds a `workflow_dispatch` case (instance from the
+  input, `PR=""`, `CHECKOUT_REF` = the ref); the `head` step resolves the SHA from
+  the ref (`gh api repos/$REPO/commits/$REF`) when there's no PR; `aw_context`
+  gains `ref`+`sha`, and the 6 MM agents check out `aw_context.ref` (PR head ref
+  for PR runs, the branch/ref otherwise). PR-only side-effects (the status
+  comment) are skipped when `pr` is empty.
+- **Tracking:** both dispatch APIs return `204` with no run id, so the UI supplies
+  the `instance` and polls the visibility API. The API is **backward compatible**:
+  `…/instances/{ident}` still accepts a bare PR number (`62` → `pr-62`, response
+  still `{"pr": 62, …}`) and now also a full instance id (`ref-main`, `ui-…`,
+  response `{"pr": null, "instance": "ref-main", …}`). `instance` is an additive
+  response field; `state_reader._pr_of` makes `pr` PR-optional.
+- **Still required to actually push** the branch: the `PUBLISH_TOKEN`/PAT wiring
+  noted above.
 
 The historical sections below still say `recover-mental-model-stub` — they are a
 dated record from when it was a stub and are left unchanged.
