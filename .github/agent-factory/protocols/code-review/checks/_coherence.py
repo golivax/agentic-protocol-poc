@@ -40,7 +40,7 @@ def evaluate(name, evidence, changed_files, *, is_kind, kind_label, applicable_w
     examined = evidence.get("examined")
 
     if not applicable_without_code and not code_changed:
-        if verdict == "n/a" and not items:
+        if verdict == "n/a" and items == []:
             return out(True, "verified N/A (no code change; empty items).")
         return out(False, "no code change but verdict is not n/a with empty items")
 

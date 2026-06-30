@@ -113,7 +113,7 @@ def _render_comment(status, reasons, warnings, spec_leg, plan_leg, code_leg, mm_
     concatenated into this string; the whole body is passed to lib.post_pr_comment
     as ONE `gh api -f body=BODY` argument (an argument vector, never shell-interpolated)."""
     icon = "\U0001f6d1" if status == "blocked" else "✅"
-    lines = [f"{icon} **Preflight {status}** — issue → spec → plan → code + mental-model", ""]
+    lines = [f"{icon} **Preflight {status}** — issue → spec → plan → code + mental-model + docs/tests", ""]
     rows = [("spec-solves-issue", spec_leg), ("plan-implements-spec", plan_leg),
             ("code-implements-plan", code_leg), ("mm-compliance", mm_leg),
             ("docs-updated-appropriately", docs_leg), ("tests-updated-appropriately", tests_leg)]

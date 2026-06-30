@@ -2,8 +2,8 @@
 detectPlanInBody, locateArtifact's association layer).
 
 Pure: callers supply the PR body + changed paths; file/probe I/O stays in the
-caller (mirrors custody's `io` injection). Shared by docs-updated-with-code,
-tests-updated-with-code, the per-leg preflight coverage checks
+caller (mirrors custody's `io` injection). Shared by _coherence (docs-coverage,
+tests-coverage), the per-leg preflight coverage checks
 (spec-solves-issue-coverage, plan-spec-coverage, code-plan-coverage),
 traces-exist-in-diff, and the spec-solves-issue-agent prefetch so the
 "is this artifact ASSOCIATED with the PR?" rule has ONE source of truth.

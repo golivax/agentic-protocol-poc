@@ -45,3 +45,8 @@ def test_na_but_code_changed_fails(tmp_path):
     ev = {"scope": {"code_changed": False}, "items": [], "verdict": "n/a", "examined": ["x"]}
     r = _run(ev, CHANGED, tmp_path)  # code DID change => scope disagreement
     assert r["pass"] is False
+
+def test_na_null_items_fails(tmp_path):
+    # N/A path requires an explicit empty list; items:null must NOT slip through.
+    ev = {"scope": {"code_changed": False}, "items": None, "verdict": "n/a", "examined": ["x"]}
+    assert _run(ev, ["README.md"], tmp_path)["pass"] is False

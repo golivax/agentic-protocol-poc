@@ -46,7 +46,7 @@ def _tests_leg(verdict, *, code_changed=True):
 
 
 def _conclude(legs, blocking, tmp_path):
-    """legs = {'spec-solves-issue': obj, 'plan-implements-spec': obj, 'code-implements-plan': obj, 'mm-compliance': obj}."""
+    """legs = {'spec-solves-issue': obj, 'plan-implements-spec': obj, 'code-implements-plan': obj, 'mm-compliance': obj, 'docs-updated-appropriately': obj, 'tests-updated-appropriately': obj}."""
     inputs = tmp_path / "inputs"; inputs.mkdir()
     for name, obj in legs.items():
         (inputs / f"{name}.json").write_text(json.dumps(obj))
@@ -136,7 +136,7 @@ CASES = [
 
 @pytest.mark.parametrize("name,mutate,blocked,reason,warning",
                          CASES, ids=[c[0] for c in CASES])
-def test_phase_a_rollup(name, mutate, blocked, reason, warning, tmp_path):
+def test_preflight_rollup(name, mutate, blocked, reason, warning, tmp_path):
     legs = mutate(_all_na())
     out, vpath, _stderr = _conclude(legs, blocking=False, tmp_path=tmp_path)
     assert out["blocked"] is blocked, out

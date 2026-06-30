@@ -1,6 +1,6 @@
 """Shared path classifiers for the preflight checks. Ports custody's
 checks.js (isDocFile/isTestFile/isCodeFile) + locate.js (spec/plan path arms).
-Imported by docs-updated-with-code, tests-updated-with-code, the per-leg
+Imported by _coherence (docs-coverage, tests-coverage), the per-leg
 preflight coverage checks (spec-solves-issue-coverage, plan-spec-coverage,
 code-plan-coverage), traces-exist-in-diff, and the spec-solves-issue-agent
 prefetch."""
