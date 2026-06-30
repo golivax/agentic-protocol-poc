@@ -75,3 +75,96 @@ def test_four_legs_with_scopeless_mm_cell_passes(tmp_path):
                    {"leg": "mm-compliance", "verdict": "compliant", "scope": {}, "summary": "ok"}],
           "examined": ["x"]}
     assert _run(ev, tmp_path, params=four)["pass"] is True
+
+
+# R2-9: gate with 7 leaf legs (4-cluster-branch inputs flattened)
+SEVEN_LEGS = {"legs": [
+    "spec-solves-issue",
+    "plan-implements-spec",
+    "code-implements-plan",
+    "mm-compliance",
+    "docs-updated-appropriately",
+    "tests-updated-appropriately",
+    "security",
+]}
+
+
+def _cell7(leg, verdict="adheres", scope=None):
+    if scope is None:
+        scope = {"spec_present": True}
+    return {"leg": leg, "verdict": verdict, "scope": scope, "summary": "ok"}
+
+
+def test_seven_cell_gate_passes(tmp_path):
+    """A 7-cell gate evidence (one per leaf leg, each with leg+verdict+scope) passes."""
+    ev = {
+        "legs": [
+            _cell7("spec-solves-issue",           "solves"),
+            _cell7("plan-implements-spec",         "adheres"),
+            _cell7("code-implements-plan",         "adheres"),
+            _cell7("mm-compliance",                "compliant", scope={}),
+            _cell7("docs-updated-appropriately",   "adheres"),
+            _cell7("tests-updated-appropriately",  "adheres"),
+            _cell7("security",                     "clear",    scope={}),
+        ],
+        "examined": [],
+    }
+    r = _run(ev, tmp_path, params=SEVEN_LEGS)
+    assert r["pass"] is True
+
+
+def test_seven_cell_security_scope_empty_dict_passes(tmp_path):
+    """security scope:{} (no scope from gather) is accepted by the check."""
+    ev = {
+        "legs": [
+            _cell7("spec-solves-issue",           "solves"),
+            _cell7("plan-implements-spec",         "adheres"),
+            _cell7("code-implements-plan",         "adheres"),
+            _cell7("mm-compliance",                "compliant", scope={}),
+            _cell7("docs-updated-appropriately",   "adheres"),
+            _cell7("tests-updated-appropriately",  "adheres"),
+            # security scope is explicitly {}
+            {"leg": "security", "verdict": "clear", "scope": {}, "summary": "no violations"},
+        ],
+        "examined": [],
+    }
+    r = _run(ev, tmp_path, params=SEVEN_LEGS)
+    assert r["pass"] is True
+
+
+def test_seven_cell_missing_security_leg_fails(tmp_path):
+    """A 7-declared-leg gate evidence missing the security cell must fail."""
+    ev = {
+        "legs": [
+            _cell7("spec-solves-issue",           "solves"),
+            _cell7("plan-implements-spec",         "adheres"),
+            _cell7("code-implements-plan",         "adheres"),
+            _cell7("mm-compliance",                "compliant", scope={}),
+            _cell7("docs-updated-appropriately",   "adheres"),
+            _cell7("tests-updated-appropriately",  "adheres"),
+            # security leg intentionally omitted
+        ],
+        "examined": [],
+    }
+    r = _run(ev, tmp_path, params=SEVEN_LEGS)
+    assert r["pass"] is False
+    assert "security" in r["feedback"]
+
+
+def test_seven_cell_missing_one_cluster_leaf_fails(tmp_path):
+    """Missing any cluster-derived leaf cell (e.g. plan-implements-spec) must fail."""
+    ev = {
+        "legs": [
+            _cell7("spec-solves-issue",           "solves"),
+            # plan-implements-spec intentionally omitted
+            _cell7("code-implements-plan",         "adheres"),
+            _cell7("mm-compliance",                "compliant", scope={}),
+            _cell7("docs-updated-appropriately",   "adheres"),
+            _cell7("tests-updated-appropriately",  "adheres"),
+            _cell7("security",                     "clear",    scope={}),
+        ],
+        "examined": [],
+    }
+    r = _run(ev, tmp_path, params=SEVEN_LEGS)
+    assert r["pass"] is False
+    assert "plan-implements-spec" in r["feedback"]
