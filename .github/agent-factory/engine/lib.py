@@ -738,10 +738,12 @@ def upsert_status_comment(sf, pr, body):
     if os.environ.get("ENGINE_LOCAL", "0") == "1":
         sys.stderr.write(f"[ENGINE_LOCAL] status comment pr#{pr}: {body}\n")
         return
-    # Ref-/UI-targeted runs have no PR to comment on — status is served by the
-    # visibility API. Skip (the gh call below uses check=True and would raise on
-    # an empty PR number, e.g. repos/<r>/issues//comments).
-    if not pr:
+    # Only a real (numeric) PR has a comment thread. Ref-/UI-targeted runs have
+    # no PR — and the engine derives `pr` from the instance there (e.g. "ui-e2e3"),
+    # which is non-empty — so gate on isdigit, not emptiness. Status for ref runs is
+    # served by the visibility API. (The gh call below uses check=True and would
+    # raise on repos/<r>/issues/<non-numeric>/comments.)
+    if not str(pr).isdigit():
         return
 
     state = load_yaml(sf)
@@ -780,7 +782,7 @@ def post_pr_comment(pr, body):
     if os.environ.get("ENGINE_LOCAL", "0") == "1":
         sys.stderr.write(f"[ENGINE_LOCAL] pr comment pr#{pr}: {body}\n")
         return
-    if not pr:   # ref-/UI-targeted run: no PR to comment on
+    if not str(pr).isdigit():   # ref-/UI-targeted run: no real PR thread
         return
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     publish_token = os.environ.get("PUBLISH_TOKEN", "")
