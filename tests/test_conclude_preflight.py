@@ -44,21 +44,86 @@ def _tests_leg(verdict, *, code_changed=True):
                       else [{"path": "tests/test_app.py", "status": "missing", "reason": "x"}]),
             "examined": ["tests/test_app.py"]}
 
+def _security_leg(verdict):
+    """Build a security gather evidence dict (flat schema at root, no scope nesting)."""
+    return {"verdict": verdict,
+            "engine_report": {"violations": (
+                [{"id": "V1", "locked": verdict == "LOCKED_VIOLATION", "description": "test"}]
+                if verdict != "PASS" and verdict != "n/a" else []
+            )},
+            "examined": ["diff"]}
+
 
 def _j(obj, grades=None):
     """Wrap a raw leg object in the judge evidence shape: {gather: obj, graded_findings: grades}."""
     return {"gather": obj, "graded_findings": grades or []}
 
 
-def _conclude(legs, blocking, tmp_path):
-    """legs = {'spec-solves-issue': obj, 'plan-implements-spec': obj, 'code-implements-plan': obj, 'mm-compliance': obj, 'docs-updated-appropriately': obj, 'tests-updated-appropriately': obj}."""
-    inputs = tmp_path / "inputs"; inputs.mkdir()
-    for name, obj in legs.items():
+def _cluster(cluster_name, legs_dict):
+    """Build a cluster rollup evidence: {cluster, legs:[{leg, gather, graded_findings}]}.
+
+    legs_dict: {leg_id: judge_leg_obj}  where judge_leg_obj is already in _j() shape
+               (i.e. has 'gather' + 'graded_findings' keys).
+    """
+    legs = []
+    for leg_id, leg_obj in legs_dict.items():
+        entry = {"leg": leg_id,
+                 "gather": leg_obj.get("gather", {}),
+                 "graded_findings": leg_obj.get("graded_findings", [])}
+        legs.append(entry)
+    return {"cluster": cluster_name, "legs": legs}
+
+
+def _conclude(legs_or_clusters, blocking, tmp_path):
+    """Write 4 cluster branch output files and invoke conclude-preflight.
+
+    Accepts either:
+      - A dict of the 4 cluster branch files keyed by file name
+        ('adherence', 'mm-compliance', 'consistency', 'security'), OR
+      - A dict of per-leg judge evidences (the old flat format, for backward
+        compat with the existing parametrized CASES tests) — in which case the
+        helper automatically groups them into the 4 cluster files.
+
+    The 4 branch files written:
+      adherence.json    - cluster rollup for spec/plan/code legs
+      mm-compliance.json - single mm judge evidence (in _j() shape)
+      consistency.json  - cluster rollup for docs/tests legs
+      security.json     - single security evidence (flat or _j() shape)
+    """
+    inputs = tmp_path / "inputs"
+    if not inputs.exists():
+        inputs.mkdir()
+
+    ADHERENCE_LEGS = ("spec-solves-issue", "plan-implements-spec", "code-implements-plan")
+    CONSISTENCY_LEGS = ("docs-updated-appropriately", "tests-updated-appropriately")
+    # A cluster-keyed dict has exactly these top-level keys (and only these).
+    CLUSTER_FILE_KEYS = {"adherence", "mm-compliance", "consistency", "security"}
+    # Per-leg dicts always include at least one of these adherence or consistency leg ids.
+    PER_LEG_MARKER_KEYS = set(ADHERENCE_LEGS) | set(CONSISTENCY_LEGS)
+
+    # Detect if caller passed cluster-keyed dict or per-leg dict.
+    # If any per-leg marker key is present, treat as per-leg flat format.
+    if legs_or_clusters.keys().isdisjoint(PER_LEG_MARKER_KEYS):
+        # Already cluster-keyed — write directly.
+        branch_files = legs_or_clusters
+    else:
+        # Per-leg flat dict — group into 4 cluster files automatically.
+        per_leg = legs_or_clusters
+        adherence_legs_dict = {k: per_leg[k] for k in ADHERENCE_LEGS if k in per_leg}
+        consistency_legs_dict = {k: per_leg[k] for k in CONSISTENCY_LEGS if k in per_leg}
+        branch_files = {
+            "adherence": _cluster("adherence", adherence_legs_dict),
+            "mm-compliance": per_leg.get("mm-compliance", {"gather": _mm_leg("compliant"), "graded_findings": []}),
+            "consistency": _cluster("consistency", consistency_legs_dict),
+            "security": per_leg.get("security", {"gather": _security_leg("PASS"), "graded_findings": []}),
+        }
+
+    for name, obj in branch_files.items():
         (inputs / f"{name}.json").write_text(json.dumps(obj))
+
     # argv[1] evidence = the gate's consolidated render (display only); a minimal stub is fine.
     gate_ev = tmp_path / "gate.json"
-    gate_ev.write_text(json.dumps({"legs": [{"leg": k} for k in legs],
-                                   "examined": []}))
+    gate_ev.write_text(json.dumps({"legs": [], "examined": []}))
     env = dict(os.environ)
     env["BLOCKING"] = "1" if blocking else "0"
     env["CONCLUDE_INPUTS_DIR"] = str(inputs)
@@ -72,14 +137,16 @@ def _conclude(legs, blocking, tmp_path):
     return json.loads(r.stdout), (tmp_path / "verdict.json"), r.stderr
 
 
-# Baseline: the 3 chain legs N/A + mm-compliance compliant + docs adequate + tests n/a => clear.
+# Baseline: the 3 chain legs N/A + mm-compliance compliant + docs adequate + tests n/a
+# + security PASS => clear.
 def _all_na():
     return {"spec-solves-issue": _j(_spec_leg("n/a", issue_linked=False, spec_present=False)),
             "plan-implements-spec": _j(_plan_leg("n/a", code_changed=False, spec_present=False, plan_present=False)),
             "code-implements-plan": _j(_code_leg("n/a", code_changed=False, plan_present=False)),
             "mm-compliance": _j(_mm_leg("compliant")),
             "docs-updated-appropriately": _j(_docs_leg("adequate", code_changed=False)),
-            "tests-updated-appropriately": _j(_tests_leg("n/a", code_changed=False))}
+            "tests-updated-appropriately": _j(_tests_leg("n/a", code_changed=False)),
+            "security": _j(_security_leg("PASS"))}
 
 
 CASES = [
@@ -186,6 +253,7 @@ def _all_clear():
         "mm-compliance": _j(_mm_leg("compliant")),
         "docs-updated-appropriately": _j(_docs_leg("adequate")),
         "tests-updated-appropriately": _j(_tests_leg("adequate")),
+        "security": _j(_security_leg("PASS")),
     }
 
 
@@ -217,3 +285,176 @@ def test_missing_leg_fail_safe_blocks(tmp_path):
     del legs["docs-updated-appropriately"]
     out, _v, _s = _conclude(legs, False, tmp_path)
     assert out["blocked"] is True
+
+
+# --- Cluster-architecture tests (Revision 2) ---
+
+def _make_cluster_inputs(legs_per_leg_dict):
+    """Convert a per-leg dict into 4 branch cluster files for direct cluster-path testing."""
+    ADHERENCE_LEGS = ("spec-solves-issue", "plan-implements-spec", "code-implements-plan")
+    CONSISTENCY_LEGS = ("docs-updated-appropriately", "tests-updated-appropriately")
+    adherence_dict = {k: legs_per_leg_dict[k] for k in ADHERENCE_LEGS if k in legs_per_leg_dict}
+    consistency_dict = {k: legs_per_leg_dict[k] for k in CONSISTENCY_LEGS if k in legs_per_leg_dict}
+    return {
+        "adherence": _cluster("adherence", adherence_dict),
+        "mm-compliance": legs_per_leg_dict.get("mm-compliance",
+                                               {"gather": _mm_leg("compliant"), "graded_findings": []}),
+        "consistency": _cluster("consistency", consistency_dict),
+        "security": legs_per_leg_dict.get("security",
+                                          {"gather": _security_leg("PASS"), "graded_findings": []}),
+    }
+
+
+def test_cluster_all_clear_no_block(tmp_path):
+    """Via direct cluster-file path: all-clear input => not blocked."""
+    cluster_files = _make_cluster_inputs(_all_clear())
+    out, _v, _s = _conclude(cluster_files, False, tmp_path)
+    assert out["blocked"] is False
+
+
+def test_cluster_nine_floors_via_cluster_path(tmp_path):
+    """All nine original floors still block when sourced through cluster rollup files."""
+    floor_cases = [
+        # 1. issue_linked & !spec_present
+        ("issue-no-spec",
+         lambda L: L | {"spec-solves-issue": _j(_spec_leg("n/a", issue_linked=True, spec_present=False))},
+         "spec"),
+        # 2. spec.verdict == does-not-solve
+        ("does-not-solve",
+         lambda L: L | {"spec-solves-issue": _j(_spec_leg("does-not-solve", issue_linked=True, spec_present=True))},
+         "solve"),
+        # 3. code_changed & !spec_present
+        ("code-no-spec",
+         lambda L: L | {"plan-implements-spec": _j(_plan_leg("n/a", code_changed=True, spec_present=False, plan_present=True))},
+         "spec"),
+        # 4. code_changed & !plan_present
+        ("code-no-plan",
+         lambda L: L | {"plan-implements-spec": _j(_plan_leg("n/a", code_changed=True, spec_present=True, plan_present=False))},
+         "plan"),
+        # 5. plan.verdict == underspec
+        ("underspec",
+         lambda L: L | {"plan-implements-spec": _j(_plan_leg("underspec", code_changed=True, spec_present=True, plan_present=True))},
+         "underspec"),
+        # 6. code.verdict == underplan
+        ("underplan",
+         lambda L: L | {"code-implements-plan": _j(_code_leg("underplan", code_changed=True, plan_present=True)),
+                        "plan-implements-spec": _j(_plan_leg("adheres", code_changed=True, spec_present=True, plan_present=True))},
+         "underplan"),
+        # 7. mm.verdict == diverges
+        ("mm-diverges",
+         lambda L: L | {"mm-compliance": _j(_mm_leg("diverges"))},
+         "mental model"),
+        # 8. docs.verdict == inadequate
+        ("docs-inadequate",
+         lambda L: L | {"docs-updated-appropriately": _j(_docs_leg("inadequate"))},
+         "docs"),
+        # 9. code_changed & tests.verdict == inadequate
+        ("tests-inadequate",
+         lambda L: L | {"tests-updated-appropriately": _j(_tests_leg("inadequate")),
+                        "plan-implements-spec": _j(_plan_leg("adheres", code_changed=True, spec_present=True, plan_present=True)),
+                        "code-implements-plan": _j(_code_leg("adheres", code_changed=True, plan_present=True)),
+                        "spec-solves-issue": _j(_spec_leg("n/a", issue_linked=False, spec_present=True))},
+         "tests"),
+    ]
+    for case_name, mutate, reason_substr in floor_cases:
+        per_leg = mutate(_all_na())
+        cluster_files = _make_cluster_inputs(per_leg)
+        case_dir = tmp_path / case_name
+        case_dir.mkdir(exist_ok=True)
+        out, _v, _s = _conclude(cluster_files, False, case_dir)
+        assert out["blocked"] is True, f"{case_name}: expected block"
+        assert any(reason_substr in r for r in out["reasons"]), \
+            f"{case_name}: expected '{reason_substr}' in reasons: {out['reasons']}"
+
+
+def test_security_locked_violation_blocks(tmp_path):
+    """Security floor: LOCKED_VIOLATION in security gather.verdict => block."""
+    legs = _all_clear()
+    legs["security"] = _j(_security_leg("LOCKED_VIOLATION"))
+    out, _v, _s = _conclude(legs, False, tmp_path)
+    assert out["blocked"] is True
+    assert any("LOCKED_VIOLATION" in r for r in out["reasons"]), out["reasons"]
+
+
+def test_security_pass_does_not_block(tmp_path):
+    """Security verdict PASS => no block from security."""
+    out, _v, _s = _conclude(_all_clear(), False, tmp_path)
+    assert out["blocked"] is False
+    assert not any("LOCKED" in r for r in out["reasons"])
+
+
+def test_security_judge_escalates_non_locked(tmp_path):
+    """A non-LOCKED security violation with a blocking judge grade => escalation block."""
+    legs = _all_clear()
+    # verdict is not LOCKED_VIOLATION (so no security floor), but judge grades blocking.
+    legs["security"] = _j(
+        _security_leg("PASS"),  # gather verdict PASS — not a LOCKED floor
+        [{"ref": "V1", "severity": "blocking", "rationale": "novel critical vuln"}])
+    out, _v, _s = _conclude(legs, False, tmp_path)
+    assert out["blocked"] is True
+    assert any("security" in r for r in out["reasons"]), out["reasons"]
+
+
+def test_missing_adherence_cluster_blocks(tmp_path):
+    """Missing adherence.json => all 3 adherence legs are fail-safe blocked."""
+    cluster_files = _make_cluster_inputs(_all_clear())
+    del cluster_files["adherence"]
+    out, _v, _s = _conclude(cluster_files, False, tmp_path)
+    assert out["blocked"] is True
+    # All three adherence legs should appear as fail-safe blocks.
+    reasons_str = " ".join(out["reasons"])
+    assert "spec-solves-issue" in reasons_str or "plan-implements-spec" in reasons_str or \
+           "code-implements-plan" in reasons_str, out["reasons"]
+
+
+def test_missing_consistency_cluster_blocks(tmp_path):
+    """Missing consistency.json => docs + tests legs are fail-safe blocked."""
+    cluster_files = _make_cluster_inputs(_all_clear())
+    del cluster_files["consistency"]
+    out, _v, _s = _conclude(cluster_files, False, tmp_path)
+    assert out["blocked"] is True
+    reasons_str = " ".join(out["reasons"])
+    assert "docs-updated-appropriately" in reasons_str or \
+           "tests-updated-appropriately" in reasons_str, out["reasons"]
+
+
+def test_missing_inner_leg_in_cluster_blocks(tmp_path):
+    """A cluster rollup that omits an inner leg => fail-safe block for that leg."""
+    # Build a consistency cluster that only has tests, not docs.
+    consistency_missing_docs = _cluster("consistency", {
+        "tests-updated-appropriately": _j(_tests_leg("adequate"))
+        # docs-updated-appropriately deliberately omitted
+    })
+    cluster_files = _make_cluster_inputs(_all_clear())
+    cluster_files["consistency"] = consistency_missing_docs
+    out, _v, _s = _conclude(cluster_files, False, tmp_path)
+    assert out["blocked"] is True
+    assert any("docs-updated-appropriately" in r for r in out["reasons"]), out["reasons"]
+
+
+def test_garbled_cluster_file_blocks(tmp_path):
+    """A cluster file that is not a valid cluster object => fail-safe block."""
+    cluster_files = _make_cluster_inputs(_all_clear())
+    # Overwrite adherence with a non-dict/non-cluster value (still valid JSON).
+    cluster_files["adherence"] = [1, 2, 3]  # a list, not a dict
+    out, _v, _s = _conclude(cluster_files, False, tmp_path)
+    assert out["blocked"] is True
+
+
+def test_cluster_grouped_comment_contains_headings(tmp_path):
+    """The PR comment groups rows under the 4 cluster headings."""
+    _out, _v, stderr = _conclude(_all_clear(), False, tmp_path)
+    # ENGINE_LOCAL writes the comment body to stderr.
+    assert "Adherence" in stderr or "adherence" in stderr.lower(), stderr
+    assert "Mental-model" in stderr or "mm-compliance" in stderr.lower() or \
+           "mental" in stderr.lower(), stderr
+    assert "Consistency" in stderr or "consistency" in stderr.lower(), stderr
+    assert "Security" in stderr or "security" in stderr.lower(), stderr
+
+
+def test_verdict_json_contains_security_leg(tmp_path):
+    """verdict.json records must include the security leg."""
+    _out, vpath, _s = _conclude(_all_clear(), False, tmp_path)
+    v = json.loads(vpath.read_text())
+    assert any(r.get("type") == "leg" and r.get("leg") == "security" for r in v["records"]), \
+        v["records"]
