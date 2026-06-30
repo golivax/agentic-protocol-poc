@@ -1,1 +1,1 @@
-{"seq":1,"entries":[{"seq":1,"time":"2026-06-30T21:10:54.777Z","message":"Pipeline opened for PR #62","tag":"active","key":"opened"}]}
+{"seq":2,"entries":[{"seq":1,"time":"2026-06-30T21:10:54.777Z","message":"Pipeline opened for PR #62","tag":"active","key":"opened"},{"seq":2,"time":"2026-06-30T21:10:58.827Z","message":"✅ Evidence schema valid","tag":"ok","key":"check:schema-valid:pass:657e290beb6266ccd55b8bd95e247491e3468392"}]}
