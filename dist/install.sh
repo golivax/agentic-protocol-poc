@@ -251,6 +251,50 @@ PY
   gh aw compile
 }
 
+# `gh aw add --engine <id>` rewrites the engine block to the inline form
+# `engine: <id>`, discarding the source agent's `model:` and `engine.env` — for
+# codex agents that drops `OPENAI_BASE_URL`, the self-hosted gateway endpoint.
+# Without it the compiled lock omits `apiProxy.targets.openai.host`, so the AWF
+# proxy defaults OpenAI traffic to api.openai.com and the gateway key 401s.
+# Claude endpoints are user-supplied (configure_endpoints); a codex agent's
+# endpoint is baked into the source .md, so we restore the source engine block
+# verbatim and recompile. No-op for engines whose source block is inline.
+restore_codex_endpoints() {
+  local any=0 agent
+  for agent in "${!AGENT_ENGINES[@]}"; do
+    [[ "${AGENT_ENGINES[$agent]}" == "codex" ]] || continue
+    local md=".github/workflows/${agent}.md"
+    [[ -f "$md" ]] || continue
+    if SRC_MD="$(gh_raw ".github/workflows/${agent}.md")" python3 - "$md" <<'PY'
+import os, re, sys
+inst = sys.argv[1]
+src = os.environ["SRC_MD"]
+# The source `engine:` block = the `engine:` line plus its more-indented
+# children (block form). An inline `engine: <id>` has nothing to restore.
+m = re.search(r"(?m)^engine:[ \t]*\n((?:[ \t]+.*\n?)*)", src)
+if not m:
+    sys.exit(1)
+blk = "engine:\n" + m.group(1)
+if not blk.endswith("\n"):
+    blk += "\n"
+t = open(inst).read()
+if re.search(r"(?m)^engine:[ \t]*\n(?:[ \t]+.*\n?)*", t):       # installed block form
+    t = re.sub(r"(?m)^engine:[ \t]*\n(?:[ \t]+.*\n?)*", blk, t, count=1)
+elif re.search(r"(?m)^engine:[ \t]+\S+[ \t]*\n", t):            # installed inline form
+    t = re.sub(r"(?m)^engine:[ \t]+\S+[ \t]*\n", blk, t, count=1)
+else:
+    sys.exit(1)
+open(inst, "w").write(t)
+PY
+    then
+      any=1
+      log "restored source engine block (custom endpoint) for ${agent}"
+    fi
+  done
+  [[ "$any" == 1 ]] && gh aw compile
+  return 0
+}
+
 ensure_state_branch() {
   local slug; slug="$(target_slug)"
   if gh api "repos/${slug}/branches/agentic-state" >/dev/null 2>&1; then
@@ -349,6 +393,7 @@ cmd_install() {
   done
   fetch_unit
   for p in "${PROTOCOLS[@]}"; do install_agents "$p"; done
+  restore_codex_endpoints
   configure_endpoints
   ensure_state_branch
   ensure_dispatch_token
@@ -379,6 +424,7 @@ cmd_update() {
   # compute the new file set, fetch it, delete orphans
   fetch_unit
   for p in "${PROTOCOLS[@]}"; do install_agents "$p"; done
+  restore_codex_endpoints
   configure_endpoints
   local newfiles; newfiles="$(git ls-files .github; git ls-files --others --exclude-standard .github)"
   # delete files the receipt had but the new set doesn't
