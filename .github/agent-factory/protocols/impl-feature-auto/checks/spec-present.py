@@ -21,7 +21,11 @@ def main():
     if not spec_path:
         emit(False, "no spec.md bundled beside evidence.json (design must write + upload the spec)")
         return
-    text = open(spec_path, encoding="utf-8", errors="replace").read().lower()
+    try:
+        text = open(spec_path, encoding="utf-8", errors="replace").read().lower()
+    except OSError as e:
+        emit(False, f"unable to read spec.md: {e}")
+        return
     # consider only markdown heading lines for section matching
     headings = "\n".join(ln for ln in text.splitlines() if ln.lstrip().startswith("#"))
     missing = [s for s in REQUIRED if s not in headings]

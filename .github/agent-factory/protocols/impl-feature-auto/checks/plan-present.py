@@ -20,7 +20,11 @@ def main():
         emit(False, "evidence.plan_path missing/trivial (writing-plans produced no plan)")
         return
     plan_path = _common.sibling(ev_path, "plan.md")
-    if not plan_path or os.path.getsize(plan_path) == 0:
+    try:
+        size = os.path.getsize(plan_path) if plan_path else 0
+    except OSError:
+        size = 0
+    if not plan_path or size == 0:
         emit(False, "no non-empty plan.md bundled beside evidence.json")
         return
     emit(True, "")

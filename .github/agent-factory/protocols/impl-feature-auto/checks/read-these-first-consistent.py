@@ -54,7 +54,11 @@ def main():
     if not spec_path:
         problems.append("bundled spec.md not found beside evidence.json (cannot cross-reference)")
     else:
-        spec = open(spec_path, encoding="utf-8", errors="replace").read()
+        try:
+            spec = open(spec_path, encoding="utf-8", errors="replace").read()
+        except OSError as e:
+            problems.append(f"unable to read spec.md: {e}")
+            spec = ""
         for it in ledger:
             if not isinstance(it, dict):
                 continue
