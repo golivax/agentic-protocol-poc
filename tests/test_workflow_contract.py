@@ -94,4 +94,7 @@ def test_design_agent_lock_is_readonly_and_bundles_spec():
 
 def test_implement_agent_lock_opens_pr():
     t = _load("impl-feature-auto-implement-agent.lock.yml")
-    assert "create-pull-request" in t       # implement opens the PR via safe-outputs
+    # gh-aw v0.77.5 emits the safe-output as the underscored token
+    # `create_pull_request` in the compiled lock (the hyphenated source key is
+    # normalized away). Accept either form — implement opens the PR via safe-outputs.
+    assert "create-pull-request" in t or "create_pull_request" in t
