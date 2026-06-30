@@ -570,3 +570,31 @@ def test_node_path_unresolvable_errors_not_silent_empty():
     assert not (out and out.get("results") == []), \
         "unresolvable NODE_PATH silently produced empty verdicts"
     assert "does not resolve" in stderr
+
+
+# ===========================================================================
+# Task 2: importable surface test
+# Verifies that plan-spec-coverage, _trace, and _coherence expose their
+# callable interfaces so judge-coverage can re-use them.
+# ===========================================================================
+
+CHECKS = PROTOCOLS / "code-review/checks"
+
+
+def test_evaluate_is_importable_and_pure():
+    import importlib.util
+
+    def load(stem):
+        spec = importlib.util.spec_from_file_location(
+            stem.replace("-", "_"), CHECKS / f"{stem}.py"
+        )
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    ps = load("plan-spec-coverage")
+    assert callable(ps.evaluate)
+    tr = load("_trace")
+    assert callable(tr.findings_anchor_errors)
+    coh = load("_coherence")
+    assert coh.finding_refs({"items": [{"path": "docs/a.md", "status": "missing"}]}) == ["docs/a.md"]
