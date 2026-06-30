@@ -1313,13 +1313,16 @@ def _cli(argv):
         # ensure-status-comment <state_dir> <pid> <instance> <protocol.json> <pr>
         ensure_status_comment(args[0], args[1], args[2], args[3], args[4])
     elif cmd == "match-trigger":
-        # match-trigger <protocol.json> <event_name> <action> <comment_body>
+        # match-trigger <protocol.json> <event_name> <action> <comment_body> [is_pr_comment]
+        # The 5th positional defaults to "true" (back-compat for 4-arg callers);
+        # only "false" flips it (a comment on a plain issue, not a PR).
         with open(args[0]) as f:
             proto = json.load(f)
         ev = args[1] if len(args) > 1 else ""
         act = args[2] if len(args) > 2 else ""
         body = args[3] if len(args) > 3 else ""
-        print(match_trigger(proto, ev, act, body))
+        ispr = args[4] if len(args) > 4 else "true"
+        print(match_trigger(proto, ev, act, body, is_pr_comment=(ispr.lower() != "false")))
     elif cmd == "agent-workflow":
         # agent-workflow <protocol.json> <phase> <branch> [substate]
         with open(args[0]) as f:

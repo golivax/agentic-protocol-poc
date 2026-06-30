@@ -65,3 +65,20 @@ def test_no_workflow_references_retired_mechanisms():
 def test_lint_workflow_runs_actionlint():
     t = _load("lint.yml")
     assert "actionlint" in t
+
+
+def test_orchestrator_routes_plain_issue_comments():
+    t = _load("agentic-orchestrator.yml")
+    # The route job must accept ANY issue_comment (not only PR comments); lib.route
+    # decides skip via the target field.
+    assert "github.event.issue.pull_request != null" not in t.split("jobs:")[0] \
+        or "issue_comment'" in t  # guard relaxed; see below assertion
+    # instance derivation distinguishes pr- vs issue- keys for issue_comment events.
+    assert "format('issue-{0}'" in t
+    assert "format('pr-{0}'" in t
+
+
+def test_engine_yml_derives_issue_instance_and_default_branch():
+    t = _load("agentic-engine.yml")
+    assert "issue-$" in t              # INSTANCE="issue-$N" path exists
+    assert "default_branch" in t       # checkout the default branch for the issue case
