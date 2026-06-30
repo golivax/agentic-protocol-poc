@@ -172,9 +172,18 @@ Per-leg `ref` + anchor mode (drives `judge-coverage`):
 | `plan-implements-spec` | a `spec_to_plan` / `plan_to_spec` cell | `requirement` \| `plan_item` | verbatim in **fetched spec/plan text** | recompute `spec_present`,`plan_present`,`code_changed` |
 | `code-implements-plan` | a `plan_to_code` cell / `files[].findings` entry | `plan_item` / file+anchor | **diff** anchor (`side`/`line`/`existing_code`) | recompute `plan_present`,`code_changed` |
 | `mm-compliance` | a `divergences[]` entry | divergence index/text | **citation only** (no diff/scope) | **none** (mm has no scope; always in-scope) |
-| `docs-updated-appropriately` | an `items[]` entry | `path` | path ∈ **changed-files** | `code_changed` (always applicable) |
-| `tests-updated-appropriately` | an `items[]` entry | `path` | path ∈ **changed-files** | `code_changed` (n/a allowed) |
+| `docs-updated-appropriately` | an `items[]` entry | `path` | path ∈ **changed-files**, **except `status=="missing"`** (a missing doc is not in the diff → graded by `ref` only, no anchor) | `code_changed` (always applicable) |
+| `tests-updated-appropriately` | an `items[]` entry | `path` | path ∈ **changed-files**, **except `status=="missing"`** (same exemption) | `code_changed` (n/a allowed) |
 
+- **Anchorless cells (no traceability anchor, graded by `ref` + severity only):**
+  `spec-solves-issue` `not_addressed` cells (null `spec_quote`), and docs/tests
+  `items[].status=="missing"` entries (a missing doc/test path is by definition
+  not in the changed-files). For `plan`/`code`, a `missing`/`not_addressed` cell's
+  `ref` (`requirement`/`plan_item`) **is** still anchorable to the fetched
+  spec/plan text — only the cross-side quote is absent — so those are NOT exempt
+  on `ref`. An anchorless cell's severity is advisory-to-the-comment, **never
+  load-bearing for the floor** (the floor reads the form-verified `gather_verdict`,
+  not individual grades).
 - Out-of-scope / `n/a` (per the leg's applicability — e.g. `spec-solves-issue`
   with no linked issue; any code-gated leg on a no-code PR): `graded_findings`
   is `[]`, `verdict` is `n/a`, `scope` echoes the out-of-scope flags. **`docs` is
@@ -195,7 +204,22 @@ gather checks' helpers (`_locate`, `_paths`, `_artifact_fetch`, `_diff`,
 
 1. **scope-echo** == independent recompute (mode `"none"` ⇒ accept absent/empty).
 2. **verdict-echo** == the leg's independently-recomputed verdict (so the floor
-   `conclude` reads is form-verified, not LLM-asserted).
+   `conclude` reads is form-verified, not LLM-asserted). Each gather check's
+   verdict fold is currently **inline in its `main()`** (e.g. `plan-spec-coverage`'s
+   `underspec`/`overspec` derivation; `_coherence`'s `inadequate` fold) — so a
+   prerequisite plan task **extracts each into a pure importable helper**
+   (`plan_spec_verdict(...)`, `code_plan_verdict(...)`, `spec_solves_verdict(...)`,
+   `coherence_verdict(items)`) that BOTH the gather check and `judge-coverage`
+   import, giving one source of truth (no duplicated/divergent verdict logic).
+   **Exception — `mm-compliance`:** mm's verdict is an LLM compliance judgment with
+   **no deterministic recompute**, so zone 3 cannot verify the echo. For mm,
+   `judge-coverage` verifies only `gather_verdict ∈ {compliant, diverges}` (enum)
+   and that each graded `divergences` entry cites a gather divergence. The mm floor
+   (`mm==diverges`) therefore rests on the LLM verdict at the **same trust level as
+   today** (today `conclude` reads it straight from the mm gather, also only
+   schema-checked) — the only new surface is the judge's copy hop, mitigated by a
+   "copy verbatim" instruction + the enum check. See Open Questions for the
+   `mm`-gather-only alternative that removes even that hop.
 3. out-of-scope ⇒ `graded_findings == []` and `verdict == "n/a"` (only for legs
    whose mode permits `n/a`).
 4. in-scope ⇒ **coverage** (every finding the leg's gather coverage logic
@@ -233,15 +257,24 @@ independently re-reads each leg's terminal **judge** evidence from
 
 `final blocked = any(floor reason) or any(in-scope, non-floor leg with a blocking grade)`.
 
-Decision table (per leg):
+Decision table — **per-leg view** (the three cross-leg *presence* floors —
+`issue_linked & !spec_present`, `code & !spec_present`, `code & !plan_present` —
+are aggregate conditions evaluated **globally** over the spec/plan/code legs'
+echoed flags, per the floor list above, not attributable to a single leg row):
 
 | gather_verdict / scope | judge grades | outcome |
 |---|---|---|
-| floor-block (e.g. underspec, code&!plan, diverges, inadequate) | any | **block** (floor; judge cannot remove) |
+| floor-block (e.g. does-not-solve, underspec, underplan, diverges, inadequate; or a global presence floor) | any | **block** (floor; judge cannot remove) |
 | in-scope, non-floor | ≥1 `blocking` | **block** (judge escalation) |
 | in-scope, non-floor | only `advisory` | warn |
 | in-scope, non-floor | only `noise` / none | clear |
 | out-of-scope (`n/a`) | `[]` | no block, no warn |
+
+For every leg the verdict enum partitions **exhaustively** into floor-block vs
+non-floor (spec: `does-not-solve`=floor, else non-floor; plan: `underspec`=floor;
+code: `underplan`=floor; mm: `diverges`=floor, `compliant`=non-floor; docs/tests:
+`inadequate`=floor, `adequate`/`n/a`=non-floor), so "non-floor" is total and
+escalation never falls in a gap or double-counts a floor-block.
 
 `on_blocked: halt` halts the run; a maintainer `/override <reason>` advances one
 phase, exactly as today. `conclude-preflight` emits the same single consolidated
@@ -263,7 +296,12 @@ Two distinct outcomes — do **not** conflate them:
 - **A judge produced valid evidence the conclude hook later finds missing/garbled**
   at zone 4 (`_load_leg` returns `{}`): `conclude` treats that leg as a block
   (fail-safe). This is reachable only because the judge passed its form check and
-  the leg reached the gate.
+  the leg reached the gate. **⚠ This is a behavior change:** today
+  `conclude-preflight._load_leg` returns `{}` for a missing leg and the rollup
+  reads it as *no signal* (`_verdict({})→"n/a"`, `_flag({},…)→False`) — i.e. today
+  a missing leg silently does **not** block. The new design flips that to
+  fail-safe-block; the Modified-files list + a `test_conclude_preflight.py` case
+  must cover it explicitly.
 
 The spec does **not** claim `conclude` can rescue a form-failed judge (it can't —
 see the join semantics above).
@@ -300,6 +338,15 @@ needed to stabilize the `ref`/anchor fields the judge consumes.
   and the `traces-exist-in-diff` anchor logic).
 
 **Modified:**
+- **Verdict-helper refactor (prerequisite):** extract each gather check's inline
+  verdict fold into a pure importable helper in the same module
+  (`plan-spec-coverage.py` → `plan_spec_verdict`; `code-plan-coverage.py` →
+  `code_plan_verdict`; `spec-solves-issue-coverage.py` → `spec_solves_verdict`;
+  `_coherence.py` → `coherence_verdict`); the gather check AND `judge-coverage`
+  both call it (single source of truth). Likewise extract `traces-exist-in-diff`'s
+  anchor logic into an importable `_trace.py` both checks import (avoids importing
+  a hyphenated filename). Pure refactor — gather behavior unchanged, guarded by the
+  existing gather-check tests.
 - `protocol.json`: 6 branches flat → sub-pipeline (`states: [gather → judge]`);
   each judge sub-state gets `inputs: [{from: <gather>, as: gather}]`, its evidence
   schema, `params` (the leg mode), `checks: [{run: judge-coverage, on_fail:
@@ -308,7 +355,9 @@ needed to stabilize the `ref`/anchor fields the judge consumes.
   unchanged.
 - `publish/conclude-preflight.py`: read the judges' echoed `scope`/`gather_verdict`
   + `graded_findings`; keep all nine floor conditions; **add** the judge-escalation
-  blocks; render the enriched comment.
+  blocks; **change the missing-leg behavior** from "no signal" to **fail-safe block**
+  (today `_load_leg`→`{}` reads as `n/a`/`False`; new: a missing/garbled leg blocks);
+  render the enriched comment.
 - `checks/preflight-gate-coverage.py` + `preflight-gate-agent.md`: read the judge
   cell shape (one graded cell per declared leg) instead of the old leg-verdict cell.
 
@@ -337,7 +386,10 @@ changes — out of scope.)
     every one of the nine floor conditions still blocks regardless of any judge
     grades (the "deterministic floor" regression); an in-scope non-floor leg with
     a `blocking` grade blocks (escalation); `advisory`⇒warn; `noise`/none⇒clear;
-    `n/a`⇒inert; enriched-comment text reflects gather verdict + judge grade.
+    `n/a`⇒inert; enriched-comment text reflects gather verdict + judge grade; and a
+    **missing/garbled leg ⇒ fail-safe block** (the behavior change — today it reads
+    as no-signal). Also a `verdict-echo` unit: `judge_coverage` rejects a judge that
+    echoes a `gather_verdict` not equal to the shared helper's recompute.
   - Update `test_preflight_gate_coverage.py` for the judge cell shape.
   - `protocol-lint.py` clean; `validate_protocol` passes (every gather/judge
     sub-state has a `workflow`; `join.of` in scope; depth ≤ 5).
@@ -361,19 +413,30 @@ up the new agents unchanged.
 
 ## Open questions deferred to the implementation plan
 
-- **Exact `ref` extraction per leg** for the missing-requirement cells that have
-  no anchor (e.g. `spec-solves-issue` `not_addressed`, `plan_to_spec` `missing`):
-  the judge grades them by `ref` with **no** anchor; `judge-coverage`'s
-  traceability rule must exempt anchorless missing-cells (verify the gather
-  schema marks them so).
+- **Which cells are genuinely anchorless.** Only `spec-solves-issue`
+  `not_addressed` cells (null `spec_quote`) and docs/tests `items[].status=="missing"`
+  entries have no traceability anchor — the judge grades them by `ref` + severity
+  only. For `plan`/`code`, even a `missing`/`not_addressed` cell's `ref`
+  (`requirement`/`plan_item`) **is** still anchorable to the fetched spec/plan text
+  (only the cross-side quote is absent), so it is NOT exempt on `ref`. The plan
+  verifies the gather schemas mark these cases and that `judge-coverage`'s
+  traceability arm exempts exactly this set.
+- **`mm-compliance`: keep its judge, or make it the one gather-only exception?**
+  mm is the leg where the judge adds least (it is already a focused
+  `compliant|diverges` verdict) *and* the one leg whose verdict-echo cannot be
+  recomputed in zone 3 (no deterministic recompute exists), so adding a judge hop
+  inserts an LLM copy of the floor signal that `judge-coverage` can only enum-check,
+  not verify. **Option A (default, keeps uniformity):** mm keeps its judge; the
+  judge is instructed to copy `gather_verdict` verbatim and grades divergence
+  severity; accept the same trust level as today for the mm floor. **Option B
+  (cleaner correctness):** mm stays a single gather-only flat leg (no judge), so
+  `conclude` reads mm's verdict directly from the mm gather (a flat branch's
+  terminal) with no copy hop — at the cost of breaking strict uniform-on-6. Decide
+  in the plan; default A unless the reviewer floor-integrity concern outweighs
+  uniformity.
 - **Single judge agent vs six.** Six per-leg judge agents (mirroring the gathers)
   keep prompts leg-specific; a single parametrized judge couples the legs.
   Default: six.
-- **mm citation traceability strength.** mm divergences are free-text with no diff
-  anchor; `judge-coverage` can at most verify each graded divergence cites a
-  divergence the gather emitted (by index/text), not anchor it to code. Accept
-  this weaker guarantee for mm (documented), since `conclude` blocks on
-  `mm==diverges` from the floor regardless.
 
 ## Risks
 
