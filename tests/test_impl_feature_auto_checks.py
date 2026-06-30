@@ -211,3 +211,19 @@ def test_plan_present_fails_empty_plan_path(tmp_path):
     out = run_check("plan-present", good_evidence(plan_path=""), tmp_path,
                     extra_files={"plan.md": "# Plan\n"})
     assert out["pass"] is False and "plan_path" in out["feedback"]
+
+# ---- implement-schema-valid ----
+def test_impl_valid_passes(tmp_path):
+    ev = {"summary": "Implemented feature X", "pr_branch": "impl-feature-auto/issue-42"}
+    out = run_check("implement-schema-valid", ev, tmp_path)
+    assert out["pass"] is True, out
+
+def test_impl_valid_fails_bad_branch(tmp_path):
+    ev = {"summary": "x", "pr_branch": "feature/whatever"}
+    out = run_check("implement-schema-valid", ev, tmp_path)
+    assert out["pass"] is False and "pr_branch" in out["feedback"]
+
+def test_impl_valid_fails_missing_summary(tmp_path):
+    ev = {"pr_branch": "impl-feature-auto/issue-1"}
+    out = run_check("implement-schema-valid", ev, tmp_path)
+    assert out["pass"] is False and "summary" in out["feedback"]
