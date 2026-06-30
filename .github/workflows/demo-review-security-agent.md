@@ -173,7 +173,7 @@ Read all of these first (`cat`). Do not attempt network access; everything is on
 ## Evidence output (required)
 
 Write `/tmp/gh-aw/evidence.json` (the engine evidence path) as ONE JSON object,
-using the `edit` tool — write nothing else, then call `noop`:
+using the `edit` tool — write nothing else. **Do not call `noop` yet — first open issues (next section), then finish.**
 
 ```json
 {
@@ -217,6 +217,7 @@ distinct, labeled GitHub issues:
   showing `fix`, and a trailer line `Found by the security reviewer on PR #<pr>`
   (read `<pr>` from `/tmp/gh-aw/task-context.json` `.pr`).
 
-If `findings` is empty (verdict `APPROVE`), open NO issue — just write the
-evidence object and call `noop`. Never open an issue for a finding not present
+If `findings` is empty (verdict `APPROVE`), open NO issue — just call `noop` to finish. Never open an issue for a finding not present
 in your `evidence.json`.
+
+After emitting your issues (or none, if findings is empty), call `noop` exactly once to finish the run.
