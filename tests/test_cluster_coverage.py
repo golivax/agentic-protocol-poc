@@ -13,10 +13,11 @@ def _run(ev_obj, tmp_path, params=LEGS):
     return run_check(CHECK, ev, diff, files, check_params=params)
 
 
-def _cell(leg, gather=None, graded_findings=None):
+def _cell(leg, scope=None, gather_verdict=None, graded_findings=None):
     return {
         "leg": leg,
-        "gather": gather if gather is not None else {"k": "v"},
+        "scope": scope if scope is not None else {"k": "v"},
+        "gather_verdict": gather_verdict if gather_verdict is not None else "n/a",
         "graded_findings": graded_findings if graded_findings is not None else [],
     }
 
@@ -44,15 +45,22 @@ def test_unexpected_leg_fails(tmp_path):
     assert r["pass"] is False and "bogus-leg" in r["feedback"]
 
 
-def test_malformed_cell_missing_gather_fails(tmp_path):
-    bad = {"leg": "consistency", "graded_findings": []}  # no gather
+def test_malformed_cell_missing_scope_fails(tmp_path):
+    bad = {"leg": "consistency", "gather_verdict": "n/a", "graded_findings": []}  # no scope
+    ev = {"cluster": "adherence", "legs": [_cell("adherence"), bad]}
+    r = _run(ev, tmp_path)
+    assert r["pass"] is False and "consistency" in r["feedback"]
+
+
+def test_malformed_cell_missing_gather_verdict_fails(tmp_path):
+    bad = {"leg": "consistency", "scope": {}, "graded_findings": []}  # no gather_verdict
     ev = {"cluster": "adherence", "legs": [_cell("adherence"), bad]}
     r = _run(ev, tmp_path)
     assert r["pass"] is False and "consistency" in r["feedback"]
 
 
 def test_malformed_cell_missing_graded_findings_fails(tmp_path):
-    bad = {"leg": "consistency", "gather": {}}  # no graded_findings
+    bad = {"leg": "consistency", "scope": {}, "gather_verdict": "n/a"}  # no graded_findings
     ev = {"cluster": "adherence", "legs": [_cell("adherence"), bad]}
     r = _run(ev, tmp_path)
     assert r["pass"] is False and "consistency" in r["feedback"]

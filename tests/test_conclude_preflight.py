@@ -55,20 +55,26 @@ def _security_leg(verdict):
 
 
 def _j(obj, grades=None):
-    """Wrap a raw leg object in the judge evidence shape: {gather: obj, graded_findings: grades}."""
-    return {"gather": obj, "graded_findings": grades or []}
+    """Wrap a raw leg object in the lightened judge evidence shape: {scope, gather_verdict, graded_findings}.
+
+    Extracts 'scope' (default {}) and 'verdict' (becomes gather_verdict) from obj.
+    """
+    return {"scope": obj.get("scope") if isinstance(obj.get("scope"), dict) else {},
+            "gather_verdict": obj.get("verdict", "n/a") if isinstance(obj.get("verdict"), str) else "n/a",
+            "graded_findings": grades or []}
 
 
 def _cluster(cluster_name, legs_dict):
-    """Build a cluster rollup evidence: {cluster, legs:[{leg, gather, graded_findings}]}.
+    """Build a cluster rollup evidence: {cluster, legs:[{leg, scope, gather_verdict, graded_findings}]}.
 
     legs_dict: {leg_id: judge_leg_obj}  where judge_leg_obj is already in _j() shape
-               (i.e. has 'gather' + 'graded_findings' keys).
+               (i.e. has 'scope', 'gather_verdict', + 'graded_findings' keys).
     """
     legs = []
     for leg_id, leg_obj in legs_dict.items():
         entry = {"leg": leg_id,
-                 "gather": leg_obj.get("gather", {}),
+                 "scope": leg_obj.get("scope", {}),
+                 "gather_verdict": leg_obj.get("gather_verdict", "n/a"),
                  "graded_findings": leg_obj.get("graded_findings", [])}
         legs.append(entry)
     return {"cluster": cluster_name, "legs": legs}
@@ -113,9 +119,9 @@ def _conclude(legs_or_clusters, blocking, tmp_path):
         consistency_legs_dict = {k: per_leg[k] for k in CONSISTENCY_LEGS if k in per_leg}
         branch_files = {
             "adherence": _cluster("adherence", adherence_legs_dict),
-            "mm-compliance": per_leg.get("mm-compliance", {"gather": _mm_leg("compliant"), "graded_findings": []}),
+            "mm-compliance": per_leg.get("mm-compliance", _j(_mm_leg("compliant"))),
             "consistency": _cluster("consistency", consistency_legs_dict),
-            "security": per_leg.get("security", {"gather": _security_leg("PASS"), "graded_findings": []}),
+            "security": per_leg.get("security", _j(_security_leg("PASS"))),
         }
 
     for name, obj in branch_files.items():
@@ -297,11 +303,9 @@ def _make_cluster_inputs(legs_per_leg_dict):
     consistency_dict = {k: legs_per_leg_dict[k] for k in CONSISTENCY_LEGS if k in legs_per_leg_dict}
     return {
         "adherence": _cluster("adherence", adherence_dict),
-        "mm-compliance": legs_per_leg_dict.get("mm-compliance",
-                                               {"gather": _mm_leg("compliant"), "graded_findings": []}),
+        "mm-compliance": legs_per_leg_dict.get("mm-compliance", _j(_mm_leg("compliant"))),
         "consistency": _cluster("consistency", consistency_dict),
-        "security": legs_per_leg_dict.get("security",
-                                          {"gather": _security_leg("PASS"), "graded_findings": []}),
+        "security": legs_per_leg_dict.get("security", _j(_security_leg("PASS"))),
     }
 
 
