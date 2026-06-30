@@ -96,3 +96,60 @@ def test_consistent_fails_duplicate_ids(tmp_path):
     led = [good_item(id="L1"), good_item(id="L1")]
     out = run_check("ledger-consistent", good_evidence(ledger=led), tmp_path)
     assert out["pass"] is False and "L1" in out["feedback"]
+
+# ---- read-these-first-consistent ----
+def _spec_for(items):
+    # A minimal spec that mentions every id + what (cross-ref must pass).
+    lines = ["# Spec\n", "## Accountability Ledger\n"]
+    for it in items:
+        lines.append(f"- {it['id']}: {it['what']}\n")
+    return "".join(lines)
+
+def test_rtf_passes_when_highrisk_listed_and_ordered(tmp_path):
+    hi = good_item(id="L1", confidence="low",
+                   blast_radius={"level": "high", "why": "broad"},
+                   reversibility={"level": "irreversible", "why": "published"})   # risk 6
+    lo = good_item(id="L2")  # risk 0
+    ev = good_evidence(ledger=[hi, lo], read_these_first=["L1"])
+    out = run_check("read-these-first-consistent", ev, tmp_path,
+                    extra_files={"spec.md": _spec_for([hi, lo])})
+    assert out["pass"] is True, out
+
+def test_rtf_fails_buried_highrisk(tmp_path):
+    hi = good_item(id="L1", confidence="low",
+                   blast_radius={"level": "high", "why": "broad"},
+                   reversibility={"level": "irreversible", "why": "x"})
+    ev = good_evidence(ledger=[hi], read_these_first=[])   # high-risk omitted
+    out = run_check("read-these-first-consistent", ev, tmp_path,
+                    extra_files={"spec.md": _spec_for([hi])})
+    assert out["pass"] is False and "L1" in out["feedback"]
+
+def test_rtf_fails_unknown_id(tmp_path):
+    it = good_item(id="L1")
+    ev = good_evidence(ledger=[it], read_these_first=["L9"])
+    out = run_check("read-these-first-consistent", ev, tmp_path,
+                    extra_files={"spec.md": _spec_for([it])})
+    assert out["pass"] is False and "L9" in out["feedback"]
+
+def test_rtf_fails_misordered(tmp_path):
+    a = good_item(id="L1")  # risk 0
+    b = good_item(id="L2", confidence="low",
+                  blast_radius={"level": "high", "why": "x"},
+                  reversibility={"level": "irreversible", "why": "x"})  # risk 6
+    ev = good_evidence(ledger=[a, b], read_these_first=["L1", "L2"])  # ascending = wrong
+    out = run_check("read-these-first-consistent", ev, tmp_path,
+                    extra_files={"spec.md": _spec_for([a, b])})
+    assert out["pass"] is False and "order" in out["feedback"].lower()
+
+def test_rtf_fails_spec_divergence(tmp_path):
+    it = good_item(id="L1", what="A decision the spec forgot")
+    ev = good_evidence(ledger=[it], read_these_first=[])
+    out = run_check("read-these-first-consistent", ev, tmp_path,
+                    extra_files={"spec.md": "# Spec\n## Accountability Ledger\n(empty)\n"})
+    assert out["pass"] is False and "spec" in out["feedback"].lower()
+
+def test_rtf_fails_when_spec_missing(tmp_path):
+    it = good_item(id="L1")
+    ev = good_evidence(ledger=[it], read_these_first=[])
+    out = run_check("read-these-first-consistent", ev, tmp_path)  # no spec.md bundled
+    assert out["pass"] is False and "spec.md" in out["feedback"]
