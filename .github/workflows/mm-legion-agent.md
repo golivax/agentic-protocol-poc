@@ -25,6 +25,20 @@ engine:
 permissions:
   contents: read
   pull-requests: read
+safe-outputs:
+  # Suppress gh-aw's default auto create-issue (these agents output FILES via
+  # artifacts, not GitHub issues). gh-aw has no "declare nothing" option — a
+  # non-system output must be declared to drop the auto create-issue, so use the
+  # most inert one (add-labels: it targets the triggering issue/PR, of which a
+  # workflow_dispatch run has none, so it can never act; the prompt also forbids
+  # GitHub side-effects). Disable the other issue-creating sinks too.
+  # threat-detection:false because declaring safe-outputs would otherwise require
+  # the agent sandbox (disabled here).
+  add-labels:
+  noop: false
+  missing-tool: false
+  missing-data: false
+  threat-detection: false
 tools:
   cli-proxy: true
   edit: true
