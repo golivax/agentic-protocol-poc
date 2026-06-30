@@ -452,3 +452,160 @@ up the new agents unchanged.
 - **Inputs addressing** relies on the path-aware resolver returning a sub-pipeline
   branch's terminal sub-state — proven in code but not previously exercised live;
   the mandatory first task closes this.
+
+---
+
+# Revision 2 — 4-branch clustered preflight + security relocation
+
+**Status:** approved (supersedes Revision 1's *Proposed architecture*, *Decision*,
+*Files*, *Testing*, *Open questions*; the gather→judge contract, `judge-coverage`,
+the judge schema, the floor-vs-escalation policy, and the trust-zone invariants
+from Revision 1 all carry forward unchanged). Revision-1 Tasks 1–7 are already
+built on `feat/preflight-llm-judge-subworkflows` and are **reused** (the five
+gather→judge legs + `mm` + the judge agents + `judge-coverage` + the judge schema
+are re-parented, not rewritten).
+
+## Why
+
+Group the preflight legs into four semantic clusters — **adherence**,
+**mm-compliance**, **consistency**, **security** — and pull the deterministic
+Cedar+Guardians security gate forward out of the `review` phase into preflight.
+
+## Topology (nested, with per-cluster rollup agents)
+
+```
+preflight   kind: fanout              max_depth: 6
+  ├─ adherence     states: [ adherence-fanout (fanout: spec-solves-issue ∥ plan-implements-spec ∥ code-implements-plan, each [<leg>-gather → <leg>-judge])
+  │                          → join-adherence (join, of: adherence-fanout)
+  │                          → adherence-rollup (agent) ]
+  ├─ mm-compliance states: [ mm-compliance-gather → mm-compliance-judge ]
+  ├─ consistency   states: [ consistency-fanout (fanout: docs-updated-appropriately ∥ tests-updated-appropriately, each [<leg>-gather → <leg>-judge])
+  │                          → join-consistency (join, of: consistency-fanout)
+  │                          → consistency-rollup (agent) ]
+  └─ security      states: [ security-gather → security-judge ]
+  next → join-preflight
+join-preflight   kind: join, of: preflight
+preflight-gate   kind: agent (root halt-bearer)
+     inputs:  { from: adherence, as: adherence } { from: mm-compliance, as: mm-compliance }
+              { from: consistency, as: consistency } { from: security, as: security }
+     conclude: conclude-preflight    on_blocked: halt    next: overview
+```
+
+**The inputs-resolution rule that forces this shape** (verified against
+`lib._resolve_input_ref_pathaware`): the resolver descends **one fanout level**
+from the consuming scope, and a `join` writes **no** evidence. Therefore:
+- `preflight-gate` (root) reads each branch's **terminal sub-state**, which must
+  be an **agent** that writes evidence: `adherence`→`adherence-rollup`,
+  `consistency`→`consistency-rollup`, `mm-compliance`→`mm-compliance-judge`,
+  `security`→`security-judge`. (A cluster branch whose terminal were the `join`
+  would resolve to a non-existent file — the rollup agent exists precisely to
+  give the gate a real evidence artifact one level down.)
+- Each rollup agent runs **inside** its cluster sub-pipeline, so its scope reaches
+  the inner fanout one level down: `adherence-rollup` reads `{from: spec-solves-issue}`
+  / `{from: plan-implements-spec}` / `{from: code-implements-plan}` (each → that
+  leg's terminal judge). `consistency-rollup` reads its two.
+- Static depth = 5 (`preflight→adherence→adherence-fanout→spec-solves-issue→…-judge`);
+  set explicit **`max_depth: 6`** (the default 5 passes with `>` but leaves no
+  headroom).
+
+## Rollup agents (`adherence-rollup`, `consistency-rollup`)
+
+Thin LLM agents (codex/`gpt-5.5`, gateway, `noop`) that read their cluster's inner
+judges via `inputs[]` and emit a **cluster evidence** that carries each inner
+leg's data forward verbatim so `conclude` keeps per-leg granularity:
+
+```json
+{ "cluster": "adherence",
+  "legs": [ { "leg": "spec-solves-issue", "gather": {…copied verbatim…},
+              "graded_findings": [ … copied verbatim … ] }, … ] }
+```
+
+Form-checked by a new shared **`cluster-coverage`** check (zone 3, parametrized by
+`CHECK_PARAMS.legs` like `preflight-gate-coverage`): exactly one well-formed
+`legs[]` cell per declared inner leg, each carrying a `gather` object + a
+`graded_findings` array. It does not re-judge; the inner `judge-coverage` already
+form-verified each leg.
+
+## Security leg (Cedar+Guardians lift)
+
+- **`security-gather`** (agent): runs the deterministic Cedar+Guardians engines —
+  the pre-step block lifted verbatim from `review-security-agent.md` (Python
+  setup + `run-cedar.js`/`plan-extract.js`/`verify_driver.py`/`emit-engine-report.js`
+  + the `anchor-engine-findings.js` step), with `scripts/security/**` traveling
+  along (already self-contained). Emits `security-gather.evidence.schema.json`:
+  `{ scope, cedar, guardians, engine_report, verdict: "PASS"|"LOCKED_VIOLATION"|"n/a", examined }`,
+  where `verdict` is set **deterministically** (`LOCKED_VIOLATION` iff
+  `engine_report.violations` has any `locked: true`). A new
+  `security-gather-coverage` check (zone 3) verifies the form + that `verdict`
+  matches a recompute over `engine_report`.
+- **`security-judge`** (agent): reads `security-gather` via `{from: security-gather, as: gather}`,
+  grades each engine violation `blocking|advisory|noise` (is it novel to this PR?),
+  emits the standard `judge.evidence.schema.json`; `judge-coverage` gains a
+  **`security`** mode (re-runs `security-gather-coverage` on `evidence.gather`,
+  then severity-coverage over the engine violations as the finding `ref`s).
+- **`review-security-agent` slimmed:** remove the Cedar+Guardians pre-step block,
+  the `anchor-engine-findings.js` post-step, and the rubric's "do not duplicate
+  engine findings" dead text. The `review` phase **keeps** its LLM security
+  code-review dimension; its three checks (`evidence-present`,
+  `review-schema-valid`, `review-findings-anchored`) are unaffected.
+
+## Decision (`conclude-preflight`, reworked for clusters)
+
+`conclude-preflight` now loads the **4 branch outputs** from `CONCLUDE_INPUTS_DIR`
+(`adherence.json`, `mm-compliance.json`, `consistency.json`, `security.json`),
+**flattens** the two cluster rollups' `legs[]` back to the seven per-leg records,
+and applies the SAME floor-vs-escalation policy at leaf granularity (Revision 1):
+- **Floor (unchanged, all nine)** read from each leg's `gather.scope`/`gather.verdict`.
+- **Security floor (new):** `security gather.verdict == "LOCKED_VIOLATION"` ⇒ block
+  (the judge can escalate a non-locked violation, never clear a LOCKED one).
+- **Escalation/warnings** exactly as Revision 1.
+- The consolidated comment groups its rows under the four cluster headings.
+- **missing-leg fail-safe** (Revision 1) applies per leg AND per cluster: a missing
+  cluster rollup or a missing inner leg ⇒ block.
+
+## Files (delta on top of Revision-1 Tasks 1–7)
+
+**Reused unchanged:** the 5 gather→judge legs, `mm` gather→judge, the 6 judge
+agents, `judge.evidence.schema.json`, `judge-coverage.py` (Tasks 1–5).
+**New:** `adherence-rollup-agent.md`, `consistency-rollup-agent.md` (+ locks);
+`security-gather-agent.md`, `security-judge-agent.md` (+ locks);
+`security-gather.evidence.schema.json`; rollup cluster evidence schema (or reuse a
+shared cluster schema); `checks/cluster-coverage.py`,
+`checks/security-gather-coverage.py` (both `100755`); a `security` arm in
+`judge-coverage.py`.
+**Modified:** `protocol.json` (nest the 5 legs into `adherence-fanout`/
+`consistency-fanout` + joins + rollups; add `mm-compliance` + `security`
+branches; gate inputs → the 4 branch outputs; `max_depth: 6`);
+`publish/conclude-preflight.py` (load 4 branch outputs, flatten clusters, add the
+security floor); `review-security-agent.md` (+ lock) slimmed; `rubrics/security.md`
+dead text removed.
+
+## Testing (delta)
+
+- **Deeper de-risk gate (mandatory first Revision-2 task):** a pure-lib test that
+  `resolve_inputs` resolves (a) `preflight-gate` `{from: adherence}` → `…adherence.adherence-rollup.evidence.json`
+  (and the mm/consistency/security equivalents), and (b) `adherence-rollup`
+  `{from: spec-solves-issue}` → that leg's terminal judge — i.e. both the
+  root→branch-terminal hop AND the rollup→inner-judge hop. **If it fails, STOP.**
+- `cluster-coverage` tests (one cell per inner leg; missing/dup/malformed fail).
+- `security-gather-coverage` tests (verdict==recompute; LOCKED detection) +
+  `judge-coverage` `security`-mode tests.
+- `conclude-preflight` cluster tests: the 9 floors + the security LOCKED floor +
+  escalation, reading the 4-branch cluster-flattened inputs; missing-cluster fail-safe.
+- `protocol-lint` clean at depth 5 with `max_depth: 6`; `review` phase tests stay
+  green after the security slimming.
+- Live: `/review` on SiRumCz PR #7 → the 4 clusters run; security-gather runs
+  Cedar+Guardians; gate blocks with a cluster-grouped verdict table.
+
+## Open questions (Revision 2)
+
+- **Cluster evidence schema:** one shared `cluster.evidence.schema.json`
+  (`{cluster, legs[]}`) reused by both rollups, vs two. Default: one shared.
+- **Rollup redundancy:** the rollup agents are LLM dispatches whose only job is to
+  re-surface inner judges for the gate (the cost you accepted for the nested
+  shape). If they prove pure overhead, a future simplification is the flat-7
+  +clustered-rollup alternative — out of scope now.
+- **`security-gather` runtime:** Cedar/Guardians vendor Bun/Node/Z3 toolchains;
+  per `docs/STATUS.md` these degrade to advisory when a toolchain is absent — the
+  `security-gather` agent inherits that behavior; the deterministic `verdict`
+  must fail-open to `n/a` (never silently `PASS`) when an engine could not run.
