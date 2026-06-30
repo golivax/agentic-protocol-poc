@@ -1,6 +1,6 @@
 protocol: recover-mental-model
 instance: ref-main
-head_sha: 77548901980e3b35d1898b7d7e52a4fb149f59ce
+head_sha: d665be4000b0349dc8b08f8636c9ccd28cfc6fda
 phase: recover
 joined: false
 phase_label: recover mental model
