@@ -1,5 +1,5 @@
 from api import state_reader
-from tests.api.fixtures_helper import load_instance_files
+from tests.api.fixtures_helper import load_instance_files, load_instance_dir
 
 def test_status_projection_code_review_pr62():
     out = state_reader.status_projection(load_instance_files("code-review", 62))
@@ -37,6 +37,28 @@ def test_status_projection_agent_leaf_carries_run_id():
     assert phases["preflight"]["run_id"] == "28110616119"
     legs = {b["id"]: b for b in phases["review"]["branches"]}
     assert all("run_id" in leg for leg in legs.values())
+
+
+def test_status_projection_terminal_merge_head_reports_done():
+    # A completed merge node (recover-mental-model's `combine`) writes no own
+    # state file, so the head phase has no matching `phases` entry. The instance
+    # is genuinely done — `_instance.yaml` carries `phase_label: "✅ done"`. The
+    # projection must surface that as a top-level `status` and on the head, not
+    # leave a statusless head that looks stuck.
+    out = state_reader.status_projection(
+        load_instance_dir("recover-mental-model", "pr-82"))
+    assert out["status"] == "completed"
+    assert out["head"]["phase"] == "combine"
+    assert out["head"]["status"] == "done"
+
+
+def test_status_projection_mid_combine_stays_running():
+    # joined but no terminal phase_label yet (merge hook not finished): the
+    # instance is still running, and the head must NOT be reported as done.
+    out = state_reader.status_projection(
+        load_instance_dir("recover-mental-model", "ref-main"))
+    assert out["status"] == "running"
+    assert "status" not in out["head"]
 
 
 def test_status_projection_ignores_sidecars_and_join_markers():

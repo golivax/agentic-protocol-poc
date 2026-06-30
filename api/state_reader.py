@@ -162,6 +162,12 @@ def status_projection(instance_files: dict[str, str]) -> dict:
     # discriminator (a new commit re-seeds the instance); run_id/attempt pin the
     # specific agent run when the head is a single agent node. (No started_at:
     # the engine records no timestamps in state.)
+    # Instance-level status from the authoritative phase_label the engine stamps
+    # (completed/failed/blocked/running). This is the only faithful done signal
+    # for a head whose node writes no own file — notably a terminal `merge`/`done`
+    # node (e.g. recover-mental-model's `combine`), which leaves `phase` pointing
+    # at the merge node but carries `phase_label: "✅ done"`.
+    overall = classify_label(inst.get("phase_label", ""))
     head = {"phase": head_phase, "head_sha": inst.get("head_sha")}
     head_entry = next((p for p in phases if p["id"] == head_phase), None)
     if head_entry:
@@ -170,10 +176,16 @@ def status_projection(instance_files: dict[str, str]) -> dict:
         if head_entry["kind"] == "agent":
             head["run_id"] = head_entry.get("run_id")
             head["attempt"] = head_entry.get("iterations")
+    elif overall != "running":
+        # Head phase has no own node file but the instance has reached a terminal
+        # phase_label — surface it on the head (phase vocabulary: completed→done)
+        # so a finished run isn't reported as a statusless, seemingly-stuck head.
+        head["status"] = "done" if overall == "completed" else overall
     return {
         "protocol": inst.get("protocol"),
         "pr": _pr_of(inst.get("instance")),
         "instance": inst.get("instance"),
+        "status": overall,
         "head": head,
         "phases": phases,
     }

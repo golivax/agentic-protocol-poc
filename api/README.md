@@ -30,10 +30,17 @@ OpenAPI docs at `/docs`. All endpoints except `/healthz` need `Authorization: Be
 
 ## Notes for clients
 
+- `status` is the instance-level rollup from the engine's `phase_label`
+  (`running` · `completed` · `failed` · `blocked`) — the authoritative
+  done/not-done signal. Prefer it over inferring completion from the head, since
+  a terminal `merge`/`done` node (e.g. `recover-mental-model`'s `combine`) leaves
+  `head.phase` pointing at the merge node.
 - The `/status` projection is faithful for single-level pipelines/fanouts (e.g.
-  `code-review`). For deeply-nested protocols, `head.kind`/`head.status` may be
-  absent when the head phase has no own node file — treat an absent value as
-  `"unknown"`. See `docs/API-BACKLOG.md` (Known limitations).
+  `code-review`). `head.kind` may be absent when the head phase has no own node
+  file (a `merge`/`done` node, or a deeply-nested head); `head.status` is filled
+  from the instance `phase_label` once the run reaches a terminal state, but is
+  otherwise absent — treat an absent value as `"unknown"` and fall back to the
+  top-level `status`. See `docs/API-BACKLOG.md` (Known limitations).
 - The `head` carries run identity so a client can tell a fresh run from a stale
   one: `head.head_sha` (the instance's head commit — changes when a new commit
   re-seeds the run) is always present; `head.run_id`/`head.attempt` pin the
