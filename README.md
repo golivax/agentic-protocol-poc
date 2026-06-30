@@ -163,9 +163,18 @@ visibility into the engine: which protocols are installed, the live status and
 stats of a `<protocol, PR>` run, open gates, and engine-wide aggregates. It reads
 the GitHub REST API at request time and **interprets the state-YAML as a
 read-only data contract** — it never imports the engine and never writes to the
-state branch. _Under active development on the `feat/protocol-visibility-api`
-branch (with its design spec and `docs/API-BACKLOG.md`); not yet merged to
-`main`._
+state branch. See `api/README.md` for how to run it and `docs/API-BACKLOG.md`
+for known limitations.
+
+```bash
+export API_BEARER_TOKEN=...   # token clients must send
+export GITHUB_TOKEN=...       # server-side GitHub token (repo read)
+export GITHUB_REPO=owner/repo
+uv run uvicorn api.main:app --port 8000
+```
+
+OpenAPI docs at `/docs`; every endpoint except `/healthz` needs
+`Authorization: Bearer $API_BEARER_TOKEN`.
 
 ---
 

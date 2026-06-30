@@ -42,7 +42,7 @@ Two other distribution-facing components live beside the engine:
   (`dist/README.md`).
 - **`api/`** — a read-only FastAPI visibility service (live status/stats of a
   `<protocol, PR>` run). It reads state as a data contract; it never imports the
-  engine. Under active development on `feat/protocol-visibility-api`.
+  engine. Merged to `main` (`api/README.md` has run instructions).
 
 Minimal engine shapes used in capability/regression testing live under
 `tests/fixtures/` (e.g. `cap-single-agent/`, `simple-fanout/`,
