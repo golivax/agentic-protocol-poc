@@ -63,3 +63,48 @@ def test_mm_no_scope_enum_verdict(tmp_path):
           "graded_findings": [{"ref": "0", "severity": "blocking", "rationale": "real"}],
           "verdict": "block", "examined": ["0"]}
     assert _run(ev, ["src/x.py"], tmp_path, {"leg": "mm-compliance", "mode": "mm"})["pass"] is True
+
+
+def test_code_plan_anchor_error_fails(tmp_path):
+    # gather.code-plan-coverage.evaluate PASSES (scope/verdict/plan_item all OK),
+    # but the copied findings[] entry has a line anchor that does NOT exist in the
+    # empty diff → _trace.findings_anchor_errors fires → judge returns pass:False.
+    plan_item = "do x."           # verbatim in the plan text returned by _gh stub
+    ev = {
+        "leg": "code-implements-plan",
+        "gather": {
+            "scope": {"code_changed": True, "plan_present": True},
+            "plan_to_code": [{"plan_item": plan_item, "status": "implemented"}],
+            "verdict": "adheres",
+            "files": [
+                {
+                    "path": "src/x.py",
+                    "verdicts": [
+                        {
+                            "category": "implementation",
+                            "verdict": "present",
+                            "findings": [
+                                {
+                                    "plan_item": plan_item,
+                                    "side": "RIGHT",
+                                    "line": 42,       # line 42 not in empty diff
+                                    "existing_code": "some code",
+                                }
+                            ],
+                            "examined": [],
+                        }
+                    ],
+                }
+            ],
+            "examined": ["src/x.py"],
+        },
+        "graded_findings": [
+            {"ref": plan_item, "severity": "advisory", "rationale": "implemented"}
+        ],
+        "verdict": "pass",
+        "examined": ["src/x.py"],
+    }
+    # changed files: one plan file (triggers plan_present=True recompute) + one code file
+    changed = ["docs/superpowers/plans/p.md", "src/x.py"]
+    r = _run(ev, changed, tmp_path, {"leg": "code-implements-plan", "mode": "code-plan"})
+    assert r["pass"] is False and "anchor" in r["feedback"].lower()
