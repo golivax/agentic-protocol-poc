@@ -58,17 +58,17 @@ leg's evidence: `{scope, cedar, guardians, engine_report, verdict, examined}`. A
 ```json
 {
   "leg": "security",
-  "gather": <COPY .inputs.gather VERBATIM — same keys/values, do not alter any verdict/scope/engine_report>,
+  "scope": {},
+  "gather_verdict": "<ECHO .inputs.gather.verdict exactly>",
   "graded_findings": [
     { "ref": "<violation index as string: '0', '1', ...>", "severity": "blocking | advisory | noise", "rationale": "<1-2 sentences>" }
   ],
-  "verdict": "block | warn | clear | n/a",
   "examined": [ "<the refs you graded>" ]
 }
 ```
 Rules:
-- Copy `.inputs.gather` into `gather` **verbatim** — a deterministic check re-verifies
-  the copy against the real engine outputs; any alteration fails the gate and you iterate.
+- `scope` is always `{}` for security (the gather has no scope field).
+- Echo `gather_verdict` from `.inputs.gather.verdict` **exactly** — do not paraphrase.
 - Emit exactly **one** `graded_findings` entry per `engine_report.violations` entry.
   `ref` = the violation's index in the array as a string (`"0"`, `"1"`, ...).
 - `severity`:
@@ -78,10 +78,7 @@ Rules:
   - `advisory` = worth noting but not blocking merge.
   - `noise` = false positive / not applicable to this PR.
 - If `.inputs.gather.engine_report.violations` is empty or absent (verdict is `n/a` or `PASS`
-  with no violations), emit `graded_findings: []` and `verdict: "n/a"` or `"clear"` accordingly,
-  with `gather` still copied verbatim.
-- `verdict` is your advisory roll-up (block if any blocking; else warn if any advisory;
-  else clear; else n/a) — the engine recomputes the real decision.
+  with no violations), emit `graded_findings: []`.
 
 Write nothing else, then call `noop`. Do NOT post comments or use any other safe-output.
 

@@ -1184,3 +1184,34 @@ def test_r2_rollup_reads_inner_judge():
 ### Task R2-10: Integration (controller-run)
 
 - [ ] `uv run pytest tests/ -q` (all green); `protocol-lint` clean; `git status --porcelain .github/agent-factory/engine/` empty (no engine edits); new checks `100755`. Then the final whole-branch review (opus) over `merge-base..HEAD` + `superpowers:finishing-a-development-branch`. **Live:** `/review` on SiRumCz PR #7 → 4 clusters run, `security-gather` runs Cedar+Guardians, gate blocks with a cluster-grouped table.
+
+---
+
+# Revision 3 tasks — lighten the judge contract
+
+> Implements spec Revision 3. The judge no longer copies the full gather evidence;
+> it echoes only `scope` + `gather_verdict` + grades by `ref`. Touches: judge schema,
+> judge-coverage (rewrite), the 8 judge agents, conclude, rollups + cluster-coverage,
+> the gate renderer. Then re-deploy + live re-test (the decisive validation).
+
+### Task R3-1: lighten judge schema + rework judge-coverage (core de-risk)
+**Files:** `judge.evidence.schema.json` (modify); `checks/judge-coverage.py` (rewrite); `tests/test_judge_coverage.py` (rewrite).
+- Schema: replace `gather` (object) with `scope` (object) + `gather_verdict` (string); keep `graded_findings`/`verdict`/`examined`. `leg`+`scope`+`gather_verdict`+`graded_findings`+`examined` required.
+- judge-coverage per `CHECK_PARAMS.mode`: (1) **re-derive scope** from diff+PR_BODY using `_locate`/`_paths` (per mode: spec-solves→{issue_linked,spec_present}; plan-spec→{spec_present,plan_present,code_changed}; code-plan→{plan_present,code_changed}; coherence→{code_changed}; mm/security→no scope, accept `{}`), assert `evidence.scope == recompute`; (2) `gather_verdict` ∈ the leg's enum (spec-solves: solves|does-not-solve|n/a; plan: adheres|underspec|overspec|n/a; code: adheres|underplan|overplan|n/a; coherence: adequate|inadequate|n/a; mm: compliant|diverges; security: PASS|LOCKED_VIOLATION|n/a); (3) scope→verdict consistency: spec-solves `!issue_linked ⇒ n/a`; plan/code/coherence `!code_changed ⇒ n/a`; (4) grade form: each severity ∈ {blocking,advisory,noise}, `ref` non-empty, `examined` non-empty. DROP the gather-check re-run + the `_gather_refs`/`_trace` paths (no copied cells).
+- Tests: per mode — a correct lightened judge passes; scope-echo mismatch fails; bad verdict-enum fails; scope-inconsistent verdict (e.g. !issue_linked + verdict≠n/a — the exact live failure) fails; bad severity fails.
+- `chmod +x`; commit 100755.
+
+### Task R3-2: update the 8 judge agents to the lightened echo
+**Files:** the 6 leg judges + `mm-compliance-judge-agent.md` + `security-judge-agent.md` (+ recompiled locks).
+- Body change: instead of "copy `.inputs.gather` verbatim into `gather`", → "read `.inputs.gather`; echo ONLY its `scope` (as `scope`, `{}` if absent) and `verdict` (as `gather_verdict`) — copy those two exactly; then grade each finding by `ref` + severity." Emit the R3-1 schema shape. `noop`.
+- `gh aw compile`; restore any flipped check exec bits; verify only the 8 judge `.md`/`.lock.yml` changed.
+
+### Task R3-3: conclude + rollups + cluster-coverage + gate to the lightened shape
+**Files:** `publish/conclude-preflight.py`; `adherence-rollup-agent.md`/`consistency-rollup-agent.md`; `cluster.evidence.schema.json` + `checks/cluster-coverage.py`; `preflight-gate-agent.md`; + their tests.
+- conclude: read `leg["scope"]` + `leg["gather_verdict"]` (was `leg["gather"][...]`). Floor/escalation/fail-safe UNCHANGED otherwise.
+- rollups: copy each inner judge's `{leg, scope, gather_verdict, graded_findings}`. cluster-coverage cell: `{leg, scope, gather_verdict, graded_findings}` (was `{leg, gather, graded_findings}`).
+- gate renderer: cell `{leg, verdict: <gather_verdict>, scope}`.
+- Update test_conclude_preflight (`_j` wraps `{scope, gather_verdict, graded_findings}` not `{gather,...}`), test_cluster_coverage, test_preflight_gate_coverage. `gh aw compile`; exec-bit guard. Full suite green.
+
+### Task R3-4: integration + re-deploy + live re-test
+- Full suite + protocol-lint + engine-drift + exec bits; final review of the R3 delta. Then push branch, re-install to SiRumCz, `/review` PR #7. **DECISIVE:** the adherence/consistency judges must now reach `done` (pass judge-coverage) where they exhausted before → rollups → gate → conclude block.
