@@ -57,6 +57,15 @@ def test_no_params_fails(tmp_path):
     assert r["pass"] is False and "legs" in r["feedback"]
 
 
+def test_no_legs_key_in_evidence_fails(tmp_path):
+    # Evidence with NO `legs` key at all — check must reject it with a feedback
+    # mentioning legs/array (the key is absent, so ev.get("legs") returns None).
+    ev = {"examined": []}
+    r = _run(ev, tmp_path)
+    assert r["pass"] is False
+    assert "legs" in r["feedback"].lower() or "array" in r["feedback"].lower()
+
+
 def test_four_legs_with_scopeless_mm_cell_passes(tmp_path):
     # Phase B: the gate declares 4 legs (params.legs); the mm-compliance cell carries
     # scope:{} (mm evidence has no scope object). The check must accept the empty dict.

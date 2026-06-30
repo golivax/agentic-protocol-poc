@@ -30,9 +30,11 @@ _CHECKLIST = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+.+$", re.M)
 _HEADING_SPLIT = re.compile(r"^#{1,6}\s", re.M)
 _NON_WS = re.compile(r"\S")
 
-# GitHub closing-keyword issue references (Closes|Fixes|Resolves[:] #N),
-# case-insensitive, keyword as a whole word. Pure — the GraphQL
-# closingIssuesReferences fetch lives in the caller (io injection).
+# GitHub closing-keyword issue references — matches the inflections
+# close/closed/closes, fix/fixed/fixes, resolve/resolved/resolves (with an
+# optional colon and a space) followed by #N, case-insensitive, keyword as a
+# whole word. Pure — the GraphQL closingIssuesReferences fetch lives in the
+# caller (io injection).
 _CLOSING_ISSUE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s+#(\d+)", re.I)
 
 

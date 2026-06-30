@@ -43,6 +43,7 @@ def fetch_file_text(repo, path, ref):
     """Fetch a committed file's text at <ref>. None on any failure."""
     if not repo or not path:
         return None
+    ref = ref or "HEAD"
     out = _run(["api", f"repos/{repo}/contents/{path}?ref={ref}", "--jq", ".content"])
     if out is None or out.returncode != 0 or not (out.stdout or "").strip():
         return None

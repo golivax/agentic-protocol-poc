@@ -70,6 +70,23 @@ def test_fetch_file_text_fail_returns_none(tmp_path):
     assert out.stdout.strip() == "NONE"
 
 
+def test_fetch_file_text_none_ref_defaults_to_HEAD(tmp_path):
+    """fetch_file_text with ref=None must not interpolate '?ref=None'; the guard
+    ref = ref or 'HEAD' makes it fall through to ?ref=HEAD which the fake gh serves."""
+    import base64
+    b64 = base64.b64encode(b"guarded content").decode()
+    bindir = _fake_gh(tmp_path, file_b64=b64)
+    env = _import(tmp_path, bindir)
+    driver = (
+        f"import sys; sys.path.insert(0, {str(CHECKS)!r}); "
+        "import _artifact_fetch; "
+        "v = _artifact_fetch.fetch_file_text('o/r', 'docs/s.md', None); "
+        "print(v or 'NONE')"
+    )
+    out = subprocess.run([sys.executable, "-c", driver], env=env, text=True, capture_output=True)
+    assert "guarded content" in out.stdout, f"expected content, got: {out.stdout!r}"
+
+
 def test_head_sha(tmp_path):
     bindir = tmp_path / "bin"; bindir.mkdir(exist_ok=True)
     (bindir / "gh").write_text("#!/usr/bin/env python3\nimport sys\n"

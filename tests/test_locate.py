@@ -78,3 +78,17 @@ def test_locate_plan_unaffected_by_flag():
     # plan never had a fallback; the flag is a no-op for plan.
     r = _locate.locate("plan", "prose only", ["src/app.py"], allow_body_fallback=False)
     assert r["found"] is False
+
+
+# --- past-tense inflections (closed, fixed) ---------------------------------
+
+def test_closed_past_tense_matched():
+    # "Closed" is the past-tense inflection; the regex must match it.
+    assert _locate.parse_closing_issue_refs("Closed #8") == [8]
+
+def test_fixed_past_tense_matched():
+    assert _locate.parse_closing_issue_refs("Fixed #3") == [3]
+
+def test_detect_issue_link_closed_inflection():
+    # detect_issue_link is the single-ref wrapper; pin the closed/fixed path.
+    assert _locate.detect_issue_link("Fixed #3") == 3

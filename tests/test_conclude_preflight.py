@@ -149,8 +149,12 @@ def test_preflight_rollup(name, mutate, blocked, reason, warning, tmp_path):
 
 
 def test_engine_blocking_forces_block(tmp_path):
-    out, _v, _s = _conclude(_all_na(), blocking=True, tmp_path=tmp_path)
+    out, _v, stderr = _conclude(_all_na(), blocking=True, tmp_path=tmp_path)
     assert out["blocked"] is True
+    # The engine-blocking signal must appear in the reported reasons.
+    assert any("engine blocking signal" in r for r in out["reasons"])
+    # Exactly one consolidated PR comment must be posted on a blocking run.
+    assert stderr.count("[ENGINE_LOCAL] pr comment") == 1, stderr
 
 
 def test_verdict_json_shape(tmp_path):

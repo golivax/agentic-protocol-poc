@@ -96,3 +96,26 @@ def test_na_but_code_changed_fails(tmp_path):
           "verdict": "n/a", "examined": ["x"]}
     r = _run(ev, CHANGED, tmp_path)
     assert r["pass"] is False
+
+
+def test_fabricated_plan_item_in_plan_to_spec_fails(tmp_path):
+    # Item 5: plan_to_spec cell's plan_item is NOT verbatim in the plan text.
+    # Everything else is valid (spec_to_plan ok, verdict matches cells, scope ok).
+    ev = _adheres_ev()
+    ev["plan_to_spec"][0]["plan_item"] = "Completely fabricated plan step not in plan."  # not in PLAN_TEXT
+    r = _run(ev, CHANGED, tmp_path)
+    assert r["pass"] is False and "verbatim" in r["feedback"].lower()
+
+
+def test_na_no_code_spec_present_passes(tmp_path):
+    # Item 6: code_changed=False + spec_present=True (spec file IS in changed list)
+    # + verdict n/a + empty matrices → verified N/A.
+    # Pins: the check's "no code" early-exit treats out-of-scope as N/A regardless
+    # of whether a spec file was committed in the same PR.
+    ev = {"scope": {"code_changed": False, "spec_present": True, "plan_present": False},
+          "spec_to_plan": [], "plan_to_spec": [], "verdict": "n/a",
+          "examined": ["docs/superpowers/specs/s.md"]}
+    # changed-files: spec file + doc-only; no code file => code_changed recomputes False
+    r = _run(ev, ["README.md", "docs/superpowers/specs/s.md"], tmp_path)
+    # The check passes as verified N/A (no code change; empty matrices).
+    assert r["pass"] is True

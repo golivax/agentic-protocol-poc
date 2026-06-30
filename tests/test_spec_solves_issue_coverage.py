@@ -85,6 +85,21 @@ def test_scope_disagreement_no_link(tmp_path):
     assert r["pass"] is False and "scope" in r["feedback"].lower()
 
 
+def test_not_addressed_cell_but_solves_verdict_fails(tmp_path):
+    # matrix has a not_addressed cell → expected verdict is "does-not-solve";
+    # claiming "solves" is a verdict/cell inconsistency → pass: False.
+    ev = _solves_ev()
+    # Change first cell to not_addressed, remove spec_quote (not needed for not_addressed)
+    ev["matrix"][0]["status"] = "not_addressed"
+    ev["matrix"][0].pop("spec_quote", None)
+    # verdict still "solves" — this is the inconsistency we pin
+    assert ev["verdict"] == "solves"
+    r = _run(ev, CHANGED, tmp_path)
+    assert r["pass"] is False
+    fb = r["feedback"].lower()
+    assert "does-not-solve" in fb or "inconsistent" in fb
+
+
 def test_na_no_issue_passes(tmp_path):
     ev = {"scope": {"issue_linked": False, "spec_present": True}, "matrix": [],
           "verdict": "n/a", "examined": ["(no linked issue)"]}
