@@ -206,3 +206,29 @@ def test_dynamic_fanout_start_seeds_manifest_and_legs(engine_env, tmp_path):
     action = json.loads(out.strip().splitlines()[-1])
     assert action["action"] == "run-fanout"
     assert {leg_dict["path"].split(".")[-1] for leg_dict in action["legs"]} == set(ids)
+
+
+def test_dynamic_fanout_subpipeline_each_fails_loud(engine_env, tmp_path):
+    """Until sub-pipeline `each` is supported, running one must fail loud, not
+    silently emit workflow:null legs. See spec review of 8426128."""
+    import shutil, json as _json
+    from conftest import run_engine
+    # Build a protocol dir with a sub-pipeline `each`, reusing the flat fixture's expander.
+    pdir = tmp_path / "proto"
+    (pdir).mkdir()
+    shutil.copytree(ROOT / "tests/fixtures/dyn-fanout-flat/expand", pdir / "expand")
+    proto = {
+        "name": "dyn-subpipeline-unsupported",
+        "states": [
+            {"id": "review", "kind": "fanout",
+             "expand": {"hook": "expand-items", "as": "file", "id_from": "$.path", "max_legs": 8},
+             "each": {"states": [
+                 {"id": "draft", "kind": "agent", "workflow": "draft-agent", "next": "finalize"},
+                 {"id": "finalize", "kind": "agent", "workflow": "finalize-agent"}]},
+             "next": "join"},
+            {"id": "join", "kind": "join", "of": "review", "policy": "any", "next": "done"}]}
+    ppath = pdir / "protocol.json"
+    ppath.write_text(_json.dumps(proto))
+    out, err, rc = run_engine("next.py", str(tmp_path / "state"), "pr-1", str(ppath), "start", env=engine_env)
+    assert rc != 0, f"expected fail-loud, got rc=0. out={out}"
+    assert "sub-pipeline" in (err + out)

@@ -122,6 +122,12 @@ def enter_node(proto, path, command, emit=True):
                                           node["expand"]["max_legs"])    # fail-loud on over-cap/dupe
             lib.write_manifest(DIR, PID, INSTANCE, path, manifest)
             each = node.get("each", {})
+            if each.get("states"):
+                raise ValueError(
+                    f"dynamic fanout '{path[-1]}' has a sub-pipeline `each` (states), "
+                    f"which the runtime does not support yet — use a flat `each` "
+                    f"(workflow) for now. (Sub-pipeline `each` is a planned follow-up.)"
+                )
             branches = []
             for leg in manifest["legs"]:
                 cfg = dict(each)
