@@ -582,3 +582,226 @@ def test_paths_max_static_depth_counts_each_subtree():
         {"id": "join", "kind": "join", "of": "review"}]}
     # review → <each> → comments → <each>  == depth 4 (descends into each subtrees)
     assert paths.max_static_depth(proto) >= 4
+
+
+# ---------------------------------------------------------------------------
+# Task 10 — offline end-to-end walks over a shared git origin (mirroring the
+# deep-fanout e2e harness): drive next.py / advance.py / join.py as subprocesses
+# with NODE_PATH per leg + always-pass verdicts, asserting on-disk state at each
+# step. Exercises the previously-untested ADVANCE walk of a dynamic sub-pipeline
+# leg (dyn-fanout-subpipeline) and a NESTED dynamic fanout (dyn-nested).
+# ---------------------------------------------------------------------------
+
+NEXT = ENGINE / "next.py"
+ADVANCE = ENGINE / "advance.py"
+JOIN = ENGINE / "join.py"
+
+SUBPIPE_PROTO = ROOT / "tests/fixtures/dyn-fanout-subpipeline/protocol.json"
+NESTED_PROTO = ROOT / "tests/fixtures/dyn-nested/protocol.json"
+
+
+def _pass_verdicts_t10(tmp_path):
+    """always-pass verdicts + blank evidence, mirroring the deep-fanout harness."""
+    v = tmp_path / "verdicts.json"
+    v.write_text(json.dumps({"results": [
+        {"check": "schema-valid", "pass": True, "feedback": "", "on_fail": "iterate"}]}))
+    ev = tmp_path / "evidence.json"
+    ev.write_text("{}")
+    return v, ev
+
+
+def _walker(engine_env, tmp_path, pid):
+    """Return (run, reclone, ry) bound to a fresh instance dir under this origin.
+    `run` invokes an engine script (asserting rc==0) with per-call NODE_PATH env
+    overrides; `reclone` re-checks-out the state branch (proving cas_push ran);
+    `ry` loads a YAML state file."""
+    base = dict(engine_env)
+    base["PR_HEAD_SHA"] = "abc123"
+    base["AGENT_RUN_ID"] = "r"
+    base["GITHUB_REPOSITORY"] = "golivax/agentic-protocol-poc"
+
+    def run(script, *args, **env_extra):
+        e = dict(base); e.update(env_extra)
+        r = subprocess.run(["python3", str(script), *map(str, args)],
+                           text=True, capture_output=True, env=e)
+        assert r.returncode == 0, f"{pathlib.Path(script).name} {args}: {r.stderr}"
+        return r
+
+    def reclone(tag):
+        fresh = tmp_path / f"rc-{tag}"
+        subprocess.run(["git", "clone", "-q", "-b", "agentic-state",
+                        engine_env["STATE_REMOTE"], str(fresh)], check=True)
+        return fresh / pid / "pr-1"
+
+    def ry(p):
+        with open(p) as fh:
+            return yaml.safe_load(fh)
+
+    return run, reclone, ry
+
+
+def test_dynamic_subpipeline_walks_to_done(engine_env, tmp_path):
+    """REQUIRED: the FULL offline walk of a dynamic SUB-PIPELINE `each`
+    (draft→finalize) — the previously-untested advance.py path for a dynamic
+    sub-pipeline leg. start seeds N legs each at sub_state `draft`; each leg is
+    driven draft→finalize→leg-done; the `all` join then clears the aggregate.
+
+    On-disk layout (single-phase → state_path drops the leading `review` id):
+      review.__manifest.yaml   ·   <lid>.yaml (leg cursor)
+      <lid>.draft.yaml   ·   <lid>.finalize.yaml (sub-states)."""
+    run, reclone, ry = _walker(engine_env, tmp_path, "dyn-fanout-subpipeline")
+    v, ev = _pass_verdicts_t10(tmp_path)
+
+    # 1. start → dynamic review fanout seeds a per-file sub-pipeline leg, each at
+    #    its first sub-state `draft`.
+    r1 = run(NEXT, tmp_path / "s1", "pr-1", SUBPIPE_PROTO, "start", "abc123")
+    act = json.loads(r1.stdout.strip().splitlines()[-1])
+    assert act["action"] == "run-fanout"
+    d = reclone("1")
+    man = ry(d / "review.__manifest.yaml")
+    assert man["count"] == 2
+    lids = [leg["id"] for leg in man["legs"]]
+    # Every leg's cursor points at draft; the draft sub-state file is seeded.
+    for lid in lids:
+        cur = ry(d / f"{lid}.yaml")
+        assert cur["sub_state"] == "draft"
+        assert cur["state"] == "review"          # leg life-state = enclosing fanout id
+        assert (d / f"{lid}.draft.yaml").is_file()
+        assert not (d / f"{lid}.finalize.yaml").is_file()  # not seeded yet
+
+    # 2. drive each leg: draft→finalize (cursor advances, continue seeds finalize),
+    #    finalize→leg-done (cursor state=done, path-less top join fired).
+    for lid in lids:
+        rd = run(ADVANCE, tmp_path / f"ad-{lid}", "pr-1", SUBPIPE_PROTO, v, ev,
+                 NODE_PATH=f"review.{lid}.draft")
+        # draft→finalize is an agent→agent hop: a continue re-dispatch, not a join.
+        assert "event_type=protocol-continue" in rd.stderr
+        assert f"client_payload[path]=review.{lid}.finalize" in rd.stderr
+        dd = reclone(f"{lid}-draft")
+        cur = ry(dd / f"{lid}.yaml")
+        assert cur["sub_state"] == "finalize"
+        assert cur["state"] == "review"          # leg still in flight
+        assert ry(dd / f"{lid}.draft.yaml")["state"] == "done"
+
+        # The dispatched continue seeds the finalize sub-state file.
+        run(NEXT, tmp_path / f"cf-{lid}", "pr-1", SUBPIPE_PROTO, "continue",
+            NODE_PATH=f"review.{lid}.finalize")
+        assert (reclone(f"{lid}-finc") / f"{lid}.finalize.yaml").is_file()
+
+        rf = run(ADVANCE, tmp_path / f"af-{lid}", "pr-1", SUBPIPE_PROTO, v, ev,
+                 NODE_PATH=f"review.{lid}.finalize")
+        # finalize is the LAST sub-state → leg terminal → fire_join. `review` is
+        # the TOP fanout, so the join is path-LESS (byte-identical to legacy).
+        assert "event_type=protocol-join" in rf.stderr
+        assert "client_payload[path]=" not in rf.stderr
+        df = reclone(f"{lid}-fin")
+        assert ry(df / f"{lid}.yaml")["state"] == "done"   # leg cursor terminal
+
+    # 3. top join → policy `all`, both legs done → aggregate success, joined.
+    run(JOIN, tmp_path / "j", "pr-1", SUBPIPE_PROTO)
+    inst = ry(reclone("final") / "_instance.yaml")
+    assert inst["joined"] is True
+
+
+def test_dynamic_nested_materializes_comments_fanout(engine_env, tmp_path):
+    """REQUIRED: a review leg's `prep` agent advances so its sub-pipeline enters
+    the NESTED `comments` dynamic fanout; assert the nested manifest is
+    materialized and its comment legs are seeded.
+
+    Nested paths (manifest keys by the FULL tree path; leg/join files drop the
+    leading single-phase `review` id):
+      review.<lid>.comments.__manifest.yaml   (nested manifest)
+      <lid>.comments.__join.yaml              (nested join marker)
+      <lid>.comments.<cid>.yaml               (flat comment legs)."""
+    run, reclone, ry = _walker(engine_env, tmp_path, "dyn-nested")
+    v, ev = _pass_verdicts_t10(tmp_path)
+
+    # 1. start → per-file review legs, each a sub-pipeline at sub_state `prep`.
+    run(NEXT, tmp_path / "s1", "pr-1", NESTED_PROTO, "start", "abc123")
+    d = reclone("1")
+    man = ry(d / "review.__manifest.yaml")
+    lids = [leg["id"] for leg in man["legs"]]
+    L = lids[0]
+    assert ry(d / f"{L}.yaml")["sub_state"] == "prep"
+    assert (d / f"{L}.prep.yaml").is_file()
+
+    # 2. advance the leg's prep. Its next sibling is a FANOUT → advance.py moves
+    #    the cursor onto `comments` and re-dispatches protocol-continue with the
+    #    fanout path, WITHOUT seeding the fanout legs (the continue does that).
+    rp = run(ADVANCE, tmp_path / "ap", "pr-1", NESTED_PROTO, v, ev,
+             NODE_PATH=f"review.{L}.prep")
+    assert "event_type=protocol-continue" in rp.stderr
+    assert f"client_payload[path]=review.{L}.comments" in rp.stderr
+    dp = reclone("prep")
+    assert ry(dp / f"{L}.yaml")["sub_state"] == "comments"
+    assert ry(dp / f"{L}.yaml")["state"] == "review"        # leg stays in flight
+    # NOT materialized yet — the fanout is entered by the follow-on continue.
+    assert not (dp / f"review.{L}.comments.__manifest.yaml").is_file()
+
+    # 3. continue NODE_PATH=review.<L>.comments → seeds the nested manifest, the
+    #    per-comment leg files, and the path-keyed nested __join marker.
+    rc = run(NEXT, tmp_path / "cc", "pr-1", NESTED_PROTO, "continue",
+             NODE_PATH=f"review.{L}.comments")
+    assert json.loads(rc.stdout.strip().splitlines()[-1])["action"] == "run-fanout"
+    dc = reclone("comments")
+    cman = ry(dc / f"review.{L}.comments.__manifest.yaml")   # FULL tree-path key
+    assert cman["count"] == 2
+    clids = [leg["id"] for leg in cman["legs"]]
+    for cid in clids:
+        assert (dc / f"{L}.comments.{cid}.yaml").is_file()   # nested-scope leg file
+    marker = ry(dc / f"{L}.comments.__join.yaml")
+    assert marker["joined"] is False
+
+
+def test_dynamic_nested_walks_to_done(engine_env, tmp_path):
+    """DESIRABLE: the full NESTED walk — every review leg driven
+    prep→comments(dynamic fanout)→cjoin, the nested join bubbling each review leg
+    to done, then the top `review` join clearing the aggregate to joined=True."""
+    run, reclone, ry = _walker(engine_env, tmp_path, "dyn-nested")
+    v, ev = _pass_verdicts_t10(tmp_path)
+
+    run(NEXT, tmp_path / "s1", "pr-1", NESTED_PROTO, "start", "abc123")
+    man = ry(reclone("1") / "review.__manifest.yaml")
+    rlids = [leg["id"] for leg in man["legs"]]
+
+    for L in rlids:
+        # prep → enter comments fanout.
+        run(ADVANCE, tmp_path / f"ap-{L}", "pr-1", NESTED_PROTO, v, ev,
+            NODE_PATH=f"review.{L}.prep")
+        run(NEXT, tmp_path / f"cc-{L}", "pr-1", NESTED_PROTO, "continue",
+            NODE_PATH=f"review.{L}.comments")
+        cman = ry(reclone(f"cm-{L}") / f"review.{L}.comments.__manifest.yaml")
+        clids = [leg["id"] for leg in cman["legs"]]
+
+        # Drive every comment leg to done.
+        for cid in clids:
+            rcv = run(ADVANCE, tmp_path / f"ac-{L}-{cid}", "pr-1", NESTED_PROTO, v, ev,
+                      NODE_PATH=f"review.{L}.comments.{cid}")
+            # A flat nested-fanout child fires the ENCLOSING fanout's path-keyed join.
+            assert f"client_payload[path]=review.{L}.comments" in rcv.stderr
+        dc = reclone(f"cd-{L}")
+        for cid in clids:
+            assert ry(dc / f"{L}.comments.{cid}.yaml")["state"] == "done"
+        # A flat fanout child must NOT write the enclosing fanout's cursor file.
+        assert not (dc / f"{L}.comments.yaml").is_file()
+
+        # nested join (policy `any`, all comment legs done) → cjoin has no `.next`,
+        # so the review leg's sub-pipeline ends: mark the leg cursor done + bubble
+        # to the TOP fanout's (path-less) join.
+        rj = run(JOIN, tmp_path / f"nj-{L}", "pr-1", NESTED_PROTO,
+                 NODE_PATH=f"review.{L}.comments")
+        assert "event_type=protocol-join" in rj.stderr
+        assert "client_payload[path]=" not in rj.stderr  # enclosing is the TOP fanout
+        dnj = reclone(f"nj-{L}")
+        assert ry(dnj / f"{L}.comments.__join.yaml")["joined"] is True
+        assert ry(dnj / f"{L}.yaml")["state"] == "done"   # review leg cursor terminal
+
+    # top join → policy `any`, both review legs done → aggregate joined.
+    run(JOIN, tmp_path / "tj", "pr-1", NESTED_PROTO)
+    final = reclone("final")
+    assert ry(final / "_instance.yaml")["joined"] is True
+    # Both review-leg cursors are done; both nested join markers cleared cleanly.
+    for L in rlids:
+        assert ry(final / f"{L}.yaml")["state"] == "done"
+        assert ry(final / f"{L}.comments.__join.yaml")["joined"] is True
+        assert not ry(final / f"{L}.comments.__join.yaml").get("failed")
