@@ -1,0 +1,1 @@
+{"path": "docs/dyn-stub-test/a.md", "diff": "diff --git a/docs/dyn-stub-test/a.md b/docs/dyn-stub-test/a.md\nnew file mode 100644\nindex 0000000..a1c4e11\n--- /dev/null\n+++ b/docs/dyn-stub-test/a.md\n@@ -0,0 +1,3 @@\n+# Dyn-stub live test \u2014 file A\n+\n+Trivial change to exercise the dynamic fan-out expander (file 1 of 2).\n"}
