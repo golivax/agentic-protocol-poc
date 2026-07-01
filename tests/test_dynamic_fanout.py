@@ -932,3 +932,44 @@ def test_dyn_stub_start_materializes_legs(engine_env, tmp_path):
     d = str(tmp_path) + "/dyn-fanout-stub/pr-7"
     man = read_state_yaml(d + "/review.__manifest.yaml")
     assert man["count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Task 2 fix — exit-0 ABI guard
+# ---------------------------------------------------------------------------
+
+
+from conftest import run_check
+
+CHECK = str(ROOT / ".github/agent-factory/protocols/dyn-fanout-stub/checks/examined-file.py")
+
+
+@pytest.mark.parametrize("bad", ["[]", "null", "\"x\"", "5", "{}", "{\"examined\": []}", "not json"])
+def test_examined_file_check_always_exits_zero(bad, tmp_path):
+    """The examined-file check must ALWAYS exit 0 (per Check ABI) even with
+    garbage evidence. Non-dict top-level JSON, missing 'examined', or empty
+    examined list must all yield pass:false without crashing."""
+    ev = tmp_path / "evidence.json"
+    ev.write_text(bad)
+    diff = tmp_path / "d.txt"
+    diff.write_text("")
+    ch = tmp_path / "c.txt"
+    ch.write_text("")
+    # run_check raises if the check crashed (non-JSON stdout); this test passes
+    # only if the check printed valid JSON and exited 0.
+    result = run_check(CHECK, ev, diff, ch)
+    assert result["check"] == "examined-file"
+    assert result["pass"] is False
+
+
+def test_examined_file_check_accepts_valid_evidence(tmp_path):
+    """Well-formed evidence with a non-empty examined list yields pass:true."""
+    ev = tmp_path / "evidence.json"
+    ev.write_text(json.dumps({"examined": ["src/a.py"]}))
+    diff = tmp_path / "d.txt"
+    diff.write_text("")
+    ch = tmp_path / "c.txt"
+    ch.write_text("")
+    result = run_check(CHECK, ev, diff, ch)
+    assert result["check"] == "examined-file"
+    assert result["pass"] is True

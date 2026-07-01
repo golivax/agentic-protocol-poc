@@ -12,7 +12,7 @@ def main():
         print(json.dumps({"check": "examined-file", "pass": False,
                           "feedback": f"unreadable evidence: {e}"}))
         return
-    examined = ev.get("examined")
+    examined = ev.get("examined") if isinstance(ev, dict) else None
     ok = isinstance(examined, list) and len(examined) >= 1 and all(
         isinstance(x, str) and x.strip() for x in examined)
     print(json.dumps({"check": "examined-file", "pass": bool(ok),
