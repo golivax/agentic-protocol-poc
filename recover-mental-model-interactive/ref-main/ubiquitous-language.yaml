@@ -1,6 +1,11 @@
 protocol: recover-mental-model-interactive
 instance: ref-main
-state: recover
+state: done
 iteration: 1
 gates: {}
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28537489596'
+  checks:
+    ubiquitous-language-present: pass
+  feedback: ''
