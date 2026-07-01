@@ -1,0 +1,62 @@
+name: MM Interactive Resume
+# Resumes an interactive recover-mental-model run when a human answers its question
+# issue. The engine's `answering` gate opens a dedicated issue whose body carries a
+# machine marker `<!-- agentic-mm: protocol=<id> instance=<inst> gate=<path> -->`.
+# This workflow owns answer-comments on those issues (the orchestrator deliberately
+# skips non-PR issue comments), reads the marker, and drives the engine's existing
+# `answer` command for that instance — do_answer accumulates answers, and on full
+# coverage closes the issue + dispatches the continue that resumes phase 2.
+run-name: "mm-resume · issue #${{ github.event.issue.number }}"
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  resume:
+    # Only MM question issues (marker in body) + an /answer comment. The marker and
+    # the /answer prefix are agent/user-derived; matched here, never interpolated.
+    if: >
+      github.event.issue.pull_request == null &&
+      contains(github.event.issue.body, 'agentic-mm:') &&
+      startsWith(github.event.comment.body, '/answer')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      checks: write
+    steps:
+      - uses: actions/checkout@v5
+      - id: marker
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          # Extract protocol + instance from the marker (env, never interpolated).
+          PROTO_ID=$(python3 -c "import os,re;m=re.search(r'agentic-mm:\s*protocol=(\S+)\s+instance=(\S+)',os.environ['ISSUE_BODY']);print(m.group(1) if m else '')")
+          INSTANCE=$(python3 -c "import os,re;m=re.search(r'agentic-mm:\s*protocol=(\S+)\s+instance=(\S+)',os.environ['ISSUE_BODY']);print(m.group(2) if m else '')")
+          if [ -z "$PROTO_ID" ] || [ -z "$INSTANCE" ]; then
+            echo "[mm-resume] no parseable marker; skipping" >&2; exit 0
+          fi
+          echo "proto_id=$PROTO_ID" >> "$GITHUB_OUTPUT"
+          echo "instance=$INSTANCE" >> "$GITHUB_OUTPUT"
+      - name: Answer the gate
+        if: steps.marker.outputs.instance != ''
+        env:
+          STATE_REMOTE: https://x-access-token:${{ secrets.POC_DISPATCH_TOKEN }}@github.com/${{ github.repository }}.git
+          # do_answer posts feedback + closes the issue (issues:write) and dispatches
+          # the protocol-continue that resumes phase 2 (needs the dispatch PAT).
+          GH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
+          PUBLISH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          INSTANCE: ${{ steps.marker.outputs.instance }}
+          PROTO_ID: ${{ steps.marker.outputs.proto_id }}
+          # Untrusted comment text → passed to next.py via env, never interpolated.
+          ANSWER_BODY: ${{ github.event.comment.body }}
+          ANSWER_ACTOR: ${{ github.event.comment.user.login }}
+        run: |
+          PROTO=".github/agent-factory/protocols/$PROTO_ID/protocol.json"
+          [ -f "$PROTO" ] || { echo "[mm-resume] unknown protocol '$PROTO_ID'" >&2; exit 1; }
+          .github/agent-factory/engine/next.py /tmp/state "$INSTANCE" "$PROTO" answer

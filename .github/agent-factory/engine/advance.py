@@ -217,9 +217,11 @@ def advance_node(ctx, process):
                         questions = json.load(open(qpath)).get("questions", []) or []
                     except (json.JSONDecodeError, ValueError):
                         questions = []
+            gate_channel = (_paths.node_at_path(proto, parent + [nxt_sub]) or {}).get("channel", "comment")
             lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
                           questions=questions,
-                          path=lib.state_path(proto, parent + [nxt_sub]))
+                          path=lib.state_path(proto, parent + [nxt_sub]),
+                          channel=gate_channel)
             lib.cas_push(dir_, f"{instance}: branch {branch} {substate} done → gate {nxt_sub} open")
             return
         # Otherwise: an agent sub-state. Advance the cursor (done above) and

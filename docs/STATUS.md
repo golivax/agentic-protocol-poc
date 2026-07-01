@@ -72,6 +72,31 @@ either PR-targeted (code-review, unchanged) or ref-targeted (this).
 - **Still required to actually push** the branch: the `PUBLISH_TOKEN`/PAT wiring
   noted above.
 
+### Interactive pathway — `recover-mental-model-interactive` (2026-06-29)
+
+A second protocol for an **interactive** recovery (the non-interactive one above is
+unchanged). It is byte-identical except the socratic `answering` node is a human
+**gate** (`kind:gate`, `questions_from:phase1`, `channel:issue`) instead of an agent
+— reviving the original stub's `clarify`-gate idea, now over a dedicated issue.
+
+- **Issue-channel gate:** `lib.open_gate(channel="issue")` calls a new `lib.create_issue`
+  to open an issue whose body is `lib.issue_question_body(...)` — a machine marker
+  `<!-- agentic-mm: protocol=<id> instance=<inst> gate=<path> -->` + a parseable
+  ```yaml`questions:`` block + the `/answer` instructions. The issue number is stored
+  on `gates.issue`. `advance.py` passes the gate node's `channel` (new optional schema
+  field, default `comment`).
+- **Resume:** `mm-interactive-resume.yml` (`on:issue_comment`) owns answer-comments on
+  marked issues (the orchestrator + `lib.route` still skip non-PR issue comments, which
+  is now correct). It reads the marker → runs `next.py … answer` for that instance.
+  `do_answer` posts feedback to the issue, and on full coverage `lib.close_issue`s it
+  and dispatches the `phase2` continue. **Selection:** the UI passes
+  `protocol=recover-mental-model-interactive` to the same `workflow_dispatch`.
+- **phase2 variant:** `mm-socratic-phase2-interactive-agent` consumes the gate's answers
+  (`inputs.answers`) applied onto the restored phase-1 tree, instead of an answering
+  agent's artifact. `phase1` (shared) now re-emits `questions[]` (harmless to the
+  non-interactive path, whose answering agent ignores it).
+- **Token:** issue create/close needs `issues: write` — covered by `POC_DISPATCH_TOKEN`.
+
 The historical sections below still say `recover-mental-model-stub` — they are a
 dated record from when it was a stub and are left unchanged.
 

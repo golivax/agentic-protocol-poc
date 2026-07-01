@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Socratic phase-1 evidence",
+  "description": "Evidence produced by the socratic phase-1 agent: a manifest of the Question Tree + Open Questions .adoc artifacts, plus the run id whose `mm-tree-socratic-phase1` artifact holds them. The OPEN leaves are answered automatically by the downstream answering step (no human gate).",
+  "type": "object",
+  "required": ["run_id", "files"],
+  "properties": {
+    "method": { "type": "string", "description": "Free-form method label, e.g. 'socratic:phase1'." },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "GitHub Actions run id of the phase-1 run."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Manifest of phase-1 artifacts (QUESTION_TREE-*.adoc, OPEN_QUESTIONS-*.adoc).",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "bytes": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

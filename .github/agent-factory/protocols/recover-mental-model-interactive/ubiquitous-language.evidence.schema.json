@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Ubiquitous-language evidence",
+  "description": "Evidence produced by the ubiquitous-language leg: a manifest of the domain glossary produced by the domain-modeling skill (`/domain-modeling` → CONTEXT.md), plus the GitHub run id whose `mm-tree-ubiquitous-language` artifact holds the file.",
+  "type": "object",
+  "required": ["run_id", "files"],
+  "properties": {
+    "method": { "type": "string", "description": "Free-form method label, e.g. 'domain-modeling'." },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "GitHub Actions run id of the leg run; the combine hook downloads its `mm-tree-ubiquitous-language` artifact."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Manifest of files uploaded in the mm-tree artifact (paths relative to the tree root).",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "bytes": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
