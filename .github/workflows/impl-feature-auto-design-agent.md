@@ -132,7 +132,8 @@ Write `/tmp/gh-aw/evidence.json` as ONE JSON object matching design.evidence.sch
 - `ledger`: the SAME ledger as structured data — one object per gap, fields exactly
   as in §2 (`id` like "L1", `category`, `what`, `why`, `what_i_did`, `confidence`,
   `blast_radius:{level,why}`, `reversibility:{level,why}`, `revisit_if`, and
-  `verified:true` on any ASSUMPTION asserting a code fact). Every `id` and `what`
-  MUST also appear verbatim in the spec's Ledger section (a check cross-references).
+  `verified:true` on any ASSUMPTION asserting a code fact). Every ledger `id` MUST
+  also appear in the spec's Ledger section (a check cross-references ids); the spec
+  prose may paraphrase each item's `what` — it need not be verbatim.
 - `read_these_first`: ledger ids, risk-descending.
 Write nothing else. Do NOT write code, do NOT open a PR, do NOT comment on GitHub.

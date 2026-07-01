@@ -59,15 +59,18 @@ def main():
         except OSError as e:
             problems.append(f"unable to read spec.md: {e}")
             spec = ""
+        # Anti-divergence anchor: every ledger id must appear in the spec's Ledger
+        # section, so the human-read prose enumerates the same items as the JSON.
+        # We deliberately DON'T require the `what` text to match verbatim — the spec
+        # prose legitimately paraphrases the concise JSON `what`, and demanding an
+        # exact substring is brittle (it fights the model's natural prose and buys
+        # no real guarantee; semantic divergence is the substance boundary, §8.3).
         for it in ledger:
             if not isinstance(it, dict):
                 continue
             i = it.get("id", "")
-            w = (it.get("what") or "").strip()
             if i and i not in spec:
                 problems.append(f"ledger id {i!r} absent from spec.md (JSON/prose divergence)")
-            elif w and w not in spec:
-                problems.append(f"ledger {i} `what` text absent from spec.md (divergence)")
 
     if problems:
         emit(False, "; ".join(problems[:8]))

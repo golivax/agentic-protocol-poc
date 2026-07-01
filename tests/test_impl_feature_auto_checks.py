@@ -154,13 +154,16 @@ def test_rtf_fails_when_spec_missing(tmp_path):
     out = run_check("read-these-first-consistent", ev, tmp_path)  # no spec.md bundled
     assert out["pass"] is False and "spec.md" in out["feedback"]
 
-def test_rtf_fails_what_divergence(tmp_path):
+def test_rtf_allows_paraphrased_what(tmp_path):
+    # The cross-ref anchors on the ledger ID, not verbatim `what` text: as long as
+    # the spec's Ledger section enumerates the id, the prose may paraphrase the
+    # concise JSON `what` (demanding an exact substring is brittle and fights the
+    # model's natural prose — semantic divergence is the substance boundary, §8.3).
     it = good_item(id="L1", what="A decision phrased one way in JSON")
     ev = good_evidence(ledger=[it], read_these_first=[])
-    # spec mentions the id but NOT the `what` text
     out = run_check("read-these-first-consistent", ev, tmp_path,
                     extra_files={"spec.md": "# Spec\n## Accountability Ledger\n- L1: a totally different phrasing\n"})
-    assert out["pass"] is False and "spec" in out["feedback"].lower()
+    assert out["pass"] is True, out
 
 def test_rtf_exits_zero_on_nondict_ledger_item(tmp_path):
     ev = {"ledger": [123], "read_these_first": []}
