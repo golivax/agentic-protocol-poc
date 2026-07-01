@@ -42,27 +42,55 @@ def main():
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     env = dict(os.environ)
     env["GH_TOKEN"] = os.environ.get("PUBLISH_TOKEN", os.environ.get("GH_TOKEN", ""))
-    r = subprocess.run(
-        ["gh", "pr", "list", "--repo", repo, "--head", pr_branch,
-         "--state", "open", "--json", "number,url", "--limit", "1"],
-        text=True, capture_output=True, env=env)
-    prs = []
-    if r.returncode == 0 and r.stdout.strip():
-        try:
-            prs = json.loads(r.stdout)
-        except ValueError:
-            prs = []
-    if not prs:
-        print(json.dumps({"conclusion": "failure",
-                          "summary": f"No open PR found for branch {pr_branch}."}))
+    summary = (ev.get("summary", "") or "").strip()
+
+    def _gh_json(args):
+        r = subprocess.run(["gh", *args], text=True, capture_output=True, env=env)
+        if r.returncode == 0 and r.stdout.strip():
+            try:
+                return json.loads(r.stdout)
+            except ValueError:
+                return None
+        return None
+
+    # gh-aw's safe-outputs appends a "-<hash>" suffix to the head branch it opens
+    # (e.g. impl-feature-auto/issue-7-ab12…), so match by PREFIX, not an exact
+    # --head lookup.
+    prs = _gh_json(["pr", "list", "--repo", repo, "--state", "all",
+                    "--json", "number,url,headRefName", "--limit", "40"]) or []
+    match = next((p for p in prs
+                  if str(p.get("headRefName", "")).startswith(pr_branch)), None)
+    if match:
+        pr_num, pr_url = match.get("number"), match.get("url")
+        if str(issue).isdigit():
+            lib.post_pr_comment(issue,
+                                f"🤖 **Feature implemented** — opened PR #{pr_num}: {pr_url}"
+                                + (f"\n\n{summary}" if summary else ""))
+        print(json.dumps({"conclusion": "success",
+                          "summary": f"Linked PR #{pr_num} for issue {instance}."}))
         return
-    pr_num, pr_url = prs[0].get("number"), prs[0].get("url")
-    if str(issue).isdigit():
-        lib.post_pr_comment(issue,
-                            f"🤖 **Feature implemented** — opened PR #{pr_num}: {pr_url}\n\n"
-                            f"{ev.get('summary', '').strip()}")
-    print(json.dumps({"conclusion": "success",
-                      "summary": f"Linked PR #{pr_num} for issue {instance}."}))
+
+    # No PR matched. gh-aw routes a change that touches protected paths (e.g. under
+    # .github/) to a request_review *review issue* rather than an auto-PR, and may
+    # push the branch without opening a PR. Confirm the branch exists (prefix) and
+    # report honestly — the implementation was produced; a human-review artifact
+    # (review issue / branch) carries it — rather than a false failure.
+    refs = _gh_json(["api", f"repos/{repo}/git/matching-refs/heads/{pr_branch}"]) or []
+    branch = next((r.get("ref", "").split("refs/heads/", 1)[-1]
+                   for r in refs if r.get("ref")), "")
+    if branch:
+        if str(issue).isdigit():
+            lib.post_pr_comment(issue,
+                                f"🤖 **Feature implemented** — pushed to branch `{branch}` "
+                                "and opened for review (changes touching protected paths "
+                                "are routed to a review issue instead of an auto-PR)."
+                                + (f"\n\n{summary}" if summary else ""))
+        print(json.dumps({"conclusion": "neutral",
+                          "summary": f"Implementation pushed to {branch} for issue {instance}; review pending."}))
+        return
+
+    print(json.dumps({"conclusion": "failure",
+                      "summary": f"No PR or branch found for {pr_branch}."}))
 
 
 if __name__ == "__main__":
