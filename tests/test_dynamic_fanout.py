@@ -1,9 +1,12 @@
 import importlib.util
+import json
 import os, stat, textwrap
 import pathlib
+import subprocess
 import sys
 
 import pytest
+import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
@@ -236,3 +239,124 @@ def test_dynamic_fanout_subpipeline_each_fails_loud(engine_env, tmp_path):
     # should exist for this aborted run.
     manifest_path = tmp_path / "state" / "dyn-subpipeline-unsupported" / "pr-1" / "review.__manifest.yaml"
     assert not manifest_path.exists(), f"manifest was written despite fail-loud guard: {manifest_path}"
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — resolve_leg_ids unit test
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_leg_ids_prefers_manifest(tmp_path):
+    lib = _load_lib()
+    d, pid, inst = str(tmp_path), "ocr", "pr-1"
+    lib.write_manifest(d, pid, inst, ["review"],
+                       {"count": 2, "legs": [{"id": "aa", "key": "a", "item": {}},
+                                             {"id": "bb", "key": "b", "item": {}}]})
+    dyn_node = {"id": "review", "kind": "fanout", "expand": {"hook": "h"}}
+    static_node = {"id": "review", "kind": "fanout",
+                   "branches": [{"id": "grumpy"}, {"id": "security"}]}
+    assert lib.resolve_leg_ids(d, pid, inst, ["review"], dyn_node) == ["aa", "bb"]
+    assert lib.resolve_leg_ids(d, pid, inst, ["review"], static_node) == ["grumpy", "security"]
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — dynamic join reads manifest + applies policy (real join.py run)
+# ---------------------------------------------------------------------------
+
+LIB_PY = ENGINE / "lib.py"
+JOIN_PY = ENGINE / "join.py"
+
+
+def _join_env(origin):
+    env = dict(os.environ)
+    env["ENGINE_LOCAL"] = "1"
+    env["GITHUB_REPOSITORY"] = "golivax/agentic-protocol-poc"
+    env["STATE_REMOTE"] = str(origin)
+    env["PR_HEAD_SHA"] = "dynsha"
+    return env
+
+
+def _seed_dynamic(origin, workdir, pid, inst, leg_states):
+    """Seed a single-phase dynamic-fanout instance into the bare origin:
+    _instance.yaml (joined:false) + review.__manifest.yaml + one <lid>.yaml per leg.
+    `leg_states` is an ordered dict-like list of (leg_id, state)."""
+    env = _join_env(origin)
+    subprocess.run(["python3", str(LIB_PY), "state-checkout", str(workdir)],
+                   env=env, check=True, capture_output=True, text=True)
+    d = pathlib.Path(workdir) / pid / inst
+    d.mkdir(parents=True, exist_ok=True)
+    legs = [{"id": lid, "key": lid, "item": {"path": lid}} for lid, _ in leg_states]
+    (d / "review.__manifest.yaml").write_text(json.dumps({"count": len(legs), "legs": legs}))
+    (d / "_instance.yaml").write_text(json.dumps({
+        "protocol": pid, "instance": inst, "head_sha": "dynsha", "joined": False}))
+    for lid, st in leg_states:
+        (d / f"{lid}.yaml").write_text(json.dumps({
+            "protocol": pid, "instance": inst, "state": st,
+            "iteration": 1, "gates": {}, "history": []}))
+    subprocess.run(["python3", str(LIB_PY), "cas-push", str(workdir), f"seed {inst}"],
+                   env=env, check=True, capture_output=True, text=True)
+
+
+def _run_join(origin, workdir, inst, proto):
+    env = _join_env(origin)
+    env["PR"] = "1"
+    r = subprocess.run(["python3", str(JOIN_PY), str(workdir), inst, str(proto)],
+                       env=env, text=True, capture_output=True)
+    return r.stdout + r.stderr, r.returncode
+
+
+def _verify_instance(origin, workdir, pid, inst):
+    env = _join_env(origin)
+    subprocess.run(["python3", str(LIB_PY), "state-checkout", str(workdir)],
+                   env=env, check=True, capture_output=True, text=True)
+    p = pathlib.Path(workdir) / pid / inst / "_instance.yaml"
+    return yaml.safe_load(p.read_text())
+
+
+def test_dynamic_join_policy_any_one_failed_succeeds(tmp_path):
+    """policy:any with 1 done + 1 failed → join clears (advances to .next=reduce),
+    NOT a failure. Uses the committed dyn-fanout-flat fixture (policy 'any')."""
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "agentic-state", str(origin)],
+                   check=True)
+    proto = ROOT / "tests/fixtures/dyn-fanout-flat/protocol.json"
+    pid = "dyn-fanout-flat"
+    _seed_dynamic(origin, tmp_path / "seed", pid, "pr-1",
+                  [("aa", "done"), ("bb", "failed")])
+    out, rc = _run_join(origin, tmp_path / "join", "pr-1", proto)
+    assert rc == 0, out
+    # policy any satisfied → advance to reduce via protocol-continue (no failure).
+    assert "event_type=protocol-continue" in out, out
+    assert "client_payload[path]=reduce" in out, out
+    assert "conclusion=failure" not in out, out
+    inst = _verify_instance(origin, tmp_path / "verify", pid, "pr-1")
+    assert inst["joined"] is True
+    assert inst["phase"] == "reduce"
+
+
+def test_dynamic_join_policy_all_one_failed_fails(tmp_path):
+    """policy:all with the SAME 1 done + 1 failed → join concludes FAILURE
+    (merge gated). Ad-hoc protocol identical shape but policy 'all'."""
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "agentic-state", str(origin)],
+                   check=True)
+    proto = {
+        "name": "dyn-all-test",
+        "states": [
+            {"id": "review", "kind": "fanout",
+             "expand": {"hook": "expand-items", "as": "file", "id_from": "$.path", "max_legs": 8},
+             "each": {"workflow": "w"}, "next": "join"},
+            {"id": "join", "kind": "join", "of": "review", "policy": "all", "next": "reduce"},
+            {"id": "reduce", "kind": "merge", "hook": "reduce", "next": "done"}]}
+    ppath = tmp_path / "protocol.json"
+    ppath.write_text(json.dumps(proto))
+    pid = "dyn-all-test"
+    _seed_dynamic(origin, tmp_path / "seed", pid, "pr-1",
+                  [("aa", "done"), ("bb", "failed")])
+    out, rc = _run_join(origin, tmp_path / "join", "pr-1", ppath)
+    assert rc == 0, out
+    # policy all NOT met (1/2) → aggregate failure, no advance.
+    assert "conclusion=failure" in out, out
+    assert "event_type=protocol-continue" not in out, out
+    inst = _verify_instance(origin, tmp_path / "verify", pid, "pr-1")
+    assert inst["joined"] is True

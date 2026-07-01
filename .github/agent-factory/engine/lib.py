@@ -128,6 +128,16 @@ def write_manifest(d, pid, instance, tree_path, data):
     dump_yaml(f, data)
 
 
+def resolve_leg_ids(dir_, pid, instance, tree_path, fanout_node):
+    """The leg-id list for a fanout: the persisted manifest's ids when dynamic
+    (expand present), else the static branches[] ids. The single seam that lets
+    join.py treat dynamic and static fanouts uniformly."""
+    if fanout_node and fanout_node.get("expand"):
+        man = read_manifest(dir_, pid, instance, tree_path)
+        return [leg["id"] for leg in man.get("legs", [])]
+    return [b["id"] for b in (fanout_node.get("branches", []) if fanout_node else [])]
+
+
 def leg_id(raw_key):
     """Stable, filesystem-safe leg id from an item's raw id_from value.
     A short sha1 hex is alnum by construction (no sanitizing needed)."""
