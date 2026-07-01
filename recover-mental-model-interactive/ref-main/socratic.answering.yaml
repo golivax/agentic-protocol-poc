@@ -3,8 +3,27 @@ instance: ref-main
 state: answering
 head_sha: 276d7e4fbf1a19943851fe24d76d2debc1f36d0d
 gates:
-  state: open
-  history: []
+  state: answered
+  history:
+  - actor: radinshayanfar
+    answers:
+    - Q1.2
+    - Q1.4
+    - Q1.5
+    - Q1.6
+    - Q2.2.UC.RunCodeReview.Postconditions
+    - Q2.5.TargetAcceptance
+    - Q3.9.RecursiveUnification.Context
+    - Q3.9.StateInGit.Rationale
+    - Q3.9.FirewallDisabled.PughMatrix
+    - Q3.9.ModelPin.Rationale
+    - Q4.4.target
+    - Q4.6.target
+    - Q4.9
+    - Q5.1.TrackedDebtLocation
+    - Q5.3.SLO
+    - Q5.4.VendorTrust
+    - Q5.5.ThroughputTarget
   questions:
   - id: Q1.2
     text: "Who are the primary users \u2014 a platform/DevEx team, an OSS maintainer,\
