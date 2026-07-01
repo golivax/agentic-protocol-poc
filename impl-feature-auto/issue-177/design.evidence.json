@@ -1,0 +1,96 @@
+{
+  "spec_path": "docs/superpowers/specs/2026-07-01-is-terminal-state-design.md",
+  "plan_path": "docs/superpowers/plans/2026-07-01-is-terminal-state.md",
+  "summary": "Design for adding is_terminal_state(state) -> bool to lib.py: a pure, additive helper that returns True for 'done', 'failed', 'blocked' and False for all other inputs including None and non-strings. Includes focused pytest unit tests in a new tests/test_lib_is_terminal_state.py file. No existing call sites are refactored.",
+  "run_id": "28491021414",
+  "ledger": [
+    {
+      "id": "L1",
+      "category": "ASSUMPTION",
+      "what": "lib.py exists at .github/agent-factory/engine/lib.py and has no existing is_terminal_state",
+      "why": "Need to confirm the target file and that the function is truly absent before specifying its placement",
+      "what_i_did": "Read lib.py and grep for is_terminal_state across the repo; confirmed: file exists at expected path, function absent, PHASE_LABEL_DEFAULTS is at line 586",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "No production impact if wrong; the build simply fails cleanly with no existing code changed"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "No change to existing code if the function is not added"
+      },
+      "revisit_if": "If the file is relocated in a future engine refactor",
+      "verified": true
+    },
+    {
+      "id": "L2",
+      "category": "ASSUMPTION",
+      "what": "The complete set of terminal states is exactly {\"done\", \"failed\", \"blocked\"} and is stable",
+      "why": "The helper must enumerate the right set; an incorrect or incomplete set gives callers wrong answers",
+      "what_i_did": "Verified against PHASE_LABEL_DEFAULTS in lib.py (lines 586-591), which lists exactly these three keys alongside the non-terminal 'setup' key; confirmed by the issue's explicit enumeration",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "medium",
+        "why": "If the set were wrong, any future call site that adopts the helper would silently mis-classify states; immediate blast radius is limited to new tests since no call sites are refactored in this change"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "The frozenset literal is a one-line change"
+      },
+      "revisit_if": "If a new terminal state (e.g. 'abandoned') is added to the engine",
+      "verified": true
+    },
+    {
+      "id": "L3",
+      "category": "DECISION",
+      "what": "Place _TERMINAL_STATES + is_terminal_state immediately after PHASE_LABEL_COLOR in lib.py",
+      "why": "Multiple placement options; grouping with PHASE_LABEL_DEFAULTS is semantically coherent because both are about the same terminal/special state identifiers",
+      "what_i_did": "Chose proximity to PHASE_LABEL_DEFAULTS (~line 592) as the clearest semantic home; this keeps related constants co-located",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Placement has no behavioral effect; Python resolves imports regardless of order within a module"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Can move the function anytime without changing behavior"
+      },
+      "revisit_if": "If lib.py is restructured into clearly delineated sections"
+    },
+    {
+      "id": "L4",
+      "category": "DECISION",
+      "what": "Use 'state in frozenset(...)' without an explicit isinstance guard",
+      "why": "The issue requires is_terminal_state(None) to return False without raising; Python's 'in' on a frozenset is safe for any hashable value",
+      "what_i_did": "Chose the idiomatic 'state in _TERMINAL_STATES' pattern; added explicit test cases for None and an integer to lock in this behavior",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Affects only this function's edge-case behavior; all acceptance criteria are covered by tests"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Can add an isinstance guard anytime without changing behavior for valid string inputs"
+      },
+      "revisit_if": "If Python's frozenset membership semantics change (extremely unlikely)"
+    },
+    {
+      "id": "L5",
+      "category": "DECISION",
+      "what": "New test file tests/test_lib_is_terminal_state.py rather than appending to test_engine.py or test_decide.py",
+      "why": "A focused, self-contained module keeps test files thematically coherent; test_decide.py tests lib.decide(), test_engine.py tests CAS/planner; neither is the right home for a simple predicate helper",
+      "what_i_did": "Chose a new file following test_decide.py's pattern (same sys.path.insert approach, no external fixtures needed)",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Test organization has no production impact; the test file is a dev-only artifact"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Can merge into another file anytime"
+      },
+      "revisit_if": "If the project adopts a single-file test convention for lib.py helpers"
+    }
+  ],
+  "read_these_first": ["L2"]
+}

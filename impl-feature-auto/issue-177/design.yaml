@@ -1,7 +1,16 @@
 protocol: impl-feature-auto
 instance: issue-177
-state: design
+state: done
 iteration: 1
 gates: {}
 head_sha: 1bb270c823f39898b49285f7aa85412b8594dd8b
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28491021414'
+  checks:
+    ledger-wellformed: pass
+    ledger-consistent: pass
+    read-these-first-consistent: pass
+    spec-present: pass
+    plan-present: pass
+  feedback: ''
