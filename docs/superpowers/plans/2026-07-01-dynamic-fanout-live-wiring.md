@@ -18,6 +18,15 @@
 - **Workflows run from `main`:** the orchestrator, engine, `protocol-join`, the new protocol dir, and the compiled agent lock must land on the default branch before the live walk (spec §9).
 - **Run tests with:** `uv run pytest tests/ -q` (whole suite) or `uv run pytest tests/test_dynamic_fanout.py -v` (this module).
 - **Dates are absolute:** today is 2026-07-01.
+- **git add EXPLICIT paths only** — never `git add -A`/`.`/`git commit -a`. The repo has untracked user WIP (incl. a large binary); a broad add once swept it into history and required a filter-branch cleanup. Stage exactly the files each step names.
+- **Check & expander files need `chmod +x` + a `#!/usr/bin/env python3` shebang** — the live `run-checks.py`/`run_expander` require `os.X_OK`; the offline harness invokes `python3 <path>` directly and would mask a missing `+x`.
+- **Test-harness idiom (authoritative — the plan's Python test snippets show the ASSERTIONS to achieve; use THIS calling convention, mirroring the neighbors in `tests/test_dynamic_fanout.py`):**
+  - `from conftest import run_engine, read_state_yaml` and `ROOT = pathlib.Path(__file__).resolve().parent.parent`.
+  - Drive the engine: `out, err, rc = run_engine("next.py", str(tmp_path), "pr-N", PROTO_PATH, "start", env=engine_env)` where `PROTO_PATH` is the absolute path to a `protocol.json` and `str(tmp_path)` is the state DIR. `run_engine` returns `(stdout, stderr, rc)` — it does NOT return a parsed action.
+  - Parse the emitted action: `action = json.loads(out.strip().splitlines()[-1])`.
+  - Read a state/manifest file by its FULL path: `read_state_yaml(str(tmp_path) + "/<pid>/pr-N/review.__manifest.yaml")` (single arg).
+  - In-process lib calls: load via the module's existing `_load_lib()` helper (`lib = _load_lib()`), NOT `importlib.import_module`.
+  - Canonical reference test to mirror: `tests/test_dynamic_fanout.py::test_dynamic_fanout_start_seeds_manifest_and_legs` (drives `next.py`, parses the action, reads the manifest) and `::test_run_expander_parses_items` (in-process `run_expander`).
 
 ---
 
@@ -331,26 +340,27 @@ Expected: validation passes (may warn "jsonschema absent → semantic-only"); tr
 
 - [ ] **Step 3: Write the failing offline-walk test** (append to `tests/test_dynamic_fanout.py`)
 
-Use the existing `run_engine` / `read_state_yaml` fixtures from `tests/conftest.py`. Model this test on the existing `dyn-fanout-flat` walk in the same module (find it with `grep -n "dyn-fanout-flat" tests/test_dynamic_fanout.py` and mirror its setup — same `run_engine` signature, `ENGINE_LOCAL` env, and `read_state_yaml` assertions).
+Follows the harness idiom in Global Constraints (mirror `test_dynamic_fanout_start_seeds_manifest_and_legs`). `expand-files` reads `items.json` (2 items) under `ENGINE_LOCAL`.
 
 ```python
-STUB = ".github/agent-factory/protocols/dyn-fanout-stub/protocol.json"
+import json, pathlib
+from conftest import run_engine, read_state_yaml
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+STUB = str(ROOT / ".github/agent-factory/protocols/dyn-fanout-stub/protocol.json")
 
 def test_dyn_stub_start_materializes_legs(engine_env, tmp_path):
-    # `run_engine` drives next.py with ENGINE_LOCAL; expand-files reads items.json (2 items).
-    action = run_engine(STUB, "pr-7", "start")           # returns the emitted action dict
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-7", STUB, "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
     assert action["action"] == "run-fanout"
     legs = action["legs"]
     assert len(legs) == 2                                 # one leg per fixture item
     assert all(l["workflow"] == "dyn-stub-agent" for l in legs)
-    # single-phase: leg path is the bare leg id (no leading "review.")
-    assert all("." not in l["path"] for l in legs)
-    # manifest persisted at the FULL tree path
-    man = read_state_yaml("dyn-fanout-stub", "pr-7", "review.__manifest.yaml")
+    assert all("." not in l["path"] for l in legs)        # single-phase: bare leg id
+    d = str(tmp_path) + "/dyn-fanout-stub/pr-7"
+    man = read_state_yaml(d + "/review.__manifest.yaml")
     assert man["count"] == 2
 ```
-
-(Adjust `run_engine`/`read_state_yaml` call shapes to match the module's existing helpers exactly — do not invent a new signature.)
 
 - [ ] **Step 4: Run the walk test**
 
@@ -370,63 +380,54 @@ git commit -m "feat(dyn-fanout): dyn-fanout-stub protocol (single-phase fanout->
 
 **Files:**
 - Test: `tests/test_dynamic_fanout.py` (append)
-- (Likely no engine change — this task is verification. If an assertion fails, fix the specific `_fanout_action`/`enter_node` line it points to.)
+- (Likely no engine change — this task is verification. If an assertion fails, fix the specific `lib.state_path`/`lib.is_multiphase` line it points to.)
 
 **Interfaces:**
-- Consumes: Task 2's protocol; the M1 sub-pipeline fixture `tests/fixtures/dyn-fanout-subpipeline`.
-- Produces: proof that `action.legs` is runtime-sized with correct `path`/`workflow` for both a flat and a sub-pipeline-each dynamic leg, and that multi-phase leg state-file naming keeps the leading id (de-risks Spec B).
+- Consumes: Task 2's `STUB` constant; `lib.state_path`/`lib.is_multiphase`.
+- Produces: proof that `max_legs` respects the GHA 256 matrix cap, and that multi-phase leg state-file naming keeps the leading id while single-phase drops it (de-risks Spec B's multi-phase OCR protocol).
 
-- [ ] **Step 1: Write the failing tests** (append)
+**Note:** the sub-pipeline-each leg-path (`<fanout>.<legid>.<first-substate>`) is ALREADY covered by the existing `test_dynamic_fanout_subpipeline_each_seeds_first_substate` in this module — do not duplicate it. This task adds the two genuinely-new checks below.
+
+- [ ] **Step 1: Write the failing tests** (append; `STUB` and `_load_lib` already defined earlier in the module from Tasks 1-2)
 
 ```python
-SUBPIPE = "tests/fixtures/dyn-fanout-subpipeline/protocol.json"
-
-def test_dyn_subpipeline_leg_path_includes_first_substate(engine_env):
-    # A sub-pipeline `each` leg path = <fanout>.<legid>.<first-substate>.
-    action = run_engine(SUBPIPE, "pr-9", "start")
-    assert action["action"] == "run-fanout"
-    for leg in action["legs"]:
-        parts = leg["path"].split(".")
-        # depth: fanout id + leg id + first substate (>=3 for a multi-phase sub-pipeline)
-        assert parts[-1], "first substate must be present in a sub-pipeline leg path"
-        assert leg["workflow"], "each-template workflow must be carried per leg"
-
 def test_dyn_matrix_cap_matches_max_legs():
-    # GHA strategy.matrix caps at 256; M1 max_legs must never exceed it.
+    # GHA strategy.matrix hard-caps at 256; M1 max_legs must never exceed it.
     import json
     proto = json.load(open(STUB))
     fo = next(s for s in proto["states"] if s.get("kind") == "fanout")
     assert fo["expand"]["max_legs"] <= 256
+
+def test_state_path_multiphase_keeps_leading_id_singlephase_drops_it():
+    # B de-risk: a leg's on-disk file name depends on is_multiphase. Multi-phase
+    # (>=2 phase states) keeps the full tree path -> review.<legid>.yaml; single-phase
+    # (one top fanout) drops the leading id -> <legid>.yaml. Pure lib.state_path unit.
+    lib = _load_lib()
+    mp = {"name": "mp", "states": [
+        {"id": "preflight", "kind": "agent", "workflow": "a"},
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "e", "as": "f", "id_from": "$.path", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "join"},
+        {"id": "join", "kind": "join", "of": "review", "next": "done"}]}
+    sp = {"name": "sp", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "e", "as": "f", "id_from": "$.path", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "join"},
+        {"id": "join", "kind": "join", "of": "review", "next": "done"}]}
+    assert lib.state_path(mp, ["review", "abcd1234"]) == ["review", "abcd1234"]
+    assert lib.state_path(sp, ["review", "abcd1234"]) == ["abcd1234"]
 ```
-
-For the multi-phase de-risk, add a tiny fixture `tests/fixtures/dyn-multiphase/` (a `preflight` agent phase → dynamic `review` fanout → `join` → `done`, expander = a fixed 2-item stub like `dyn-fanout-flat`'s `expand-items.py`). Then:
-
-```python
-MP = "tests/fixtures/dyn-multiphase/protocol.json"
-
-def test_multiphase_dynamic_leg_keeps_leading_id(engine_env):
-    # Multi-phase: state_path keeps the full path -> leg file is review.<legid>.yaml,
-    # NOT <legid>.yaml. Walk to the fanout, then assert the leg state-file name.
-    run_engine(MP, "pr-11", "start")                    # runs preflight agent
-    advance_engine(MP, "pr-11", node="preflight", verdicts=[{"check": "noop", "pass": True}])
-    # after preflight advances, review fanout materializes; assert leg file naming
-    man = read_state_yaml("dyn-multiphase", "pr-11", "review.__manifest.yaml")
-    legid = man["legs"][0]["id"]
-    assert state_file_exists("dyn-multiphase", "pr-11", f"review.{legid}.yaml")
-```
-
-(Use whatever advance/exists helpers `tests/conftest.py` provides — `grep -n "def " tests/conftest.py`; if none exist for "file exists", assert via `read_state_yaml` returning non-None.)
 
 - [ ] **Step 2: Run to verify — expect PASS or a precise failure**
 
-Run: `uv run pytest tests/test_dynamic_fanout.py -k "subpipeline_leg_path or matrix_cap or multiphase" -v`
-Expected: PASS (the M1 engine already builds these). If `multiphase` fails, the fix is in `lib.state_path`/`_fanout_action` for the multi-phase branch — fix the exact line, re-run.
+Run: `uv run pytest tests/test_dynamic_fanout.py -k "matrix_cap or state_path_multiphase" -v`
+Expected: both PASS (the M1 engine already implements `state_path`/`is_multiphase`). If `state_path_multiphase` fails, the fix is the exact `lib.state_path`/`lib.is_multiphase` line it points to.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/test_dynamic_fanout.py tests/fixtures/dyn-multiphase
-git commit -m "test(dyn-fanout): assert runtime-matrix leg shape + multi-phase state_path (item 1)"
+git add tests/test_dynamic_fanout.py
+git commit -m "test(dyn-fanout): assert matrix cap + multi-phase state_path naming (item 1)"
 ```
 
 ---
@@ -445,8 +446,10 @@ git commit -m "test(dyn-fanout): assert runtime-matrix leg shape + multi-phase s
 - [ ] **Step 1: Write the failing test** (append)
 
 ```python
-def test_dyn_legs_carry_per_leg_inputs(engine_env):
-    action = run_engine(STUB, "pr-13", "start")
+def test_dyn_legs_carry_per_leg_inputs(engine_env, tmp_path):
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-13", STUB, "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
     legs = action["legs"]
     assert len(legs) == 2
     for leg in legs:
@@ -454,9 +457,12 @@ def test_dyn_legs_carry_per_leg_inputs(engine_env):
         assert "file" in leg["inputs"], "keyed by the expand `as` name"
         assert "path" in leg["inputs"]["file"]
 
-def test_static_fanout_legs_have_no_inputs(engine_env):
+def test_static_fanout_legs_have_no_inputs(engine_env, tmp_path):
     # Regression: a static fanout's legs are byte-identical (no inputs key).
-    action = run_engine("tests/fixtures/simple-fanout/protocol.json", "pr-13", "start")
+    SF = str(ROOT / "tests/fixtures/simple-fanout/protocol.json")
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-13", SF, "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
     assert all("inputs" not in leg for leg in action["legs"])
 ```
 
@@ -571,33 +577,29 @@ git commit -m "feat(dyn-fanout): thread each dynamic leg's runtime item to its a
 **Interfaces:**
 - Produces: `run_expander` passes the subprocess a strict allowlist env (`PATH`,`HOME`,`LANG`,`LC_ALL`,`PR`,`ENGINE_LOCAL`,`GITHUB_REPOSITORY`), sets `GH_TOKEN` to `EXPANDER_TOKEN` (read-only) when present, sets `EXPAND_PARAMS` to the node's `expand` JSON, and **omits** `STATE_REMOTE`/`PUBLISH_TOKEN`/the broad PAT.
 
-- [ ] **Step 1: Write the failing test** (append)
+- [ ] **Step 1: Write the failing test** (append; mirrors the existing `test_run_expander_parses_items` in-process idiom — no fixture dir)
 
-Use a probe expander that dumps its env to a file, then assert the sensitive vars are gone. Create `tests/fixtures/dyn-envprobe/expand/expand-items` (executable):
-
-```python
-#!/usr/bin/env python3
-import json, os
-open(os.environ["ENVPROBE_OUT"], "w").write(json.dumps(dict(os.environ)))
-print(json.dumps({"items": [{"path": "x"}]}))
-```
-
-Add a fixture `tests/fixtures/dyn-envprobe/protocol.json` (single dynamic fanout, `hook: expand-items`, `id_from: $.path`, `max_legs: 4`, minimal `each`). Test:
+The probe expander dumps its subprocess env to a file **via its positional `dir_` arg** (`sys.argv[1]`), because the new allowlist will NOT forward an arbitrary env-var output path. `_write_exec` and `_load_lib` are already defined earlier in the module.
 
 ```python
-def test_run_expander_scrubs_sensitive_env(engine_env, tmp_path, monkeypatch):
-    from importlib import import_module
-    lib = import_module("lib")   # tests already put the engine dir on sys.path
-    out = tmp_path / "env.json"
-    monkeypatch.setenv("ENVPROBE_OUT", str(out))
+def test_run_expander_scrubs_sensitive_env(tmp_path, monkeypatch):
+    lib = _load_lib()
+    pdir = tmp_path / "proto"
+    (pdir / "expand").mkdir(parents=True)
+    _write_exec(pdir / "expand" / "expand-items.py", textwrap.dedent("""\
+        #!/usr/bin/env python3
+        import json, os, sys
+        open(os.path.join(sys.argv[1], "envprobe.json"), "w").write(json.dumps(dict(os.environ)))
+        print(json.dumps({"items": [{"path": "x"}]}))
+    """))
+    proto = pdir / "protocol.json"; proto.write_text('{"name":"ocr"}')
     monkeypatch.setenv("STATE_REMOTE", "https://x-access-token:SECRET@github.com/o/r.git")
     monkeypatch.setenv("PUBLISH_TOKEN", "SECRET_PAT")
     monkeypatch.setenv("GH_TOKEN", "SECRET_PAT")
     monkeypatch.setenv("EXPANDER_TOKEN", "read-only-tok")
-    proto = "tests/fixtures/dyn-envprobe/protocol.json"
     node = {"expand": {"hook": "expand-items", "id_from": "$.path", "max_legs": 4, "as": "x"}}
-    lib.run_expander(str(tmp_path), "dyn-envprobe", "pr-1", proto, node)
-    seen = json.loads(out.read_text())
+    lib.run_expander(str(tmp_path), "ocr", "pr-1", str(proto), node)
+    seen = json.loads((tmp_path / "envprobe.json").read_text())
     assert "STATE_REMOTE" not in seen
     assert seen.get("PUBLISH_TOKEN") is None
     assert seen.get("GH_TOKEN") == "read-only-tok"     # replaced by the read token
@@ -667,7 +669,7 @@ Ensure the `plan` job (or the workflow) grants the default token diff-read scope
 - [ ] **Step 6: Commit**
 
 ```bash
-git add .github/agent-factory/engine/lib.py .github/workflows/agentic-engine.yml tests/test_dynamic_fanout.py tests/fixtures/dyn-envprobe
+git add .github/agent-factory/engine/lib.py .github/workflows/agentic-engine.yml tests/test_dynamic_fanout.py
 git commit -m "harden(dyn-fanout): scope expander subprocess to a read-only token via env allowlist (item 3)"
 ```
 
@@ -688,17 +690,16 @@ git commit -m "harden(dyn-fanout): scope expander subprocess to a read-only toke
 
 ```python
 def test_status_body_renders_dynamic_legs(engine_env, tmp_path):
-    from importlib import import_module
-    lib = import_module("lib")
-    run_engine(STUB, "pr-15", "start")     # materializes 2 legs + manifest
-    body = lib.render_fanout_status_body(state_dir(), "dyn-fanout-stub", "pr-15", STUB)
-    # both dynamic leg ids appear as sections (was: zero sections pre-fix)
-    man = read_state_yaml("dyn-fanout-stub", "pr-15", "review.__manifest.yaml")
-    for leg in man["legs"]:
+    lib = _load_lib()
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-15", STUB, "start", env=engine_env)
+    assert rc == 0, err
+    # dir_ for the renderer is the state ROOT (manifest_file keys as <dir>/<pid>/<inst>/...)
+    body = lib.render_fanout_status_body(str(tmp_path), "dyn-fanout-stub", "pr-15", STUB)
+    d = str(tmp_path) + "/dyn-fanout-stub/pr-15"
+    man = read_state_yaml(d + "/review.__manifest.yaml")
+    for leg in man["legs"]:                    # both dynamic leg ids appear (zero pre-fix)
         assert leg["id"] in body
 ```
-
-(`state_dir()` / `state_dir` — use the same helper the module already uses to locate the `ENGINE_LOCAL` state root; grep the existing tests.)
 
 - [ ] **Step 2: Run to verify it fails**
 
