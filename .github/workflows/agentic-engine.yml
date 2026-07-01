@@ -99,8 +99,16 @@ jobs:
             repository_dispatch)
               INSTANCE="$DISPATCH_INSTANCE"
               [ -n "$INSTANCE" ] || { echo "[ctx] repository_dispatch with empty instance" >&2; exit 1; }
-              # PR-keyed instances carry a pr; ref-keyed ones (ref-*/ui-*) do not.
-              case "$INSTANCE" in pr-*) PR="${INSTANCE#pr-}" ;; *) PR="" ;; esac
+              # PR-keyed instances carry a pr; issue-keyed carry the issue number
+              # (for commenting/labeling); ref-keyed ones (ref-*/ui-*) have neither.
+              # Without the issue-* arm, an iterate/continue dispatch for an
+              # issue-keyed run (e.g. impl-feature-auto) would set PR="" and the
+              # agent's issue prefetch would fail ("invalid issue format").
+              case "$INSTANCE" in
+                pr-*)    PR="${INSTANCE#pr-}" ;;
+                issue-*) PR="${INSTANCE#issue-}" ;;
+                *)       PR="" ;;
+              esac
               case "$DISPATCH_TYPE" in
                 protocol-continue) CMD="continue"; NODE_PATH="$DISPATCH_PATH" ;;
                 *) echo "[ctx] unknown repository_dispatch type: $DISPATCH_TYPE" >&2; exit 1 ;;
