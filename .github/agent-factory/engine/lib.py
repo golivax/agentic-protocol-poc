@@ -4,6 +4,7 @@
 import glob
 import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -798,6 +799,34 @@ def match_run_by_cid(runs_json, cid):
         if needle in title:
             return str(run["databaseId"])
     return ""
+
+
+def join_policy_satisfied(policy, done, total):
+    """Is a dynamic join's barrier satisfied given `done` legs out of `total`?
+      all (default) : every leg done (vacuously true when total==0)
+      any           : >=1 leg done (false when total==0)
+      quorum:N      : >=N done, N an int count OR a percentage of total ('80%')
+    Raises ValueError on an unparseable quorum."""
+    policy = (policy or "all").strip()
+    if policy == "all":
+        return done == total
+    if policy == "any":
+        return done >= 1
+    if policy.startswith("quorum:"):
+        spec = policy[len("quorum:"):].strip()
+        if spec.endswith("%"):
+            try:
+                pct = float(spec[:-1])
+            except ValueError:
+                raise ValueError(f"unparseable quorum percentage: {policy!r}")
+            need = math.ceil(total * pct / 100.0)
+        else:
+            try:
+                need = int(spec)
+            except ValueError:
+                raise ValueError(f"unparseable quorum count: {policy!r}")
+        return done >= need
+    raise ValueError(f"unknown join policy: {policy!r}")
 
 
 def decide(results, iterations_remaining):

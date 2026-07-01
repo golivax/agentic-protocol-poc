@@ -3,6 +3,8 @@ import os, stat, textwrap
 import pathlib
 import sys
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / ".github/agent-factory/engine"
 
@@ -101,3 +103,22 @@ def test_run_expander_nonzero_raises(tmp_path):
         assert False, "expected ValueError"
     except ValueError as e:
         assert "expander" in str(e).lower()
+
+
+@pytest.mark.parametrize("policy,done,total,ok", [
+    ("all", 3, 3, True), ("all", 2, 3, False),
+    ("any", 1, 3, True), ("any", 0, 3, False),
+    ("quorum:2", 2, 3, True), ("quorum:2", 1, 3, False),
+    ("quorum:80%", 8, 10, True), ("quorum:80%", 7, 10, False),
+    ("all", 0, 0, True),          # vacuous: no legs, all() holds
+    ("any", 0, 0, False),         # vacuous: any() needs >=1
+])
+def test_join_policy_satisfied(policy, done, total, ok):
+    lib = _load_lib()
+    assert lib.join_policy_satisfied(policy, done, total) is ok
+
+
+def test_join_policy_bad_quorum_raises():
+    lib = _load_lib()
+    with pytest.raises(ValueError):
+        lib.join_policy_satisfied("quorum:x", 1, 3)
