@@ -405,3 +405,53 @@ def test_run_merge_hook_from_fanout_reduces(tmp_path):
     result = lib.run_merge_hook(d, pid, inst, proto, merge_state)
     assert result["conclusion"] == "success"
     assert "reduced 2/2 legs" in result["summary"]
+
+
+def test_collect_fanout_evidence_robust_to_missing_and_corrupt(tmp_path):
+    lib = _load_lib()
+    d, pid, inst = str(tmp_path), "ocr", "pr-1"
+    lib.write_manifest(d, pid, inst, ["review"], {"count": 3, "legs": [
+        {"id": "aa", "key": "a", "item": {}},   # no state file at all
+        {"id": "bb", "key": "b", "item": {}},   # corrupt YAML state file
+        {"id": "cc", "key": "c", "item": {}},   # done state, corrupt JSON evidence
+    ]})
+    base = f"{d}/{pid}/{inst}"
+    os.makedirs(base, exist_ok=True)
+    # aa: no state file, no evidence.
+    # bb: corrupt YAML.
+    with open(f"{base}/bb.yaml", "w") as f:
+        f.write("::: not: valid: yaml: [")
+    # cc: valid state, corrupt evidence JSON.
+    lib.dump_yaml(f"{base}/cc.yaml", {"state": "done"})
+    with open(f"{base}/cc.evidence.json", "w") as f:
+        f.write("{not json")
+    rows = lib.collect_fanout_evidence(d, pid, inst, ["review"], {"expand": {"hook": "h"}})
+    assert rows[0] == {"leg_id": "aa", "key": "a", "state": "", "evidence": None}
+    assert rows[1]["leg_id"] == "bb" and rows[1]["state"] == "" and rows[1]["evidence"] is None
+    assert rows[2] == {"leg_id": "cc", "key": "c", "state": "done", "evidence": None}
+
+
+def test_validate_rejects_bad_from_fanout(tmp_path):
+    lib = _load_lib()
+    proto = {"name": "x", "states": [
+        {"id": "f", "kind": "fanout",
+         "expand": {"hook": "h", "as": "i", "id_from": "$.p", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "j"},
+        {"id": "j", "kind": "join", "of": "f", "next": "m"},
+        {"id": "m", "kind": "merge", "hook": "hk",
+         "inputs": [{"from_fanout": "nope", "as": "legs"}], "next": "done"}]}
+    with pytest.raises(ValueError) as e:
+        lib.validate_protocol(proto)
+    assert "from_fanout" in str(e.value) and "nope" in str(e.value)
+
+
+def test_validate_accepts_good_from_fanout(tmp_path):
+    lib = _load_lib()
+    proto = {"name": "x", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "h", "as": "i", "id_from": "$.p", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "j"},
+        {"id": "j", "kind": "join", "of": "review", "next": "m"},
+        {"id": "m", "kind": "merge", "hook": "hk",
+         "inputs": [{"from_fanout": "review", "as": "legs"}], "next": "done"}]}
+    lib.validate_protocol(proto)  # no raise

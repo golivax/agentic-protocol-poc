@@ -1111,6 +1111,10 @@ def _validate_sequence(states, path_hint):
     Rule 5 — join.policy must parse
         A join's optional `policy` must be accepted by `join_policy_satisfied`
         ('all', 'any', or 'quorum:<N|P%>').
+
+    Rule 6 — merge input from_fanout unknown fanout in scope
+        A merge input's `from_fanout` (when present) must name a fanout
+        sibling in the SAME sequence, mirroring Rule 1.
     """
     # Collect ids and fanout ids visible in this sequence for rule 1.
     sibling_ids = {s.get("id") for s in states if s.get("id")}
@@ -1153,6 +1157,16 @@ def _validate_sequence(states, path_hint):
                     f"gate '{sid}' has questions_from='{qf}' but no sibling state "
                     f"with id='{qf}' exists — add the source state or correct the name"
                 )
+
+        # Rule 6 — merge.from_fanout must name a fanout in scope
+        if kind == "merge":
+            for inp in st.get("inputs", []) or []:
+                ff = inp.get("from_fanout")
+                if ff and ff not in fanout_ids:
+                    raise ValueError(
+                        f"merge '{sid}' input from_fanout='{ff}' names no fanout in scope — "
+                        f"make sure a fanout with id='{ff}' exists as a sibling of '{sid}'"
+                    )
 
         # Recurse into fanout branches / validate dynamic expand+each
         if kind == "fanout":
@@ -1207,6 +1221,7 @@ def validate_protocol(proto):
       - join.of references a fanout not in scope (same sequence)
       - agent node (top-level or flat fanout branch) missing 'workflow'
       - gate.questions_from names a nonexistent sibling sub-state
+      - merge input's from_fanout references a fanout not in scope (same sequence)
 
     Intentionally does NOT validate: check file existence, schema references,
     trigger syntax, or anything that requires disk access — those belong in
