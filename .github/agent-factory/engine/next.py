@@ -117,10 +117,6 @@ def enter_node(proto, path, command, emit=True):
             lib.write_join(DIR, PID, INSTANCE, lib.state_path(proto, path), {"joined": False})
         if node.get("expand"):
             # --- DYNAMIC fanout: materialize legs from the expander manifest. ---
-            items = lib.run_expander(DIR, PID, INSTANCE, PROTO, node)   # fail-loud on hook error
-            manifest = lib.build_manifest(items, node["expand"]["id_from"],
-                                          node["expand"]["max_legs"])    # fail-loud on over-cap/dupe
-            lib.write_manifest(DIR, PID, INSTANCE, path, manifest)
             each = node.get("each", {})
             if each.get("states"):
                 raise ValueError(
@@ -128,6 +124,10 @@ def enter_node(proto, path, command, emit=True):
                     f"which the runtime does not support yet — use a flat `each` "
                     f"(workflow) for now. (Sub-pipeline `each` is a planned follow-up.)"
                 )
+            items = lib.run_expander(DIR, PID, INSTANCE, PROTO, node)   # fail-loud on hook error
+            manifest = lib.build_manifest(items, node["expand"]["id_from"],
+                                          node["expand"]["max_legs"])    # fail-loud on over-cap/dupe
+            lib.write_manifest(DIR, PID, INSTANCE, path, manifest)
             branches = []
             for leg in manifest["legs"]:
                 cfg = dict(each)
@@ -136,11 +136,7 @@ def enter_node(proto, path, command, emit=True):
                 lib.stage_item(DIR, PID, INSTANCE, lib.state_path(proto, path + [leg["id"]]),
                                node["expand"]["as"], leg["item"])
                 branches.append(seeded)
-            if not manifest["legs"]:
-                if emit:
-                    print(json.dumps(_fanout_action(proto, path, [])))
-                    return None
-                return []
+            # zero legs → branches == [] falls through the shared tail unchanged (vacuous fanout)
         else:
             branches = [_seed_child(proto, path + [b["id"]], b) for b in node.get("branches", [])]
         if emit:

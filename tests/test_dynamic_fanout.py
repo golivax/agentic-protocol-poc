@@ -232,3 +232,7 @@ def test_dynamic_fanout_subpipeline_each_fails_loud(engine_env, tmp_path):
     out, err, rc = run_engine("next.py", str(tmp_path / "state"), "pr-1", str(ppath), "start", env=engine_env)
     assert rc != 0, f"expected fail-loud, got rc=0. out={out}"
     assert "sub-pipeline" in (err + out)
+    # The guard must fire before the expander/manifest write — no manifest file
+    # should exist for this aborted run.
+    manifest_path = tmp_path / "state" / "dyn-subpipeline-unsupported" / "pr-1" / "review.__manifest.yaml"
+    assert not manifest_path.exists(), f"manifest was written despite fail-loud guard: {manifest_path}"
