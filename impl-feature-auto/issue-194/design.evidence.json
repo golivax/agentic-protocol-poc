@@ -1,0 +1,79 @@
+{
+  "spec_path": "docs/superpowers/specs/2026-07-01-is-terminal-state-design.md",
+  "plan_path": "docs/superpowers/plans/2026-07-01-is-terminal-state.md",
+  "summary": "Design spec and implementation plan for lib.is_terminal_state(state) -> bool: a pure helper returning True for the three terminal engine states ('done', 'failed', 'blocked') and False for all other inputs including None and non-strings. Single task: TDD approach appending tests to tests/test_engine.py then inserting the function after PHASE_LABEL_DEFAULTS in lib.py.",
+  "run_id": "28523731218",
+  "ledger": [
+    {
+      "id": "L1",
+      "category": "ASSUMPTION",
+      "what": "The complete set of terminal states is exactly {\"done\", \"failed\", \"blocked\"}",
+      "why": "Issue specifies these three; PHASE_LABEL_DEFAULTS in lib.py enumerates the same three non-setup special keys, corroborating the set",
+      "what_i_did": "Verified against PHASE_LABEL_DEFAULTS at lib.py lines 714-718; 'setup' is the init key (not terminal); no other terminal states appear in the codebase",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Pure predicate; a wrong set would cause silent mis-classification only in callers of this helper, none of which exist yet"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "The constant set is a one-line change"
+      },
+      "revisit_if": "A new terminal state is introduced (e.g. 'cancelled')",
+      "verified": true
+    },
+    {
+      "id": "L2",
+      "category": "DECISION",
+      "what": "Placement of is_terminal_state in lib.py immediately after PHASE_LABEL_DEFAULTS / PHASE_LABEL_COLOR",
+      "why": "Groups the terminal-state concept with the only other enumeration of these keys; avoids an arbitrary position",
+      "what_i_did": "Chose post-PHASE_LABEL_COLOR (~line 720), before _humanize_state_id",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Placement is cosmetic and does not affect runtime behaviour"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Trivial to move the function definition to a different line"
+      },
+      "revisit_if": "Reviewer prefers a different location in lib.py"
+    },
+    {
+      "id": "L3",
+      "category": "DECISION",
+      "what": "Tests go in a new section of tests/test_engine.py rather than a new file",
+      "why": "test_engine.py already covers protocol-agnostic lib surface; a new section keeps related unit tests co-located without proliferating small files",
+      "what_i_did": "Appended a '# Section: is_terminal_state' block following the existing section convention",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Test file location does not affect runtime or correctness"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Tests can be moved to a new file at any time"
+      },
+      "revisit_if": "Future test file split policy changes or test_engine.py grows unwieldy"
+    },
+    {
+      "id": "L4",
+      "category": "ASSUMPTION",
+      "what": "isinstance(state, str) is the correct non-string guard, handling None, ints, lists without raising",
+      "why": "Python's isinstance returns False for None and all non-string types without raising; this is the standard defensive pattern",
+      "what_i_did": "Verified: isinstance(None, str) is False; isinstance(42, str) is False — standard stdlib behaviour",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Pure defensive check; wrong guard would cause TypeError for non-strings, which is easily caught by the tests"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Guard implementation is a trivial one-liner change"
+      },
+      "revisit_if": "A subclass of str should be excluded (extremely unlikely in this codebase)",
+      "verified": true
+    }
+  ],
+  "read_these_first": ["L1", "L4", "L2", "L3"]
+}
