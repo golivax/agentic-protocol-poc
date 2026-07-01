@@ -113,6 +113,24 @@ def test_cli_match_trigger(tmp_path):
     assert _cli("match-trigger", p, "pull_request", "synchronize", "") == "reset"
 
 
+def test_cli_match_trigger_is_pr_comment_positional(tmp_path):
+    # A protocol whose comment trigger targets a PLAIN ISSUE (target="issue").
+    issue_proto = {
+        "name": "issue-demo",
+        "triggers": [
+            {"on": "issue_comment", "comment_prefix": "/go", "command": "start",
+             "target": "issue"},
+        ],
+        "states": [{"id": "work", "kind": "agent", "workflow": "x", "next": None}],
+    }
+    p = _write(tmp_path, issue_proto)
+    # 5th arg "false" → comment is on a plain issue → matches the issue-target trigger.
+    assert _cli("match-trigger", p, "issue_comment", "", "/go", "false") == "start"
+    # 5th arg "true" (and the 4-arg default) → treated as a PR comment → no match.
+    assert _cli("match-trigger", p, "issue_comment", "", "/go", "true") == ""
+    assert _cli("match-trigger", p, "issue_comment", "", "/go") == ""
+
+
 def test_cli_agent_workflow(tmp_path):
     p = _write(tmp_path, PIPELINE)
     assert _cli("agent-workflow", p, "review", "grumpy") == "grumpy-agent"

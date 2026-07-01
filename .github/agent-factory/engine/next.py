@@ -137,7 +137,7 @@ def enter_node(proto, path, command, emit=True):
             print(json.dumps(act))
         return {"id": path[-1], "workflow": node.get("workflow"), "iteration": 1, "feedback": ""}
     if kind == "gate":
-        pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+        pr = lib.pr_from_instance(INSTANCE)
         lib.open_gate(DIR, PID, INSTANCE, PROTO, path[-1], HEAD_SHA, pr,
                       phase=(path[-1] if lib.is_multiphase(proto) else None))
         if emit:
@@ -231,7 +231,7 @@ def enter_root(command, head_sha):
     the node's action. The single entry point for EVERY protocol shape
     (single-agent, single-phase fanout, multi-phase)."""
     first = paths.root_ids(proto_data)[0]
-    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    pr = lib.pr_from_instance(INSTANCE)
     inf = lib.instance_file(DIR, PID, INSTANCE)
     inst_dir = os.path.dirname(inf)
     os.makedirs(inst_dir, exist_ok=True)
@@ -254,7 +254,7 @@ def do_override():
     marker, and seeds+dispatches the next phase. Otherwise posts an explanatory
     comment and halts — no state change. emit_halt is defined below this point in
     the script, so the halt JSON is printed inline here."""
-    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    pr = lib.pr_from_instance(INSTANCE)
     inf = lib.instance_file(DIR, PID, INSTANCE)
 
     def refuse(message, reason):
@@ -321,7 +321,7 @@ def do_resolve_gate():
     halts (request-changes / reject). Guards refuse with one PR comment + a halt
     action — no state change. A gate is 'live' when gates.state in {open,
     changes_requested}."""
-    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    pr = lib.pr_from_instance(INSTANCE)
     inf = lib.instance_file(DIR, PID, INSTANCE)
     decision = os.environ.get("GATE_DECISION", "")
     actor = os.environ.get("GATE_ACTOR", "")
@@ -523,7 +523,7 @@ def do_answer():
     The comment prefix is the one the triggering protocol declared for the
     `answer` command (falls back to /answer) — never a protocol-coupled literal."""
     import subprocess as _sp
-    pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+    pr = lib.pr_from_instance(INSTANCE)
     body = os.environ.get("ANSWER_BODY", "")
     actor = os.environ.get("ANSWER_ACTOR", "")
     prefix = lib.command_prefix(proto_data, "answer", "/answer")
@@ -742,7 +742,7 @@ if COMMAND == "continue" and NODE_PATH:
         inst["phase"] = _p[-1]
         inst["joined"] = True
         lib.dump_yaml(inf, inst)
-        pr = INSTANCE[len("pr-"):] if INSTANCE.startswith("pr-") else INSTANCE
+        pr = lib.pr_from_instance(INSTANCE)
         lib.set_check_run(PID, HEAD_SHA, "completed", res.get("conclusion", "neutral"),
                           "Combined", res.get("summary", ""))
         lib.post_pr_comment(pr, f"🧬 **{_p[-1]}**: {res.get('summary', '')}")

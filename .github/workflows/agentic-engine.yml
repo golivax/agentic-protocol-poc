@@ -37,7 +37,7 @@ jobs:
       github.event_name == 'repository_dispatch' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
+      github.event_name == 'issue_comment'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -109,9 +109,18 @@ jobs:
               INSTANCE="pr-$PR"
               CMD=$(python3 .github/agent-factory/engine/lib.py match-trigger "$PROTO" pull_request "$PR_EVENT_ACTION" "") ;;
             issue_comment)
-              PR="${{ github.event.issue.number }}"
-              INSTANCE="pr-$PR"
-              CMD=$(python3 .github/agent-factory/engine/lib.py match-trigger "$PROTO" issue_comment "" "$COMMENT_BODY")
+              N="${{ github.event.issue.number }}"
+              IS_PR="${{ github.event.issue.pull_request != null }}"
+              if [ "$IS_PR" = "true" ]; then
+                PR="$N"; INSTANCE="pr-$N"
+              else
+                # Plain-issue protocol (impl-feature-auto): key issue-<N>, comment on
+                # issue #N (PR=$N is numeric), analyze the DEFAULT branch (no PR head;
+                # the feature branch is created later by the implement agent).
+                PR="$N"; INSTANCE="issue-$N"
+                CHECKOUT_REF="${{ github.event.repository.default_branch }}"
+              fi
+              CMD=$(python3 .github/agent-factory/engine/lib.py match-trigger "$PROTO" issue_comment "" "$COMMENT_BODY" "$IS_PR")
               if [ "$CMD" = "override" ]; then
                 # Authorize from TRUSTED fields only (login from the event, repo
                 # permission from the API) — never from the comment body. The body
@@ -173,31 +182,41 @@ jobs:
               fi
               ;;
           esac
-          # PR-targeted runs check out the PR head; if ctx didn't already set a
-          # checkout ref (the ref-target case did), default to the PR merge ref.
-          [ -n "$CHECKOUT_REF" ] || { [ -n "$PR" ] && CHECKOUT_REF="refs/pull/$PR/head"; }
+          # A "PR-head run" is any instance keyed pr-<N> (PR/issue-on-PR comment, or a
+          # pr-keyed repository_dispatch continue) — the head step then resolves the SHA
+          # from the PR head. A plain-issue run (issue-<N>) has a numeric PR for
+          # commenting but NO PR head: its SHA comes from CHECKOUT_REF (default branch).
+          case "$INSTANCE" in pr-*) IS_PR_RUN=true ;; *) IS_PR_RUN="" ;; esac
+          # PR-head runs check out the PR head; if ctx didn't already set a checkout
+          # ref (the ref-target / plain-issue cases did), default to the PR merge ref.
+          [ -n "$CHECKOUT_REF" ] || { [ "$IS_PR_RUN" = "true" ] && CHECKOUT_REF="refs/pull/$PR/head"; }
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
           echo "instance=$INSTANCE" >> "$GITHUB_OUTPUT"
           echo "command=$CMD" >> "$GITHUB_OUTPUT"
           echo "node_path=$NODE_PATH" >> "$GITHUB_OUTPUT"
           echo "checkout_ref=$CHECKOUT_REF" >> "$GITHUB_OUTPUT"
+          echo "is_pr_run=$IS_PR_RUN" >> "$GITHUB_OUTPUT"
       - id: head
         if: steps.ctx.outputs.command != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ steps.ctx.outputs.pr }}
+          IS_PR_RUN: ${{ steps.ctx.outputs.is_pr_run }}
           CHECKOUT_REF: ${{ steps.ctx.outputs.checkout_ref }}
           INSTANCE: ${{ steps.ctx.outputs.instance }}
           PROTO: ${{ inputs.protocol }}
           REPO: ${{ github.repository }}
         run: |
           # The analyzed commit SHA, resolved per target kind:
-          #  - PR run: the PR head commit.
-          #  - ref-target START (workflow_dispatch): the requested ref/branch tip.
+          #  - PR-head run (pr-<N>): the PR head commit.
+          #  - ref-target START (workflow_dispatch) OR plain-issue run (issue-<N>):
+          #    the requested ref / default-branch tip (CHECKOUT_REF). A plain-issue
+          #    run has a numeric PR (for commenting) but NO PR head, so it must NOT
+          #    take the `gh pr view` path.
           #  - ref-target CONTINUE/JOIN (repository_dispatch carries no ref, and a
           #    ui-keyed instance has no ref to recover): read the SHA already pinned
           #    in the instance state at start — the source of truth across all hops.
-          if [ -n "$PR" ]; then
+          if [ -n "$PR" ] && [ "$IS_PR_RUN" = "true" ]; then
             SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq .headRefOid)
           elif [ -n "$CHECKOUT_REF" ]; then
             SHA=$(gh api "repos/$REPO/commits/$CHECKOUT_REF" --jq .sha)

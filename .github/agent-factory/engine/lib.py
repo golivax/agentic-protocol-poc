@@ -294,15 +294,17 @@ def is_multiphase(protocol):
     return len(phase_states(protocol)) > 1
 
 
-def match_trigger(protocol, event_name, action="", comment_body=""):
+def match_trigger(protocol, event_name, action="", comment_body="", is_pr_comment=True):
     """Map an ENTRY GitHub event to an engine command via protocol["triggers"].
-    Returns the command ("start"/"reset"/...) or "" if nothing matches (the
-    workflow then no-ops). Internal re-entry dispatches (protocol-continue /
-    protocol-join) are generic and NOT handled here."""
+    For issue_comment, a trigger's `target` (default "pr") must match whether the
+    comment is on a PR (is_pr_comment True) or a plain issue (False)."""
     for t in protocol.get("triggers", []):
         if t.get("on") != event_name:
             continue
         if event_name == "issue_comment":
+            want = "pr" if is_pr_comment else "issue"
+            if t.get("target", "pr") != want:
+                continue
             prefix = t.get("comment_prefix", "")
             if not prefix or comment_body.startswith(prefix):
                 return t.get("command", "")
@@ -372,21 +374,21 @@ def route(protocols_dir, event_name, action="", comment_body="",
         protocol NAME (advance.py sends pid; protocol-join.yml rebuilds the path
         the same way), so reconstruct <protocols_dir>/<name>/protocol.json — the
         engine needs a path to open. No scan; command re-derived from the type.
-      - issue_comment on a non-PR issue: skip (the engine ignores these anyway).
-      - entry event (pull_request / PR issue_comment): glob protocols in sorted
-        order, run match_trigger on each; 0 matches -> skip, exactly 1 -> route,
-        >=2 -> raise ValueError (ambiguous; the router job then fails loudly).
+      - entry event (pull_request / issue_comment): glob protocols in sorted
+        order, run match_trigger on each (forwarding is_pr_comment so a comment's
+        trigger `target` pr/issue must match a PR vs a plain issue); 0 matches ->
+        skip, exactly 1 -> route, >=2 -> raise ValueError (ambiguous; the router
+        job then fails loudly).
     """
     if dispatch_protocol:
         return {"protocol": os.path.join(protocols_dir, dispatch_protocol, "protocol.json"),
                 "command": "", "skip": False}
-    if event_name == "issue_comment" and not is_pr_comment:
-        return {"protocol": "", "command": "", "skip": True}
     matches = []
     for path in sorted(glob.glob(os.path.join(protocols_dir, "*", "protocol.json"))):
         with open(path) as f:
             proto = json.load(f)
-        cmd = match_trigger(proto, event_name, action, comment_body)
+        cmd = match_trigger(proto, event_name, action, comment_body,
+                            is_pr_comment=is_pr_comment)
         if cmd:
             matches.append((path, cmd))
     if not matches:
@@ -408,6 +410,17 @@ def route(protocols_dir, event_name, action="", comment_body="",
             f"(no comment_prefix may be a prefix of another protocol's)")
     path, cmd = matches[0]
     return {"protocol": path, "command": cmd, "skip": False}
+
+
+def pr_from_instance(instance):
+    """Derive the PR/issue NUMBER from an instance key.
+    pr-<N> and issue-<N> -> <N> (the GitHub thread number, numeric so the engine
+    can comment/label on it). ref-*/ui-* and any other shape pass through verbatim
+    (no numeric thread)."""
+    for prefix in ("pr-", "issue-"):
+        if instance.startswith(prefix):
+            return instance[len(prefix):]
+    return instance
 
 
 def instance_file(d, pid, instance):
@@ -1300,13 +1313,16 @@ def _cli(argv):
         # ensure-status-comment <state_dir> <pid> <instance> <protocol.json> <pr>
         ensure_status_comment(args[0], args[1], args[2], args[3], args[4])
     elif cmd == "match-trigger":
-        # match-trigger <protocol.json> <event_name> <action> <comment_body>
+        # match-trigger <protocol.json> <event_name> <action> <comment_body> [is_pr_comment]
+        # The 5th positional defaults to "true" (back-compat for 4-arg callers);
+        # only "false" flips it (a comment on a plain issue, not a PR).
         with open(args[0]) as f:
             proto = json.load(f)
         ev = args[1] if len(args) > 1 else ""
         act = args[2] if len(args) > 2 else ""
         body = args[3] if len(args) > 3 else ""
-        print(match_trigger(proto, ev, act, body))
+        ispr = args[4] if len(args) > 4 else "true"
+        print(match_trigger(proto, ev, act, body, is_pr_comment=(ispr.lower() != "false")))
     elif cmd == "agent-workflow":
         # agent-workflow <protocol.json> <phase> <branch> [substate]
         with open(args[0]) as f:
