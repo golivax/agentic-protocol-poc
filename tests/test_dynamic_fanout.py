@@ -906,3 +906,29 @@ def test_expand_files_skips_binary_vendored_oversized(tmp_path):
 def test_expand_files_engine_local_reads_fixture():
     items = _run_expander({"ENGINE_LOCAL": "1"})
     assert len(items) >= 2 and all("path" in i for i in items)
+
+
+STUB = str(ROOT / ".github/agent-factory/protocols/dyn-fanout-stub/protocol.json")
+
+
+def test_dyn_stub_start_materializes_legs(engine_env, tmp_path):
+    """Offline engine walk for the dyn-fanout-stub protocol (Task 2): `start`
+    on the real (non-fixture) protocol drives the real expand-files expander
+    (ENGINE_LOCAL reads its beside-script items.json, 2 entries) and
+    materializes one leg per item, joined under policy:all."""
+    from conftest import run_engine, read_state_yaml
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-7", STUB, "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
+    assert action["action"] == "run-fanout"
+    legs = action["legs"]
+    assert len(legs) == 2                                 # one leg per fixture item
+    assert all(l["workflow"] == "dyn-stub-agent" for l in legs)
+    # Leg paths are fanout_path + leg_id ("review.<legid>") — the top-level
+    # fanout id is always the leaf's first segment, per _fanout_action; take
+    # the last dot-segment as the leg id, mirroring
+    # test_dynamic_fanout_start_seeds_manifest_and_legs above.
+    assert all(l["path"].split(".")[0] == "review" for l in legs)
+    d = str(tmp_path) + "/dyn-fanout-stub/pr-7"
+    man = read_state_yaml(d + "/review.__manifest.yaml")
+    assert man["count"] == 2

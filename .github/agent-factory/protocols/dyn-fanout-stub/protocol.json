@@ -1,0 +1,16 @@
+{
+  "$schema": "../../engine/protocol.schema.json",
+  "name": "dyn-fanout-stub",
+  "triggers": [
+    { "on": "issue_comment", "comment_prefix": "/dyn-stub", "command": "start" }
+  ],
+  "states": [
+    { "id": "review", "kind": "fanout",
+      "expand": { "hook": "expand-files", "as": "file", "id_from": "$.path", "max_legs": 32 },
+      "each": { "workflow": "dyn-stub-agent", "evidence": "leg.evidence.schema.json",
+                "max_iterations": 1,
+                "checks": [ { "run": "examined-file", "on_fail": "iterate" } ] },
+      "next": "join" },
+    { "id": "join", "kind": "join", "of": "review", "policy": "all", "next": "done" }
+  ]
+}
