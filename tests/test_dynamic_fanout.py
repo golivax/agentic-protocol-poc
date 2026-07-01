@@ -973,3 +973,35 @@ def test_examined_file_check_accepts_valid_evidence(tmp_path):
     result = run_check(CHECK, ev, diff, ch)
     assert result["check"] == "examined-file"
     assert result["pass"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — matrix cap + multi-phase state_path naming
+# ---------------------------------------------------------------------------
+
+
+def test_dyn_matrix_cap_matches_max_legs():
+    # GHA strategy.matrix hard-caps at 256; M1 max_legs must never exceed it.
+    proto = json.load(open(STUB))
+    fo = next(s for s in proto["states"] if s.get("kind") == "fanout")
+    assert fo["expand"]["max_legs"] <= 256
+
+
+def test_state_path_multiphase_keeps_leading_id_singlephase_drops_it():
+    # B de-risk: a leg's on-disk file name depends on is_multiphase. Multi-phase
+    # (>=2 phase states) keeps the full tree path -> review.<legid>.yaml; single-phase
+    # (one top fanout) drops the leading id -> <legid>.yaml. Pure lib.state_path unit.
+    lib = _load_lib()
+    mp = {"name": "mp", "states": [
+        {"id": "preflight", "kind": "agent", "workflow": "a"},
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "e", "as": "f", "id_from": "$.path", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "join"},
+        {"id": "join", "kind": "join", "of": "review", "next": "done"}]}
+    sp = {"name": "sp", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "e", "as": "f", "id_from": "$.path", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "join"},
+        {"id": "join", "kind": "join", "of": "review", "next": "done"}]}
+    assert lib.state_path(mp, ["review", "abcd1234"]) == ["review", "abcd1234"]
+    assert lib.state_path(sp, ["review", "abcd1234"]) == ["abcd1234"]
