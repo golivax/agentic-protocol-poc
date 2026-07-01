@@ -1,7 +1,19 @@
 protocol: impl-feature-auto
 instance: issue-177
 state: design
-iteration: 1
+iteration: 2
 gates: {}
 head_sha: 1bb270c823f39898b49285f7aa85412b8594dd8b
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28489590622'
+  checks:
+    ledger-wellformed: fail
+    ledger-consistent: fail
+    read-these-first-consistent: fail
+    spec-present: fail
+    plan-present: fail
+  feedback: 'check is not executable: /home/runner/work/agentic-protocol-poc/agentic-protocol-poc/.github/agent-factory/protocols/impl-feature-auto/checks/ledger-wellformed.py
+    (chmod +x and add a shebang); check is not executable: /home/runner/work/agentic-protocol-poc/agentic-protocol-poc/.github/agent-factory/protocols/impl-feature-auto/checks/ledger-consistent.py
+    (chmod +x and add a shebang); check is not executable: /home/runner/work/agentic-protocol-poc/agentic-protocol-poc/.github/agent-factory/protocols/impl-feature-auto/checks/read-these-first-consistent.py
+    (chmod +x and add a shebang)'
