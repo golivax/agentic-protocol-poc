@@ -18,6 +18,33 @@ def test_pr_of_helper():
     assert state_reader._pr_of("ui-abc") is None
 
 
+def test_node_status_gate_aware():
+    # A gate's top-level `state` stays the gate id; its progress is in gates.state.
+    ns = state_reader._node_status
+    assert ns({"state": "answering", "gates": {"state": "open"}}) == "running"
+    assert ns({"state": "answering", "gates": {"state": "answered"}}) == "done"
+    assert ns({"state": "approval", "gates": {"state": "approved"}}) == "done"
+    assert ns({"state": "approval", "gates": {"state": "rejected"}}) == "failed"
+    # agent nodes (no gates.state) unchanged
+    assert ns({"state": "done"}) == "done"
+    assert ns({"state": "phase2"}) == "running"
+
+
+def test_status_projection_answered_gate_is_done():
+    """Regression: an answered issue-gate (channel:issue) in a sub-pipeline must
+    read done, not forever-running (visibility API showed socratic running)."""
+    files = {
+        "_instance.yaml": "protocol: p\ninstance: ref-x\nphase: combine\n",
+        "socratic.phase1.yaml": "state: done\n",
+        "socratic.answering.yaml": "state: answering\ngates:\n  state: answered\n  channel: issue\n",
+        "socratic.phase2.yaml": "state: done\n",
+    }
+    st = state_reader.status_projection(files)
+    soc = next(p for p in st["phases"] if p["id"] == "socratic")
+    assert soc["status"] == "done"
+    assert {b["id"]: b["status"] for b in soc["branches"]}["answering"] == "done"
+
+
 def test_classify_label_variants():
     assert state_reader.classify_label("✅ done") == "completed"
     assert state_reader.classify_label("❌ failed") == "failed"

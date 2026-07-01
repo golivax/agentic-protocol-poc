@@ -87,6 +87,17 @@ def _is_node_file(name: str) -> bool:
     return True
 
 def _node_status(node: dict) -> str:
+    # A gate node's top-level `state` stays the gate id (e.g. "answering") for its
+    # whole life — its progress lives in `gates.state` (open → answered/approved).
+    # Read that so an answered/approved gate reports done instead of forever-running.
+    gates = node.get("gates")
+    if isinstance(gates, dict) and gates.get("state"):
+        gs = gates["state"]
+        if gs in ("answered", "approved"):
+            return "done"
+        if gs in ("rejected", "failed"):
+            return "failed"
+        return "running"          # open (or any mid-flight gate state)
     st = node.get("state")
     if st == "done":
         return "done"
