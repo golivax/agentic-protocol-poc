@@ -79,7 +79,10 @@ def _fanout_action(proto, path, branches):
     legs = []
     for b in branches:
         leaf = path + [b["id"]] + ([b["substate"]] if b.get("substate") else [])
-        legs.append({"path": ".".join(leaf), "workflow": b.get("workflow")})
+        leg = {"path": ".".join(leaf), "workflow": b.get("workflow")}
+        if b.get("inputs"):            # dynamic legs only; static branches never carry this
+            leg["inputs"] = b["inputs"]
+        legs.append(leg)
     act["legs"] = legs
     return act
 
@@ -129,6 +132,7 @@ def enter_node(proto, path, command, emit=True):
                 seeded = _seed_child(proto, path + [leg["id"]], cfg)
                 lib.stage_item(DIR, PID, INSTANCE, lib.state_path(proto, path + [leg["id"]]),
                                node["expand"]["as"], leg["item"])
+                seeded["inputs"] = {node["expand"]["as"]: leg["item"]}
                 branches.append(seeded)
             # zero legs → branches == [] falls through the shared tail unchanged (vacuous fanout)
         else:

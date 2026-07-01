@@ -108,6 +108,30 @@ def test_run_expander_nonzero_raises(tmp_path):
         assert "expander" in str(e).lower()
 
 
+def test_run_expander_scrubs_sensitive_env(tmp_path, monkeypatch):
+    lib = _load_lib()
+    pdir = tmp_path / "proto"
+    (pdir / "expand").mkdir(parents=True)
+    _write_exec(pdir / "expand" / "expand-items.py", textwrap.dedent("""\
+        #!/usr/bin/env python3
+        import json, os, sys
+        open(os.path.join(sys.argv[1], "envprobe.json"), "w").write(json.dumps(dict(os.environ)))
+        print(json.dumps({"items": [{"path": "x"}]}))
+    """))
+    proto = pdir / "protocol.json"; proto.write_text('{"name":"ocr"}')
+    monkeypatch.setenv("STATE_REMOTE", "https://x-access-token:SECRET@github.com/o/r.git")
+    monkeypatch.setenv("PUBLISH_TOKEN", "SECRET_PAT")
+    monkeypatch.setenv("GH_TOKEN", "SECRET_PAT")
+    monkeypatch.setenv("EXPANDER_TOKEN", "read-only-tok")
+    node = {"expand": {"hook": "expand-items", "id_from": "$.path", "max_legs": 4, "as": "x"}}
+    lib.run_expander(str(tmp_path), "ocr", "pr-1", str(proto), node)
+    seen = json.loads((tmp_path / "envprobe.json").read_text())
+    assert "STATE_REMOTE" not in seen
+    assert seen.get("PUBLISH_TOKEN") is None
+    assert seen.get("GH_TOKEN") == "read-only-tok"     # replaced by the read token
+    assert json.loads(seen["EXPAND_PARAMS"])["max_legs"] == 4
+
+
 @pytest.mark.parametrize("policy,done,total,ok", [
     ("all", 3, 3, True), ("all", 2, 3, False),
     ("any", 1, 3, True), ("any", 0, 3, False),
@@ -836,3 +860,221 @@ def test_run_merge_hook_zero_item_manifest_is_ok(tmp_path):
     result = lib.run_merge_hook(d, pid, inst, proto, merge_state)
     assert result["conclusion"] == "success"  # reduce hook runs over 0 legs, returns its verdict
     assert "reduced 0/0 legs" in result["summary"]
+
+
+EXPANDER = ".github/agent-factory/protocols/dyn-fanout-stub/expand/expand-files"
+
+
+def _run_expander(env_extra):
+    env = {**os.environ, **env_extra}
+    r = subprocess.run([EXPANDER, "/tmp/state", "pr-1"], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)["items"]
+
+
+def test_expand_files_parses_one_item_per_file(tmp_path):
+    diff = tmp_path / "diff.txt"
+    diff.write_text(textwrap.dedent("""\
+        diff --git a/src/a.py b/src/a.py
+        index 111..222 100644
+        --- a/src/a.py
+        +++ b/src/a.py
+        @@ -1 +1,2 @@
+         x = 1
+        +y = 2
+        diff --git a/src/b.py b/src/b.py
+        index 333..444 100644
+        --- a/src/b.py
+        +++ b/src/b.py
+        @@ -1 +1 @@
+        -old
+        +new
+        """))
+    items = _run_expander({"EXPAND_FILES_DIFF_FILE": str(diff)})
+    assert [i["path"] for i in items] == ["src/a.py", "src/b.py"]
+    assert "y = 2" in items[0]["diff"]
+
+def test_expand_files_skips_binary_vendored_oversized(tmp_path):
+    diff = tmp_path / "diff.txt"
+    body = "\n".join(f"        +line{i}" for i in range(2000))
+    diff.write_text(textwrap.dedent(f"""\
+        diff --git a/img.png b/img.png
+        Binary files a/img.png and b/img.png differ
+        diff --git a/vendor/dep.py b/vendor/dep.py
+        index 1..2 100644
+        --- a/vendor/dep.py
+        +++ b/vendor/dep.py
+        @@ -1 +1 @@
+        -a
+        +b
+        diff --git a/big.py b/big.py
+        index 5..6 100644
+        --- a/big.py
+        +++ b/big.py
+        @@ -0,0 +1,2000 @@
+        {body}
+        diff --git a/keep.py b/keep.py
+        index 7..8 100644
+        --- a/keep.py
+        +++ b/keep.py
+        @@ -1 +1 @@
+        -a
+        +b
+        """))
+    items = _run_expander({
+        "EXPAND_FILES_DIFF_FILE": str(diff),
+        "EXPAND_PARAMS": json.dumps({"max_diff_lines": 1500}),
+    })
+    assert [i["path"] for i in items] == ["keep.py"]
+
+def test_expand_files_engine_local_reads_fixture():
+    items = _run_expander({"ENGINE_LOCAL": "1"})
+    assert len(items) >= 2 and all("path" in i for i in items)
+
+
+STUB = str(ROOT / ".github/agent-factory/protocols/dyn-fanout-stub/protocol.json")
+
+
+def test_dyn_stub_start_materializes_legs(engine_env, tmp_path):
+    """Offline engine walk for the dyn-fanout-stub protocol (Task 2): `start`
+    on the real (non-fixture) protocol drives the real expand-files expander
+    (ENGINE_LOCAL reads its beside-script items.json, 2 entries) and
+    materializes one leg per item, joined under policy:all."""
+    from conftest import run_engine, read_state_yaml
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-7", STUB, "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
+    assert action["action"] == "run-fanout"
+    legs = action["legs"]
+    assert len(legs) == 2                                 # one leg per fixture item
+    assert all(l["workflow"] == "dyn-stub-agent" for l in legs)
+    # Leg paths are fanout_path + leg_id ("review.<legid>") — the top-level
+    # fanout id is always the leaf's first segment, per _fanout_action; take
+    # the last dot-segment as the leg id, mirroring
+    # test_dynamic_fanout_start_seeds_manifest_and_legs above.
+    assert all(l["path"].split(".")[0] == "review" for l in legs)
+    d = str(tmp_path) + "/dyn-fanout-stub/pr-7"
+    man = read_state_yaml(d + "/review.__manifest.yaml")
+    assert man["count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Task 2 fix — exit-0 ABI guard
+# ---------------------------------------------------------------------------
+
+
+from conftest import run_check
+
+CHECK = str(ROOT / ".github/agent-factory/protocols/dyn-fanout-stub/checks/examined-file.py")
+
+
+@pytest.mark.parametrize("bad", ["[]", "null", "\"x\"", "5", "{}", "{\"examined\": []}", "not json"])
+def test_examined_file_check_always_exits_zero(bad, tmp_path):
+    """The examined-file check must ALWAYS exit 0 (per Check ABI) even with
+    garbage evidence. Non-dict top-level JSON, missing 'examined', or empty
+    examined list must all yield pass:false without crashing."""
+    ev = tmp_path / "evidence.json"
+    ev.write_text(bad)
+    diff = tmp_path / "d.txt"
+    diff.write_text("")
+    ch = tmp_path / "c.txt"
+    ch.write_text("")
+    # run_check raises if the check crashed (non-JSON stdout); this test passes
+    # only if the check printed valid JSON and exited 0.
+    result = run_check(CHECK, ev, diff, ch)
+    assert result["check"] == "examined-file"
+    assert result["pass"] is False
+
+
+def test_examined_file_check_accepts_valid_evidence(tmp_path):
+    """Well-formed evidence with a non-empty examined list yields pass:true."""
+    ev = tmp_path / "evidence.json"
+    ev.write_text(json.dumps({"examined": ["src/a.py"]}))
+    diff = tmp_path / "d.txt"
+    diff.write_text("")
+    ch = tmp_path / "c.txt"
+    ch.write_text("")
+    result = run_check(CHECK, ev, diff, ch)
+    assert result["check"] == "examined-file"
+    assert result["pass"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — matrix cap + multi-phase state_path naming
+# ---------------------------------------------------------------------------
+
+
+def test_dyn_matrix_cap_matches_max_legs():
+    # GHA strategy.matrix hard-caps at 256; M1 max_legs must never exceed it.
+    proto = json.load(open(STUB))
+    fo = next(s for s in proto["states"] if s.get("kind") == "fanout")
+    assert fo["expand"]["max_legs"] <= 256
+
+
+def test_state_path_multiphase_keeps_leading_id_singlephase_drops_it():
+    # B de-risk: a leg's on-disk file name depends on is_multiphase. Multi-phase
+    # (>=2 phase states) keeps the full tree path -> review.<legid>.yaml; single-phase
+    # (one top fanout) drops the leading id -> <legid>.yaml. Pure lib.state_path unit.
+    lib = _load_lib()
+    mp = {"name": "mp", "states": [
+        {"id": "preflight", "kind": "agent", "workflow": "a"},
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "e", "as": "f", "id_from": "$.path", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "join"},
+        {"id": "join", "kind": "join", "of": "review", "next": "done"}]}
+    sp = {"name": "sp", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "e", "as": "f", "id_from": "$.path", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "join"},
+        {"id": "join", "kind": "join", "of": "review", "next": "done"}]}
+    assert lib.state_path(mp, ["review", "abcd1234"]) == ["review", "abcd1234"]
+    assert lib.state_path(sp, ["review", "abcd1234"]) == ["abcd1234"]
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — per-leg runtime item threaded to the agent via matrix.leg.inputs
+# ---------------------------------------------------------------------------
+
+
+def test_dyn_legs_carry_per_leg_inputs(engine_env, tmp_path):
+    from conftest import run_engine
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-13", STUB, "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
+    legs = action["legs"]
+    assert len(legs) == 2
+    for leg in legs:
+        assert "inputs" in leg, "dynamic leg must carry its runtime item"
+        assert "file" in leg["inputs"], "keyed by the expand `as` name"
+        assert "path" in leg["inputs"]["file"]
+    # per-leg correctness: the two legs must carry DIFFERENT items (not leg0's item cloned)
+    paths = [leg["inputs"]["file"]["path"] for leg in legs]
+    assert len(set(paths)) == len(paths), f"legs must carry distinct items, got {paths}"
+
+
+def test_static_fanout_legs_have_no_inputs(engine_env, tmp_path):
+    from conftest import run_engine
+    # Regression: a static fanout's legs are byte-identical (no inputs key).
+    SF = str(ROOT / "tests/fixtures/simple-fanout/protocol.json")
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-13", SF, "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
+    assert all("inputs" not in leg for leg in action["legs"])
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — dynamic-leg-aware rendering (status comment)
+# ---------------------------------------------------------------------------
+
+
+def test_status_body_renders_dynamic_legs(engine_env, tmp_path):
+    from conftest import run_engine, read_state_yaml
+    lib = _load_lib()
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-15", STUB, "start", env=engine_env)
+    assert rc == 0, err
+    # dir_ for the renderer is the state ROOT (manifest_file keys as <dir>/<pid>/<inst>/...)
+    body = lib.render_fanout_status_body(str(tmp_path), "dyn-fanout-stub", "pr-15", STUB)
+    d = str(tmp_path) + "/dyn-fanout-stub/pr-15"
+    man = read_state_yaml(d + "/review.__manifest.yaml")
+    for leg in man["legs"]:                    # both dynamic leg ids appear (zero pre-fix)
+        assert leg["id"] in body

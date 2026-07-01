@@ -211,16 +211,28 @@ def run_expander(dir_, pid, instance, proto_path, fanout_node):
     unresolved / non-executable / nonzero / non-JSON / missing-`items` output.
 
     Runs in zone 1 (plan); the hook re-fetches the diff itself and is handed only
-    a read token via the ambient env (never the state PAT beyond plan's, never the
-    publish token). Under ENGINE_LOCAL the stub reads a fixture file instead."""
+    a read token via a strict env allowlist (ENFORCED, not aspirational — the
+    plan job's full env, including STATE_REMOTE / PUBLISH_TOKEN / the broad
+    dispatch PAT, is never forwarded). Under ENGINE_LOCAL the stub reads a
+    fixture file instead."""
     pdir = os.path.dirname(os.path.abspath(proto_path))
     expand = fanout_node.get("expand", {})
     res = resolve_executable(f"{pdir}/expand", expand.get("hook", ""), pdir, expand.get("exec", ""))
     kind, path = res.split("\t", 1)
     if kind == "ERR" or not os.access(path, os.X_OK):
         raise ValueError(f"expander '{expand.get('hook')}' unresolved/not-exec: {path}")
-    env = dict(os.environ)
+    # SECURITY (spec §5): scope the expander to a read-only token. Build the env
+    # from a strict ALLOWLIST — never the plan job's full env — so STATE_REMOTE /
+    # PUBLISH_TOKEN / the broad dispatch PAT are dropped by default (a future added
+    # plan-job env var cannot leak). The expander gets only a read token to fetch
+    # the diff.
+    _ALLOW = ("PATH", "HOME", "LANG", "LC_ALL", "PR", "ENGINE_LOCAL", "GITHUB_REPOSITORY")
+    env = {k: os.environ[k] for k in _ALLOW if k in os.environ}
     env.setdefault("PR", instance[len("pr-"):] if instance.startswith("pr-") else instance)
+    tok = os.environ.get("EXPANDER_TOKEN")
+    if tok:
+        env["GH_TOKEN"] = tok                       # read-only; never the state/publish PAT
+    env["EXPAND_PARAMS"] = json.dumps(fanout_node.get("expand", {}))
     r = subprocess.run([path, dir_, instance], text=True, capture_output=True, env=env)
     if r.returncode != 0:
         raise ValueError(f"expander '{expand.get('hook')}' failed (exit {r.returncode}): {r.stderr.strip()}")
@@ -1007,12 +1019,22 @@ def render_fanout_status_body(dir_, pid, instance, proto):
 
     protocol = load_yaml(proto)
 
-    # Find the fanout state and its branches
+    # Find the fanout state and its legs. Static: the declared branches[]. Dynamic
+    # (expand present): synthesize one leg per persisted manifest entry so the human
+    # status comment renders dynamic legs (check-run gating already uses the manifest).
     branches = []
     for state in protocol.get("states", []):
         if state.get("kind") == "fanout":
-            for b in state.get("branches", []):
-                branches.append(b)
+            fo_id = state.get("id")
+            if state.get("expand"):
+                each = state.get("each", {})
+                man = read_manifest(dir_, pid, instance, [fo_id])
+                for leg in man.get("legs", []):
+                    branches.append({"id": leg["id"],
+                                     "max_iterations": each.get("max_iterations", "?")})
+            else:
+                for b in state.get("branches", []):
+                    branches.append(b)
             break
 
     sections = ""
