@@ -1,18 +1,7 @@
 protocol: impl-feature-auto
 instance: issue-181
 state: design
-iteration: 2
+iteration: 1
 gates: {}
 head_sha: cda7c678dbde5547f58003987bb2f14848e05bd6
-history:
-- iteration: 1
-  agent_run_id: '28490016740'
-  checks:
-    ledger-wellformed: pass
-    ledger-consistent: pass
-    read-these-first-consistent: fail
-    spec-present: pass
-    plan-present: pass
-  feedback: ledger L1 `what` text absent from spec.md (divergence); ledger L2 `what`
-    text absent from spec.md (divergence); ledger L3 `what` text absent from spec.md
-    (divergence)
+history: []
