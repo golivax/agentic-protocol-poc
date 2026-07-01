@@ -1059,6 +1059,16 @@ def _validate_sequence(states, path_hint):
     Rule 3 — gate.questions_from nonexistent sibling
         A gate's `questions_from` (when set) must refer to another state id in
         the same enclosing sequence.
+
+    Rule 4 — fanout branches[] XOR expand+each (dynamic fan-out)
+        A fanout has exactly one of a static `branches[]` or a dynamic
+        `expand`+`each` pair. `expand` must carry hook/as/id_from/max_legs
+        (max_legs an int in [1,256]); `each` is a flat leg (`workflow`) XOR a
+        sub-pipeline (`states`), validated recursively like a static branch.
+
+    Rule 5 — join.policy must parse
+        A join's optional `policy` must be accepted by `join_policy_satisfied`
+        ('all', 'any', or 'quorum:<N|P%>').
     """
     # Collect ids and fanout ids visible in this sequence for rule 1.
     sibling_ids = {s.get("id") for s in states if s.get("id")}
@@ -1075,7 +1085,7 @@ def _validate_sequence(states, path_hint):
                 f"key to the '{sid}' state"
             )
 
-        # Rule 1 — join references unknown fanout
+        # Rule 1 — join references unknown fanout (+ policy validity)
         if kind == "join":
             of = st.get("of", "")
             if of and of not in fanout_ids:
@@ -1083,6 +1093,15 @@ def _validate_sequence(states, path_hint):
                     f"join '{sid}' references unknown fanout of='{of}' — "
                     f"make sure a fanout with id='{of}' exists as a sibling of '{sid}'"
                 )
+            pol = st.get("policy")
+            if pol is not None:
+                try:
+                    join_policy_satisfied(pol, 0, 0)  # parse-check only
+                except ValueError:
+                    raise ValueError(
+                        f"join '{sid}' has invalid policy='{pol}' — use "
+                        f"'all', 'any', or 'quorum:<N|P%>'"
+                    )
 
         # Rule 3 — gate.questions_from nonexistent sibling
         if kind == "gate":
@@ -1093,20 +1112,49 @@ def _validate_sequence(states, path_hint):
                     f"with id='{qf}' exists — add the source state or correct the name"
                 )
 
-        # Recurse into fanout branches
+        # Recurse into fanout branches / validate dynamic expand+each
         if kind == "fanout":
-            for br in st.get("branches", []):
-                bid = br.get("id", "<unnamed>")
-                if br.get("states"):
-                    # sub-pipeline branch — recurse into its states
-                    _validate_sequence(br["states"], path_hint + [bid])
-                else:
-                    # flat branch (implicit agent) — must have workflow (Rule 2b)
-                    if not br.get("workflow"):
+            has_static = bool(st.get("branches"))
+            has_dynamic = bool(st.get("expand")) or bool(st.get("each"))
+            if has_static == has_dynamic:
+                raise ValueError(
+                    f"fanout '{sid}' must have exactly one of branches[] (static) "
+                    f"or expand+each (dynamic) — not both, not neither"
+                )
+            if has_dynamic:
+                exp = st.get("expand") or {}
+                for req in ("hook", "as", "id_from", "max_legs"):
+                    if not exp.get(req) and exp.get(req) != 0:
                         raise ValueError(
-                            f"agent node '{bid}' missing 'workflow' — add a "
-                            f"\"workflow\": \"<name>\" key to the '{bid}' branch"
+                            f"fanout '{sid}' expand missing '{req}' — expand needs "
+                            f"hook, as, id_from, and max_legs"
                         )
+                ml = exp.get("max_legs")
+                if not isinstance(ml, int) or isinstance(ml, bool) or not (1 <= ml <= 256):
+                    raise ValueError(
+                        f"fanout '{sid}' expand.max_legs must be an int in [1,256], got {ml!r}"
+                    )
+                each = st.get("each") or {}
+                if bool(each.get("states")) == bool(each.get("workflow")):
+                    raise ValueError(
+                        f"fanout '{sid}' each must be a flat leg (workflow) XOR a "
+                        f"sub-pipeline (states) — not both, not neither"
+                    )
+                if each.get("states"):
+                    _validate_sequence(each["states"], path_hint + [sid, "each"])
+            else:
+                for br in st.get("branches", []):
+                    bid = br.get("id", "<unnamed>")
+                    if br.get("states"):
+                        # sub-pipeline branch — recurse into its states
+                        _validate_sequence(br["states"], path_hint + [bid])
+                    else:
+                        # flat branch (implicit agent) — must have workflow (Rule 2b)
+                        if not br.get("workflow"):
+                            raise ValueError(
+                                f"agent node '{bid}' missing 'workflow' — add a "
+                                f"\"workflow\": \"<name>\" key to the '{bid}' branch"
+                            )
 
 
 def validate_protocol(proto):

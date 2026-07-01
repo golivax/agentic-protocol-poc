@@ -122,3 +122,49 @@ def test_join_policy_bad_quorum_raises():
     lib = _load_lib()
     with pytest.raises(ValueError):
         lib.join_policy_satisfied("quorum:x", 1, 3)
+
+
+def test_validate_rejects_branches_and_expand_together():
+    lib = _load_lib()
+    proto = {"name": "x", "states": [
+        {"id": "f", "kind": "fanout", "branches": [{"id": "a", "workflow": "w"}],
+         "expand": {"hook": "h", "as": "i", "id_from": "$.p", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "j"},
+        {"id": "j", "kind": "join", "of": "f"}]}
+    with pytest.raises(ValueError) as e:
+        lib.validate_protocol(proto)
+    assert "exactly one of" in str(e.value) and "'f'" in str(e.value)
+
+
+def test_validate_rejects_bad_max_legs():
+    lib = _load_lib()
+    proto = {"name": "x", "states": [
+        {"id": "f", "kind": "fanout",
+         "expand": {"hook": "h", "as": "i", "id_from": "$.p", "max_legs": 999},
+         "each": {"workflow": "w"}, "next": "j"},
+        {"id": "j", "kind": "join", "of": "f"}]}
+    with pytest.raises(ValueError) as e:
+        lib.validate_protocol(proto)
+    assert "max_legs" in str(e.value)
+
+
+def test_validate_rejects_bad_join_policy():
+    lib = _load_lib()
+    proto = {"name": "x", "states": [
+        {"id": "f", "kind": "fanout",
+         "expand": {"hook": "h", "as": "i", "id_from": "$.p", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "j"},
+        {"id": "j", "kind": "join", "of": "f", "policy": "most"}]}
+    with pytest.raises(ValueError) as e:
+        lib.validate_protocol(proto)
+    assert "policy" in str(e.value)
+
+
+def test_validate_accepts_wellformed_dynamic():
+    lib = _load_lib()
+    proto = {"name": "x", "states": [
+        {"id": "f", "kind": "fanout",
+         "expand": {"hook": "h", "as": "i", "id_from": "$.p", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "j"},
+        {"id": "j", "kind": "join", "of": "f", "policy": "quorum:50%"}]}
+    lib.validate_protocol(proto)  # no raise
