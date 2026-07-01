@@ -88,6 +88,59 @@ in sequence. Protocol names (`grumpy-review`, `multi-grumpy`) inside those
 clearly-historical sections refer to the protocols as they existed at that
 milestone; they are now retired.
 
+## Dynamic (data-driven) fan-out — engine capability, offline-only (2026-06-30)
+
+Design: `docs/superpowers/specs/2026-06-30-dynamic-fanout-design.md`. DSL
+reference: `docs/PROTOCOL-DSL.md` (Dynamic fan-out).
+
+A `fanout` node can now derive its legs **at runtime** from a trusted expander
+hook (`expand`+`each`) instead of a static `branches[]` array — a persisted
+`<tree-path>.__manifest.yaml` is the durable, runtime-computed analog of
+`branches[]` (leg ids/keys/items), read (not re-derived) on re-entry. `join`
+gained an optional `policy` (`all`/`any`/`quorum:N`) deciding the barrier's
+success/fail verdict once every leg is terminal; a `merge` input gained
+`from_fanout` to reduce over every leg's persisted evidence at once. Additive
+and backward-compatible: every existing protocol/fixture is byte-unchanged, and
+`policy` defaults to `all` (today's strict AND, unchanged).
+
+What is / isn't covered here:
+- **Engine-testable (pytest, `ENGINE_LOCAL`), and done:** expansion + keying +
+  fail-loud over-cap/expander-failure/collision handling, manifest persistence
+  and CAS, `resolve_leg_ids`/`join_policy_satisfied`/`collect_fanout_evidence`
+  (the `from_fanout` reducer), validator rules (Rules 4-6 in
+  `lib._validate_sequence`), the JSON Schema, and
+  offline walks over four OCR-shaped fixtures (`tests/fixtures/dyn-fanout-flat`,
+  `dyn-fanout-subpipeline`, `dyn-nested`, `dyn-fanout-badcap`) covering flat legs,
+  a sub-pipeline `each`, nested dynamic fan-out, and the over-cap guard.
+- **Deferred to milestone 2 (design spec §14), NOT done here:** a real
+  `open-code-review`-mimic protocol; a real diff-parsing expander (the current
+  test expanders are fixture-reading stubs); live GitHub-Actions runtime-matrix
+  wiring for a manifest-expanded leg set (today's matrix is fed from static
+  `action.legs`); staging `inputs/<as>.json` at live dispatch; and any live
+  agent runs over a dynamic fanout. A dynamic-fanout protocol is not turn-key on
+  live Actions yet — treat this milestone as the engine capability + its offline
+  proof, not a shippable protocol.
+- **Known deviation from the design spec:** the design's expander
+  credential-isolation (the expander holding only a read token, never the
+  publish/state token — design spec §14) is **not enforced** in the current
+  implementation. `lib.run_expander` forwards the `plan` job's full
+  environment (`env = dict(os.environ)`, no scrubbing) to the expander
+  subprocess, so on live GitHub Actions it inherits the dispatch/publish PAT
+  and the authenticated state remote along with everything else in that job's
+  env. Scoping the expander to a minimal read-only token is deferred to the
+  milestone-2 live-Actions wiring above.
+- **Known cosmetic gap: the PR status comment does not render dynamic legs.**
+  `lib.render_fanout_status_body` iterates only `state.get("branches", [])` —
+  a *static* fanout's declared branch list — so a dynamic (`expand`-driven)
+  fanout's manifest legs render zero leg sections in the human-readable status
+  comment, even though the check-run gating and join logic correctly use the
+  manifest via `resolve_leg_ids`. This is a live-Actions-only cosmetic gap (no
+  `ENGINE_LOCAL` test exercises the rendered comment body for a dynamic
+  fanout). The protocol-lint tree renderer has the same static-`branches[]`-only
+  blind spot for a dynamic fanout's tree shape. A milestone-2 author should make
+  both the status-comment renderer and the protocol-lint tree renderer
+  dynamic-leg-aware (e.g. by reading the manifest when `expand` is present).
+
 ## Nested sub-workflow branches + data-carrying gate (engine — in progress, 2026-06-22)
 
 Design: `docs/superpowers/specs/2026-06-22-nested-subworkflow-branches-design.md`;

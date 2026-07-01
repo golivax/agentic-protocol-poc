@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../.github/agent-factory/engine/protocol.schema.json",
+  "name": "dyn-fanout-badcap",
+  "states": [
+    { "id": "review", "kind": "fanout",
+      "expand": { "hook": "expand-items", "as": "file", "id_from": "$.path", "max_legs": 2 },
+      "each": { "workflow": "review-file-agent" },
+      "next": "join" },
+    { "id": "join", "kind": "join", "of": "review", "policy": "any", "next": "done" }
+  ]
+}

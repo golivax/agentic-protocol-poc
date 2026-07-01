@@ -2,7 +2,9 @@
 """Engine shared library. Importable by the engine scripts AND a thin CLI
 (`python3 lib.py <subcommand> ...`) for helpers the orchestrator calls inline."""
 import glob
+import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -103,6 +105,132 @@ def write_join(d, pid, instance, fanout_path, data):
     f = join_marker_file(d, pid, instance, fanout_path)
     os.makedirs(os.path.dirname(f), exist_ok=True)
     dump_yaml(f, data)
+
+
+def manifest_file(d, pid, instance, tree_path):
+    """Path to a dynamic fanout's manifest. Unlike leg/join files this is a NEW
+    file with no legacy byte-identity constraint, so it keys by the FULL tree
+    path (never dropped by state_path) — always unique and non-empty, for the
+    top fanout (['review'] -> review.__manifest.yaml) and nested alike."""
+    base = f"{d}/{pid}/{instance}"
+    return f"{base}/{'.'.join(tree_path)}.__manifest.yaml"
+
+
+def read_manifest(d, pid, instance, tree_path):
+    """Read the manifest dict, or {} if it does not exist yet."""
+    f = manifest_file(d, pid, instance, tree_path)
+    return load_yaml(f) if os.path.isfile(f) else {}
+
+
+def write_manifest(d, pid, instance, tree_path, data):
+    f = manifest_file(d, pid, instance, tree_path)
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    dump_yaml(f, data)
+
+
+def resolve_leg_ids(dir_, pid, instance, tree_path, fanout_node):
+    """The leg-id list for a fanout: the persisted manifest's ids when dynamic
+    (expand present), else the static branches[] ids. The single seam that lets
+    join.py treat dynamic and static fanouts uniformly."""
+    if fanout_node and fanout_node.get("expand"):
+        man = read_manifest(dir_, pid, instance, tree_path)
+        return [leg["id"] for leg in man.get("legs", [])]
+    return [b["id"] for b in (fanout_node.get("branches", []) if fanout_node else [])]
+
+
+def collect_fanout_evidence(dir_, pid, instance, tree_path, fanout_node):
+    """Assemble the reduce input for a `merge` with from_fanout: one row per leg
+    in the manifest, carrying its terminal state + persisted evidence (or None).
+    Reads from the state branch, never job outputs — resilient to matrix clobber.
+
+    Milestone scope: tree_path is the TOP fanout's single-element path
+    (['<id>']); leg files are resolved flat (branch=leg-id, no phase prefix),
+    matching the single-phase file layout. Nested from_fanout / multi-phase
+    phase-prefixed legs are milestone 2."""
+    man = read_manifest(dir_, pid, instance, tree_path)
+    rows = []
+    for leg in man.get("legs", []):
+        lid = leg["id"]
+        sf = state_file(dir_, pid, instance, lid)          # single-phase leg file
+        state = ""
+        if os.path.isfile(sf):
+            try:
+                state = load_yaml(sf).get("state", "") or ""
+            except Exception:
+                state = ""
+        evid_path = output_artifact_path(dir_, pid, instance, branch=lid, kind="evidence")
+        evidence = None
+        if os.path.isfile(evid_path):
+            try:
+                with open(evid_path) as f:
+                    evidence = json.load(f)
+            except (json.JSONDecodeError, ValueError):
+                evidence = None
+        rows.append({"leg_id": lid, "key": leg.get("key"), "state": state, "evidence": evidence})
+    return rows
+
+
+def leg_id(raw_key):
+    """Stable, filesystem-safe leg id from an item's raw id_from value.
+    A short sha1 hex is alnum by construction (no sanitizing needed)."""
+    return hashlib.sha1(str(raw_key).encode("utf-8")).hexdigest()[:8]
+
+
+def extract_key(item, id_from):
+    """Resolve a simple JSONPath (`$.a.b`) against an item dict. Only the
+    dotted-`$.`-rooted form is supported (YAGNI — no wildcards/filters)."""
+    if not id_from.startswith("$."):
+        raise ValueError(f"id_from must start with '$.', got {id_from!r}")
+    cur = item
+    for seg in id_from[2:].split("."):
+        if not isinstance(cur, dict) or seg not in cur:
+            raise ValueError(f"id_from {id_from!r} did not resolve on item {item!r}")
+        cur = cur[seg]
+    return cur
+
+
+def build_manifest(items, id_from, max_legs):
+    """Turn the expander's items list into a manifest dict. Fails loud on
+    over-cap (> max_legs) and on duplicate leg keys."""
+    if len(items) > max_legs:
+        raise ValueError(f"expander emitted {len(items)} items > max_legs {max_legs}")
+    legs, seen = [], {}
+    for item in items:
+        key = extract_key(item, id_from)
+        lid = leg_id(key)
+        if lid in seen:
+            raise ValueError(f"two items map to leg id '{lid}' (keys {seen[lid]!r} and {key!r})")
+        seen[lid] = key
+        legs.append({"id": lid, "key": key, "item": item})
+    return {"count": len(legs), "legs": legs}
+
+
+def run_expander(dir_, pid, instance, proto_path, fanout_node):
+    """Run a dynamic fanout's trusted expander hook and return its items list.
+    Resolved from <protocol-dir>/expand/<hook>. Raises ValueError (fail loud) on
+    unresolved / non-executable / nonzero / non-JSON / missing-`items` output.
+
+    Runs in zone 1 (plan); the hook re-fetches the diff itself and is handed only
+    a read token via the ambient env (never the state PAT beyond plan's, never the
+    publish token). Under ENGINE_LOCAL the stub reads a fixture file instead."""
+    pdir = os.path.dirname(os.path.abspath(proto_path))
+    expand = fanout_node.get("expand", {})
+    res = resolve_executable(f"{pdir}/expand", expand.get("hook", ""), pdir, expand.get("exec", ""))
+    kind, path = res.split("\t", 1)
+    if kind == "ERR" or not os.access(path, os.X_OK):
+        raise ValueError(f"expander '{expand.get('hook')}' unresolved/not-exec: {path}")
+    env = dict(os.environ)
+    env.setdefault("PR", instance[len("pr-"):] if instance.startswith("pr-") else instance)
+    r = subprocess.run([path, dir_, instance], text=True, capture_output=True, env=env)
+    if r.returncode != 0:
+        raise ValueError(f"expander '{expand.get('hook')}' failed (exit {r.returncode}): {r.stderr.strip()}")
+    try:
+        parsed = json.loads(r.stdout.strip())
+    except (json.JSONDecodeError, ValueError):
+        raise ValueError(f"expander '{expand.get('hook')}' returned non-JSON: {r.stdout[:200]!r}")
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("items"), list):
+        raise ValueError(f"expander '{expand.get('hook')}' output missing 'items' array")
+    return parsed["items"]
 
 
 def state_by_id(protocol, state_id):
@@ -715,6 +843,34 @@ def match_run_by_cid(runs_json, cid):
     return ""
 
 
+def join_policy_satisfied(policy, done, total):
+    """Is a dynamic join's barrier satisfied given `done` legs out of `total`?
+      all (default) : every leg done (vacuously true when total==0)
+      any           : >=1 leg done (false when total==0)
+      quorum:N      : >=N done, N an int count OR a percentage of total ('80%')
+    Raises ValueError on an unparseable quorum."""
+    policy = (policy or "all").strip()
+    if policy == "all":
+        return done == total
+    if policy == "any":
+        return done >= 1
+    if policy.startswith("quorum:"):
+        spec = policy[len("quorum:"):].strip()
+        if spec.endswith("%"):
+            try:
+                pct = float(spec[:-1])
+            except ValueError:
+                raise ValueError(f"unparseable quorum percentage: {policy!r}")
+            need = math.ceil(total * pct / 100.0)
+        else:
+            try:
+                need = int(spec)
+            except ValueError:
+                raise ValueError(f"unparseable quorum count: {policy!r}")
+        return done >= need
+    raise ValueError(f"unknown join policy: {policy!r}")
+
+
 def decide(results, iterations_remaining):
     """Pure fold: (check verdicts + severities) → (process, blocking).
 
@@ -945,6 +1101,20 @@ def _validate_sequence(states, path_hint):
     Rule 3 — gate.questions_from nonexistent sibling
         A gate's `questions_from` (when set) must refer to another state id in
         the same enclosing sequence.
+
+    Rule 4 — fanout branches[] XOR expand+each (dynamic fan-out)
+        A fanout has exactly one of a static `branches[]` or a dynamic
+        `expand`+`each` pair. `expand` must carry hook/as/id_from/max_legs
+        (max_legs an int in [1,256]); `each` is a flat leg (`workflow`) XOR a
+        sub-pipeline (`states`), validated recursively like a static branch.
+
+    Rule 5 — join.policy must parse
+        A join's optional `policy` must be accepted by `join_policy_satisfied`
+        ('all', 'any', or 'quorum:<N|P%>').
+
+    Rule 6 — merge input from_fanout unknown fanout in scope
+        A merge input's `from_fanout` (when present) must name a fanout
+        sibling in the SAME sequence, mirroring Rule 1.
     """
     # Collect ids and fanout ids visible in this sequence for rule 1.
     sibling_ids = {s.get("id") for s in states if s.get("id")}
@@ -961,7 +1131,7 @@ def _validate_sequence(states, path_hint):
                 f"key to the '{sid}' state"
             )
 
-        # Rule 1 — join references unknown fanout
+        # Rule 1 — join references unknown fanout (+ policy validity)
         if kind == "join":
             of = st.get("of", "")
             if of and of not in fanout_ids:
@@ -969,6 +1139,15 @@ def _validate_sequence(states, path_hint):
                     f"join '{sid}' references unknown fanout of='{of}' — "
                     f"make sure a fanout with id='{of}' exists as a sibling of '{sid}'"
                 )
+            pol = st.get("policy")
+            if pol is not None:
+                try:
+                    join_policy_satisfied(pol, 0, 0)  # parse-check only
+                except ValueError:
+                    raise ValueError(
+                        f"join '{sid}' has invalid policy='{pol}' — use "
+                        f"'all', 'any', or 'quorum:<N|P%>'"
+                    )
 
         # Rule 3 — gate.questions_from nonexistent sibling
         if kind == "gate":
@@ -979,20 +1158,59 @@ def _validate_sequence(states, path_hint):
                     f"with id='{qf}' exists — add the source state or correct the name"
                 )
 
-        # Recurse into fanout branches
+        # Rule 6 — merge.from_fanout must name a fanout in scope
+        if kind == "merge":
+            for inp in st.get("inputs", []) or []:
+                ff = inp.get("from_fanout")
+                if ff and ff not in fanout_ids:
+                    raise ValueError(
+                        f"merge '{sid}' input from_fanout='{ff}' names no fanout in scope — "
+                        f"make sure a fanout with id='{ff}' exists as a sibling of '{sid}'"
+                    )
+
+        # Recurse into fanout branches / validate dynamic expand+each
         if kind == "fanout":
-            for br in st.get("branches", []):
-                bid = br.get("id", "<unnamed>")
-                if br.get("states"):
-                    # sub-pipeline branch — recurse into its states
-                    _validate_sequence(br["states"], path_hint + [bid])
-                else:
-                    # flat branch (implicit agent) — must have workflow (Rule 2b)
-                    if not br.get("workflow"):
+            has_static = bool(st.get("branches"))
+            has_dynamic = bool(st.get("expand")) or bool(st.get("each"))
+            if has_static == has_dynamic:
+                raise ValueError(
+                    f"fanout '{sid}' must have exactly one of branches[] (static) "
+                    f"or expand+each (dynamic) — not both, not neither"
+                )
+            if has_dynamic:
+                exp = st.get("expand") or {}
+                for req in ("hook", "as", "id_from", "max_legs"):
+                    if not exp.get(req) and exp.get(req) != 0:
                         raise ValueError(
-                            f"agent node '{bid}' missing 'workflow' — add a "
-                            f"\"workflow\": \"<name>\" key to the '{bid}' branch"
+                            f"fanout '{sid}' expand missing '{req}' — expand needs "
+                            f"hook, as, id_from, and max_legs"
                         )
+                ml = exp.get("max_legs")
+                if not isinstance(ml, int) or isinstance(ml, bool) or not (1 <= ml <= 256):
+                    raise ValueError(
+                        f"fanout '{sid}' expand.max_legs must be an int in [1,256], got {ml!r}"
+                    )
+                each = st.get("each") or {}
+                if bool(each.get("states")) == bool(each.get("workflow")):
+                    raise ValueError(
+                        f"fanout '{sid}' each must be a flat leg (workflow) XOR a "
+                        f"sub-pipeline (states) — not both, not neither"
+                    )
+                if each.get("states"):
+                    _validate_sequence(each["states"], path_hint + [sid, "each"])
+            else:
+                for br in st.get("branches", []):
+                    bid = br.get("id", "<unnamed>")
+                    if br.get("states"):
+                        # sub-pipeline branch — recurse into its states
+                        _validate_sequence(br["states"], path_hint + [bid])
+                    else:
+                        # flat branch (implicit agent) — must have workflow (Rule 2b)
+                        if not br.get("workflow"):
+                            raise ValueError(
+                                f"agent node '{bid}' missing 'workflow' — add a "
+                                f"\"workflow\": \"<name>\" key to the '{bid}' branch"
+                            )
 
 
 def validate_protocol(proto):
@@ -1003,6 +1221,7 @@ def validate_protocol(proto):
       - join.of references a fanout not in scope (same sequence)
       - agent node (top-level or flat fanout branch) missing 'workflow'
       - gate.questions_from names a nonexistent sibling sub-state
+      - merge input's from_fanout references a fanout not in scope (same sequence)
 
     Intentionally does NOT validate: check file existence, schema references,
     trigger syntax, or anything that requires disk access — those belong in
@@ -1231,6 +1450,16 @@ def materialize_inputs(resolved, target_dir):
     return manifest
 
 
+def stage_item(dir_, pid, instance, file_path, as_, item):
+    """Persist a dynamic leg's item beside its state file as
+    <...>.<as>.item.json, so the dispatch/materialize step can surface it as
+    inputs/<as>.json for the leg's agent. Keyed by the leg's file-naming path."""
+    dst = output_artifact_path(dir_, pid, instance, path=file_path, kind=f"{as_}.item")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst, "w") as f:
+        json.dump(item, f)
+
+
 def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
     """Resolve+materialize a merge state's inputs and run its trusted reduce hook.
     Returns {conclusion, summary}; neutral fallback on any resolution/exec error."""
@@ -1239,12 +1468,32 @@ def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
         proto = json.load(f)
     fo = _fanout_state(proto)
     phase = fo["id"] if (fo and is_multiphase(proto)) else None
+    merge_inputs = merge_state.get("inputs", [])
+    # from_fanout inputs have no `from` key — resolve_inputs only understands
+    # `from`, so keep them out of that call and handle them in the loop below.
+    plain_inputs = [inp for inp in merge_inputs if "from" in inp]
     # Branch-id refs resolve against branch leg outputs (Plan 2 resolve_inputs).
     resolved = resolve_inputs(proto, dir_, pid, instance,
                               consuming_branch=None, consuming_phase=phase,
-                              inputs=merge_state.get("inputs", []))
+                              inputs=plain_inputs)
     workdir = tempfile.mkdtemp(prefix="merge-")
     materialize_inputs(resolved, workdir)
+    for inp in merge_inputs:
+        if inp.get("from_fanout"):
+            fo_id = inp["from_fanout"]
+            fo_node = state_by_id(proto, fo_id)
+            fo_tree_path = [fo_id]  # top fanout; nested merges pass full path (milestone 2)
+            if not os.path.isfile(manifest_file(dir_, pid, instance, fo_tree_path)):
+                raise ValueError(
+                    f"merge from_fanout='{inp['from_fanout']}': no manifest at "
+                    f"{'.'.join(fo_tree_path)} — the fanout has not materialized, or it is a "
+                    f"nested fanout (nested from_fanout is not supported yet)"
+                )
+            rows = collect_fanout_evidence(dir_, pid, instance, fo_tree_path, fo_node)
+            inputs_dir = os.path.join(workdir, "inputs")
+            os.makedirs(inputs_dir, exist_ok=True)
+            with open(os.path.join(inputs_dir, f"{inp['as']}.json"), "w") as f:
+                json.dump(rows, f)
     res = resolve_executable(f"{pdir}/publish", merge_state.get("hook", ""), pdir, "")
     kind, path = res.split("\t", 1)
     if kind == "ERR" or not os.access(path, os.X_OK):

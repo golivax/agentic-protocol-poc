@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../.github/agent-factory/engine/protocol.schema.json",
+  "name": "dyn-fanout-flat",
+  "states": [
+    { "id": "review", "kind": "fanout",
+      "expand": { "hook": "expand-items", "as": "file", "id_from": "$.path", "max_legs": 8 },
+      "each": { "workflow": "review-file-agent", "evidence": "leg.evidence.schema.json",
+                "checks": [ { "run": "schema-valid", "on_fail": "iterate" } ],
+                "publish": "reduce" },
+      "next": "join" },
+    { "id": "join", "kind": "join", "of": "review", "policy": "any", "next": "reduce" },
+    { "id": "reduce", "kind": "merge", "hook": "reduce",
+      "inputs": [ { "from_fanout": "review", "as": "legs" } ], "next": "done" }
+  ]
+}

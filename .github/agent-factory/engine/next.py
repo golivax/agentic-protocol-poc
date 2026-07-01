@@ -115,7 +115,24 @@ def enter_node(proto, path, command, emit=True):
         # breaks byte-identity). The file path routes through state_path.
         if len(path) > 1:
             lib.write_join(DIR, PID, INSTANCE, lib.state_path(proto, path), {"joined": False})
-        branches = [_seed_child(proto, path + [b["id"]], b) for b in node.get("branches", [])]
+        if node.get("expand"):
+            # --- DYNAMIC fanout: materialize legs from the expander manifest. ---
+            each = node.get("each", {})
+            items = lib.run_expander(DIR, PID, INSTANCE, PROTO, node)   # fail-loud on hook error
+            manifest = lib.build_manifest(items, node["expand"]["id_from"],
+                                          node["expand"]["max_legs"])    # fail-loud on over-cap/dupe
+            lib.write_manifest(DIR, PID, INSTANCE, path, manifest)
+            branches = []
+            for leg in manifest["legs"]:
+                cfg = dict(each)
+                cfg["id"] = leg["id"]
+                seeded = _seed_child(proto, path + [leg["id"]], cfg)
+                lib.stage_item(DIR, PID, INSTANCE, lib.state_path(proto, path + [leg["id"]]),
+                               node["expand"]["as"], leg["item"])
+                branches.append(seeded)
+            # zero legs → branches == [] falls through the shared tail unchanged (vacuous fanout)
+        else:
+            branches = [_seed_child(proto, path + [b["id"]], b) for b in node.get("branches", [])]
         if emit:
             print(json.dumps(_fanout_action(proto, path, branches)))
             return None
