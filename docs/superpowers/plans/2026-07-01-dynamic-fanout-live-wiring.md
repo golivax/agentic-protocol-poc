@@ -271,12 +271,11 @@ git commit -m "feat(dyn-fanout): real diff-parsing expand-files expander with OC
   "$schema": "../../engine/protocol.schema.json",
   "name": "dyn-fanout-stub",
   "triggers": [
-    { "on": "issue_comment", "command": "/dyn-stub" }
+    { "on": "issue_comment", "comment_prefix": "/dyn-stub", "command": "start" }
   ],
   "states": [
     { "id": "review", "kind": "fanout",
-      "expand": { "hook": "expand-files", "as": "file", "id_from": "$.path", "max_legs": 32,
-                  "max_diff_lines": 1500 },
+      "expand": { "hook": "expand-files", "as": "file", "id_from": "$.path", "max_legs": 32 },
       "each": { "workflow": "dyn-stub-agent", "evidence": "leg.evidence.schema.json",
                 "max_iterations": 1,
                 "checks": [ { "run": "examined-file", "on_fail": "iterate" } ] },
@@ -356,7 +355,7 @@ def test_dyn_stub_start_materializes_legs(engine_env, tmp_path):
     legs = action["legs"]
     assert len(legs) == 2                                 # one leg per fixture item
     assert all(l["workflow"] == "dyn-stub-agent" for l in legs)
-    assert all("." not in l["path"] for l in legs)        # single-phase: bare leg id
+    assert all(l["path"].startswith("review.") for l in legs)   # tree path keeps the fanout id
     d = str(tmp_path) + "/dyn-fanout-stub/pr-7"
     man = read_state_yaml(d + "/review.__manifest.yaml")
     assert man["count"] == 2
