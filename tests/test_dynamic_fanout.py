@@ -211,34 +211,30 @@ def test_dynamic_fanout_start_seeds_manifest_and_legs(engine_env, tmp_path):
     assert {leg_dict["path"].split(".")[-1] for leg_dict in action["legs"]} == set(ids)
 
 
-def test_dynamic_fanout_subpipeline_each_fails_loud(engine_env, tmp_path):
-    """Until sub-pipeline `each` is supported, running one must fail loud, not
-    silently emit workflow:null legs. See spec review of 8426128."""
-    import shutil, json as _json
-    from conftest import run_engine
-    # Build a protocol dir with a sub-pipeline `each`, reusing the flat fixture's expander.
-    pdir = tmp_path / "proto"
-    (pdir).mkdir()
+def test_dynamic_fanout_subpipeline_each_seeds_first_substate(engine_env, tmp_path):
+    """Sub-pipeline `each` now works: each dynamic leg is a sub-pipeline whose
+    cursor + first sub-state (draft) are seeded. (Replaces the old fail-loud test.)"""
+    import os, shutil, json as _json
+    from conftest import run_engine, read_state_yaml
+    pdir = tmp_path / "proto"; pdir.mkdir()
     shutil.copytree(ROOT / "tests/fixtures/dyn-fanout-flat/expand", pdir / "expand")
-    proto = {
-        "name": "dyn-subpipeline-unsupported",
-        "states": [
-            {"id": "review", "kind": "fanout",
-             "expand": {"hook": "expand-items", "as": "file", "id_from": "$.path", "max_legs": 8},
-             "each": {"states": [
-                 {"id": "draft", "kind": "agent", "workflow": "draft-agent", "next": "finalize"},
-                 {"id": "finalize", "kind": "agent", "workflow": "finalize-agent"}]},
-             "next": "join"},
-            {"id": "join", "kind": "join", "of": "review", "policy": "any", "next": "done"}]}
-    ppath = pdir / "protocol.json"
-    ppath.write_text(_json.dumps(proto))
+    proto = {"name": "dyn-subpipeline-each", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "expand-items", "as": "file", "id_from": "$.path", "max_legs": 8},
+         "each": {"states": [
+             {"id": "draft", "kind": "agent", "workflow": "draft-agent", "next": "finalize"},
+             {"id": "finalize", "kind": "agent", "workflow": "finalize-agent"}]},
+         "next": "join"},
+        {"id": "join", "kind": "join", "of": "review", "policy": "any", "next": "done"}]}
+    ppath = pdir / "protocol.json"; ppath.write_text(_json.dumps(proto))
     out, err, rc = run_engine("next.py", str(tmp_path / "state"), "pr-1", str(ppath), "start", env=engine_env)
-    assert rc != 0, f"expected fail-loud, got rc=0. out={out}"
-    assert "sub-pipeline" in (err + out)
-    # The guard must fire before the expander/manifest write — no manifest file
-    # should exist for this aborted run.
-    manifest_path = tmp_path / "state" / "dyn-subpipeline-unsupported" / "pr-1" / "review.__manifest.yaml"
-    assert not manifest_path.exists(), f"manifest was written despite fail-loud guard: {manifest_path}"
+    assert rc == 0, f"sub-pipeline each should now seed, got rc={rc}. err={err}"
+    d = str(tmp_path / "state" / "dyn-subpipeline-each" / "pr-1")
+    man = read_state_yaml(d + "/review.__manifest.yaml")
+    lid = man["legs"][0]["id"]
+    cur = read_state_yaml(d + f"/{lid}.yaml")
+    assert cur.get("sub_state") == "draft"
+    assert os.path.isfile(d + f"/{lid}.draft.yaml")
 
 
 # ---------------------------------------------------------------------------
@@ -526,3 +522,63 @@ def test_dynamic_fanout_zero_items_is_vacuous(engine_env, tmp_path):
     action = __json.loads(out.strip().splitlines()[-1])
     assert action["action"] == "run-fanout"
     assert action.get("legs", []) == []
+
+
+# ---------------------------------------------------------------------------
+# Task 9.5 — each-aware path navigation (paths.py unit tests)
+# ---------------------------------------------------------------------------
+
+
+def _load_paths():
+    import importlib.util, sys
+    if str(ENGINE) not in sys.path:
+        sys.path.insert(0, str(ENGINE))
+    spec = importlib.util.spec_from_file_location("paths", ENGINE / "paths.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); return mod
+
+
+def test_paths_node_at_path_resolves_dynamic_leg_to_each():
+    paths = _load_paths()
+    proto = {"name": "x", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "h", "as": "f", "id_from": "$.p", "max_legs": 8},
+         "each": {"states": [
+             {"id": "draft", "kind": "agent", "workflow": "d", "next": "finalize"},
+             {"id": "finalize", "kind": "agent", "workflow": "f"}]},
+         "next": "join"},
+        {"id": "join", "kind": "join", "of": "review"}]}
+    # A dynamic leg path resolves to the each sub-pipeline (a sequence).
+    assert paths.node_kind(proto, ["review", "RUNTIMEID"]) == "sequence"
+    # A sub-state under the leg resolves into the each template's states.
+    assert paths.node_kind(proto, ["review", "RUNTIMEID", "draft"]) == "agent"
+    n = paths.node_at_path(proto, ["review", "RUNTIMEID", "finalize"])
+    assert n and n.get("workflow") == "f"
+    # next_sibling walks the each sub-pipeline.
+    assert paths.next_sibling(proto, ["review", "RUNTIMEID", "draft"]) == "finalize"
+
+
+def test_paths_flat_each_resolves_to_agent():
+    paths = _load_paths()
+    proto = {"name": "x", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "h", "as": "f", "id_from": "$.p", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "join"},
+        {"id": "join", "kind": "join", "of": "review"}]}
+    assert paths.node_kind(proto, ["review", "RUNTIMEID"]) == "agent"
+
+
+def test_paths_max_static_depth_counts_each_subtree():
+    paths = _load_paths()
+    # dynamic review whose each nests a dynamic comments fanout with a flat each
+    proto = {"name": "x", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "h", "as": "f", "id_from": "$.p", "max_legs": 8},
+         "each": {"states": [
+             {"id": "comments", "kind": "fanout",
+              "expand": {"hook": "h2", "as": "c", "id_from": "$.c", "max_legs": 8},
+              "each": {"workflow": "w"}, "next": "cjoin"},
+             {"id": "cjoin", "kind": "join", "of": "comments"}]},
+         "next": "join"},
+        {"id": "join", "kind": "join", "of": "review"}]}
+    # review → <each> → comments → <each>  == depth 4 (descends into each subtrees)
+    assert paths.max_static_depth(proto) >= 4

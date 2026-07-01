@@ -118,12 +118,6 @@ def enter_node(proto, path, command, emit=True):
         if node.get("expand"):
             # --- DYNAMIC fanout: materialize legs from the expander manifest. ---
             each = node.get("each", {})
-            if each.get("states"):
-                raise ValueError(
-                    f"dynamic fanout '{path[-1]}' has a sub-pipeline `each` (states), "
-                    f"which the runtime does not support yet — use a flat `each` "
-                    f"(workflow) for now. (Sub-pipeline `each` is a planned follow-up.)"
-                )
             items = lib.run_expander(DIR, PID, INSTANCE, PROTO, node)   # fail-loud on hook error
             manifest = lib.build_manifest(items, node["expand"]["id_from"],
                                           node["expand"]["max_legs"])    # fail-loud on over-cap/dupe
