@@ -129,6 +129,8 @@ instance-wide `_instance.yaml joined` flag; `next.py`'s fanout-entry now resets 
 a top fanout is entered, so the second fanout's barrier fires (else `mrp` was never
 dispatched — a hard stall). Covered by `tests/fixtures/two-fanout` + a regression test.
 
+**Fix-phase push limitation — fork PRs:** `conclude-fix` pushes the committed fix patch to the PR head branch via `git push origin HEAD:refs/heads/<head>` using `PUBLISH_TOKEN` (wired to `POC_DISPATCH_TOKEN`). For PRs **from a fork** this push targets the base repo and will fail, because the fork's head branch is not writable by the base repo's token. The phase degrades gracefully: it records `push_error` in the apply report and surfaces it in the apply-report PR comment; the conclusion remains neutral and the pipeline is not halted. The fix commit will not land on a fork PR. Known limitation; same-repo PRs are unaffected.
+
 The v1/v2/v3/v4 milestone sections below are a dated record of what was built
 in sequence. Protocol names (`grumpy-review`, `multi-grumpy`) inside those
 clearly-historical sections refer to the protocols as they existed at that
