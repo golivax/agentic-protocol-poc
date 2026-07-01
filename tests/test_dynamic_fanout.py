@@ -1057,3 +1057,21 @@ def test_static_fanout_legs_have_no_inputs(engine_env, tmp_path):
     assert rc == 0, err
     action = json.loads(out.strip().splitlines()[-1])
     assert all("inputs" not in leg for leg in action["legs"])
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — dynamic-leg-aware rendering (status comment)
+# ---------------------------------------------------------------------------
+
+
+def test_status_body_renders_dynamic_legs(engine_env, tmp_path):
+    from conftest import run_engine, read_state_yaml
+    lib = _load_lib()
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-15", STUB, "start", env=engine_env)
+    assert rc == 0, err
+    # dir_ for the renderer is the state ROOT (manifest_file keys as <dir>/<pid>/<inst>/...)
+    body = lib.render_fanout_status_body(str(tmp_path), "dyn-fanout-stub", "pr-15", STUB)
+    d = str(tmp_path) + "/dyn-fanout-stub/pr-15"
+    man = read_state_yaml(d + "/review.__manifest.yaml")
+    for leg in man["legs"]:                    # both dynamic leg ids appear (zero pre-fix)
+        assert leg["id"] in body

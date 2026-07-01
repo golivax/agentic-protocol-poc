@@ -1019,12 +1019,22 @@ def render_fanout_status_body(dir_, pid, instance, proto):
 
     protocol = load_yaml(proto)
 
-    # Find the fanout state and its branches
+    # Find the fanout state and its legs. Static: the declared branches[]. Dynamic
+    # (expand present): synthesize one leg per persisted manifest entry so the human
+    # status comment renders dynamic legs (check-run gating already uses the manifest).
     branches = []
     for state in protocol.get("states", []):
         if state.get("kind") == "fanout":
-            for b in state.get("branches", []):
-                branches.append(b)
+            fo_id = state.get("id")
+            if state.get("expand"):
+                each = state.get("each", {})
+                man = read_manifest(dir_, pid, instance, [fo_id])
+                for leg in man.get("legs", []):
+                    branches.append({"id": leg["id"],
+                                     "max_iterations": each.get("max_iterations", "?")})
+            else:
+                for b in state.get("branches", []):
+                    branches.append(b)
             break
 
     sections = ""
