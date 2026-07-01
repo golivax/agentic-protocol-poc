@@ -1,0 +1,1 @@
+{"summary":"feat: add lib.is_terminal_state(state) helper + 8 unit tests — committed on impl-feature-auto/issue-190 in target/; PR creation failed: safeoutputs service reads workspace root git (on main) rather than target/ git where the commit lives","pr_branch":"impl-feature-auto/issue-190","run_id":"28494591833"}
