@@ -1,6 +1,11 @@
 protocol: recover-mental-model-interactive
 instance: ref-main
-state: recover
+state: done
 iteration: 1
 gates: {}
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28532336600'
+  checks:
+    codeset-artifacts: pass
+  feedback: ''
