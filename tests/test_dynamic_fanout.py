@@ -836,3 +836,73 @@ def test_run_merge_hook_zero_item_manifest_is_ok(tmp_path):
     result = lib.run_merge_hook(d, pid, inst, proto, merge_state)
     assert result["conclusion"] == "success"  # reduce hook runs over 0 legs, returns its verdict
     assert "reduced 0/0 legs" in result["summary"]
+
+
+EXPANDER = ".github/agent-factory/protocols/dyn-fanout-stub/expand/expand-files"
+
+
+def _run_expander(env_extra, cwd="."):
+    env = {**os.environ, **env_extra}
+    r = subprocess.run([EXPANDER, "/tmp/state", "pr-1"], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)["items"]
+
+
+def test_expand_files_parses_one_item_per_file(tmp_path):
+    diff = tmp_path / "diff.txt"
+    diff.write_text(textwrap.dedent("""\
+        diff --git a/src/a.py b/src/a.py
+        index 111..222 100644
+        --- a/src/a.py
+        +++ b/src/a.py
+        @@ -1 +1,2 @@
+         x = 1
+        +y = 2
+        diff --git a/src/b.py b/src/b.py
+        index 333..444 100644
+        --- a/src/b.py
+        +++ b/src/b.py
+        @@ -1 +1 @@
+        -old
+        +new
+        """))
+    items = _run_expander({"EXPAND_FILES_DIFF_FILE": str(diff)})
+    assert [i["path"] for i in items] == ["src/a.py", "src/b.py"]
+    assert "y = 2" in items[0]["diff"]
+
+def test_expand_files_skips_binary_vendored_oversized(tmp_path):
+    diff = tmp_path / "diff.txt"
+    body = "\n".join(f"        +line{i}" for i in range(2000))
+    diff.write_text(textwrap.dedent(f"""\
+        diff --git a/img.png b/img.png
+        Binary files a/img.png and b/img.png differ
+        diff --git a/vendor/dep.py b/vendor/dep.py
+        index 1..2 100644
+        --- a/vendor/dep.py
+        +++ b/vendor/dep.py
+        @@ -1 +1 @@
+        -a
+        +b
+        diff --git a/big.py b/big.py
+        index 5..6 100644
+        --- a/big.py
+        +++ b/big.py
+        @@ -0,0 +1,2000 @@
+        {body}
+        diff --git a/keep.py b/keep.py
+        index 7..8 100644
+        --- a/keep.py
+        +++ b/keep.py
+        @@ -1 +1 @@
+        -a
+        +b
+        """))
+    items = _run_expander({
+        "EXPAND_FILES_DIFF_FILE": str(diff),
+        "EXPAND_PARAMS": json.dumps({"max_diff_lines": 1500}),
+    })
+    assert [i["path"] for i in items] == ["keep.py"]
+
+def test_expand_files_engine_local_reads_fixture():
+    items = _run_expander({"ENGINE_LOCAL": "1"})
+    assert len(items) >= 2 and all("path" in i for i in items)
