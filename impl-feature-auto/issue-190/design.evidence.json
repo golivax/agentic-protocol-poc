@@ -1,0 +1,61 @@
+{
+  "spec_path": "docs/superpowers/specs/2026-07-01-is-terminal-state-helper-design.md",
+  "plan_path": "docs/superpowers/plans/2026-07-01-is-terminal-state.md",
+  "summary": "Design for adding is_terminal_state(state: str) -> bool to lib.py — a pure stdlib helper returning True for the three terminal states (done, failed, blocked) and False otherwise (including non-strings and None without raising). One implementation task: add the function + a new focused test file tests/test_is_terminal_state.py with 8 unit tests.",
+  "run_id": "28494329026",
+  "ledger": [
+    {
+      "id": "L1",
+      "category": "DECISION",
+      "what": "Added PEP-3107 type annotations (state: str -> bool) despite existing lib.py having no annotations on any other function",
+      "why": "The issue explicitly specifies the signature `is_terminal_state(state: str) -> bool`; adding annotations as requested avoids deviating from the stated contract",
+      "what_i_did": "Added annotations exactly as specified in the issue; no other lib.py functions were annotated",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Affects only the single new function; annotations are invisible at runtime and have zero impact on callers or the vendored engine unit"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Annotations are cosmetic; stripping them is a one-line change with no functional effect"
+      },
+      "revisit_if": "The codebase adopts a no-annotation policy across lib.py or an explicit style guide prohibits annotations"
+    },
+    {
+      "id": "L2",
+      "category": "DECISION",
+      "what": "Created a new file tests/test_is_terminal_state.py rather than extending an existing test file",
+      "why": "The issue asks for 'focused pytest unit tests'; test_decide.py and test_correlation.py show a per-function self-contained file pattern for pure-function tests in this repo",
+      "what_i_did": "Followed the existing per-function test-file pattern with a new self-contained file",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Purely additive; no modification to any existing file; the new file is discovered automatically by pytest"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "A new file; trivially deleted or folded into another file without touching any other code"
+      },
+      "revisit_if": "The team wants all lib-function tests consolidated into one file"
+    },
+    {
+      "id": "L3",
+      "category": "ASSUMPTION",
+      "what": "blocked is a terminal state in the same set as done and failed",
+      "why": "The issue lists it explicitly; it needed verification that 'blocked' is indeed a terminal/final engine state and not just a label key",
+      "what_i_did": "Verified against lib.py: 'blocked' appears in PHASE_LABEL_DEFAULTS (line 589) alongside 'done' and 'failed', and render_pipeline_status_body treats halted.reason == 'blocked' as a hard-stop final state; included 'blocked' in the terminal set",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Read-only pure function; no mutations, no state writes; the terminal set is only consulted by callers who opt in"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Adding or removing a value from the terminal set is a one-line change; no downstream state is written"
+      },
+      "revisit_if": "blocked is reclassified as non-terminal or a new terminal state is introduced",
+      "verified": true
+    }
+  ],
+  "read_these_first": []
+}
