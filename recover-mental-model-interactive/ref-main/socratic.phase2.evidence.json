@@ -1,0 +1,270 @@
+{
+  "method": "socratic:phase2",
+  "run_id": "28534113256",
+  "files": [
+    {
+      "path": "MANIFEST.txt",
+      "bytes": 3828
+    },
+    {
+      "path": "OPEN_QUESTIONS-agentic-protocol-engine.adoc",
+      "bytes": 6467
+    },
+    {
+      "path": "QUESTION_TREE-agentic-protocol-engine.adoc",
+      "bytes": 35473
+    },
+    {
+      "path": "docs/API-BACKLOG.md",
+      "bytes": 2275
+    },
+    {
+      "path": "docs/AUTHORING.md",
+      "bytes": 11911
+    },
+    {
+      "path": "docs/BACKLOG.md",
+      "bytes": 16601
+    },
+    {
+      "path": "docs/HOW-IT-WORKS.md",
+      "bytes": 60716
+    },
+    {
+      "path": "docs/PROTOCOL-DSL.md",
+      "bytes": 24405
+    },
+    {
+      "path": "docs/STATUS.md",
+      "bytes": 45351
+    },
+    {
+      "path": "docs/demo1-transcript.txt",
+      "bytes": 932
+    },
+    {
+      "path": "docs/demo2-transcript.txt",
+      "bytes": 710
+    },
+    {
+      "path": "docs/arc42/arc42-agentic-protocol-engine.adoc",
+      "bytes": 15679
+    },
+    {
+      "path": "docs/specs/prd-agentic-protocol-engine.adoc",
+      "bytes": 7222
+    },
+    {
+      "path": "docs/specs/use-cases-agentic-protocol-engine.adoc",
+      "bytes": 12736
+    },
+    {
+      "path": "docs/specs/adrs/agentic-protocol-engine-adr-001-invert-control.adoc",
+      "bytes": 2529
+    },
+    {
+      "path": "docs/specs/adrs/agentic-protocol-engine-adr-002-recursive-unification.adoc",
+      "bytes": 1809
+    },
+    {
+      "path": "docs/specs/adrs/agentic-protocol-engine-adr-003-disable-egress-firewall.adoc",
+      "bytes": 1889
+    },
+    {
+      "path": "docs/specs/adrs/agentic-protocol-engine-adr-004-one-transition-per-run.adoc",
+      "bytes": 1933
+    },
+    {
+      "path": "docs/superpowers/MILESTONE-2-BRIEF.md",
+      "bytes": 11068
+    },
+    {
+      "path": "docs/superpowers/notes-deferred-workflow-integration.md",
+      "bytes": 6568
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-12-agent-factory-python-cleanup.md",
+      "bytes": 42199
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-12-branch-scoped-params.md",
+      "bytes": 26531
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-16-m1-engine-decide-severities.md",
+      "bytes": 19259
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-16-m2a-multiphase-state-machine.md",
+      "bytes": 60709
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-16-m2b-generic-orchestrator.md",
+      "bytes": 57934
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-16-m3-preflight-pipeline.md",
+      "bytes": 56516
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-16-orchestrator-b-to-a.md",
+      "bytes": 24981
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-17-hitl-override-gate.md",
+      "bytes": 38271
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-17-v4-approval-gate.md",
+      "bytes": 50772
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-19-phase-labels.md",
+      "bytes": 34660
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-20-remove-demo-protocols.md",
+      "bytes": 19078
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-22-plan-1-subpipeline-branches.md",
+      "bytes": 38511
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-22-plan-2-inputs-and-output-persistence.md",
+      "bytes": 25065
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-22-plan-3-data-carrying-gate.md",
+      "bytes": 33115
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-22-plan-4-combine-merge-state.md",
+      "bytes": 26173
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-23-multiphase-subpipeline-fanout.md",
+      "bytes": 32134
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-23-recursive-subpipelines.md",
+      "bytes": 64530
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-23-stage4a-engine-unification.md",
+      "bytes": 49358
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-24-protocol-distribution.md",
+      "bytes": 46076
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-24-protocol-visibility-rest-api.md",
+      "bytes": 56046
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-24-stage4b-gha-wiring.md",
+      "bytes": 21607
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-24-stage4c-build.md",
+      "bytes": 16038
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-30-dynamic-fanout.md",
+      "bytes": 56454
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-30-impl-feature-auto-protocol.md",
+      "bytes": 88999
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-01-dynamic-fanout-live-wiring.md",
+      "bytes": 44086
+    },
+    {
+      "path": "docs/superpowers/runbooks/2026-06-24-distribution-acceptance.md",
+      "bytes": 1850
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-12-agent-factory-python-cleanup-design.md",
+      "bytes": 12495
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-16-code-review-pipeline-design.md",
+      "bytes": 23473
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-16-m3-preflight-pipeline-spec.md",
+      "bytes": 17124
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-16-orchestrator-b-to-a-design.md",
+      "bytes": 11902
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-16-orchestrator-b-to-a-spec.md",
+      "bytes": 16228
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-17-hitl-override-gate-design.md",
+      "bytes": 13329
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-17-v4-approval-gate-design.md",
+      "bytes": 17724
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-19-phase-labels-design.md",
+      "bytes": 8351
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-22-nested-subworkflow-branches-design.md",
+      "bytes": 12747
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-22-protocol-distribution-design.md",
+      "bytes": 16065
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-23-multiphase-subpipeline-fanout-design.md",
+      "bytes": 10791
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-23-nested-gate-answer-design.md",
+      "bytes": 7683
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-23-recursive-subpipelines-design.md",
+      "bytes": 20764
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-23-stage4-recursive-engine-unification-design.md",
+      "bytes": 18119
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-24-rest-api-design.md",
+      "bytes": 10198
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-24-stage4b-gha-wiring-design.md",
+      "bytes": 8815
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-24-stage4c-live-verification-design.md",
+      "bytes": 7386
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-30-dynamic-fanout-design.md",
+      "bytes": 20377
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-30-impl-feature-auto-protocol-design.md",
+      "bytes": 22997
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-01-dynamic-fanout-live-wiring-design.md",
+      "bytes": 16494
+    }
+  ]
+}
