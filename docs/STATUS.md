@@ -143,7 +143,13 @@ What is / isn't covered here:
   `matrix.leg.inputs` → `aw_context.inputs` (inline-context mechanism, not a
   filesystem `inputs/<as>.json`); verified offline via walks over the minimal
   `dyn-fanout-stub` protocol (a real diff-parsing `expand-files` expander, `/dyn-stub`
-  trigger), live-verification pending. Still deferred to **Spec B**: the real
+  trigger), and **live-verified end-to-end on PR #196**: `/dyn-stub` fanned out
+  over the 2 changed files → one `dyn-stub-agent` per leg (each received its own
+  file via `matrix.leg.inputs`) → both legs' `examined-file` checks passed →
+  `join(all)` → `done`, with the PR status comment rendering both dynamic legs.
+  Zero live-only functional bugs (one cosmetic follow-up: gh-aw's default
+  no-safe-output issue, suppressed via `dyn-stub-agent`'s `noop.report-as-issue:false`).
+  Still deferred to **Spec B**: the real
   `code-review-ocr` protocol, nested `from_fanout` resolution, per-finding
   nested fan-out, and **matrix leg-input size (Spec B):** each dynamic leg's runtime item (`{path, diff}`) is threaded to its agent via `matrix.leg.inputs` → the plan job's `legs` output (a `$GITHUB_OUTPUT`, ~1 MB cap) and `strategy.matrix`. Fine for small fan-outs; before the real `code-review-ocr` protocol (many files × large diffs) this must switch to threading only the file `path` (agent re-fetches its own diff from the checkout) or staging the item to the state branch and passing a reference, to stay under the output/matrix/`workflow_dispatch` input limits.
 - **Expander credential-scoping (design spec §14), enforced:** `lib.run_expander`
