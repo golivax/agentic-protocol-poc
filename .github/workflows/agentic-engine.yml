@@ -58,6 +58,7 @@ jobs:
       override_actor: ${{ steps.ctx.outputs.override_actor }}
       override_reason: ${{ steps.ctx.outputs.override_reason }}
       checkout_ref: ${{ steps.ctx.outputs.checkout_ref }}
+      is_pr_run: ${{ steps.ctx.outputs.is_pr_run }}
     steps:
       - uses: actions/checkout@v5
       - id: ctx
@@ -449,12 +450,16 @@ jobs:
       - name: Fetch independent ground truth
         env:
           PR: ${{ needs.plan.outputs.pr }}
+          IS_PR_RUN: ${{ needs.plan.outputs.is_pr_run }}
         run: |
           # PR-targeted runs: independently re-fetch the PR diff (the checks' ground
-          # truth, never trusting agent output). Ref-targeted runs (UI/workflow_dispatch)
-          # have no PR — write empty diff/files; those protocols' checks verify
-          # evidence manifests, not a diff.
-          if [ -n "$PR" ]; then
+          # truth, never trusting agent output). Ref-targeted (UI/workflow_dispatch)
+          # AND issue-keyed (e.g. impl-feature-auto) runs have no PR — write empty
+          # diff/files; those protocols' checks verify evidence, not a diff. Gate on
+          # IS_PR_RUN, not `-n PR`: an issue-keyed run carries PR=<issue-number> (for
+          # commenting/labeling), which is NOT a resolvable pull request — `gh pr diff`
+          # on it fails ("Could not resolve to a PullRequest").
+          if [ "$IS_PR_RUN" = "true" ]; then
             gh pr diff "$PR" --repo "${{ github.repository }}" > /tmp/diff.txt
             gh pr diff "$PR" --repo "${{ github.repository }}" --name-only > /tmp/files.txt
           else
