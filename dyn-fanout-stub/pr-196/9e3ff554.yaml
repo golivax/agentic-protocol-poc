@@ -1,6 +1,11 @@
 protocol: dyn-fanout-stub
 instance: pr-196
-state: review
+state: done
 iteration: 1
 gates: {}
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28530869544'
+  checks:
+    examined-file: pass
+  feedback: ''
