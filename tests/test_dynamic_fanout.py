@@ -1,4 +1,5 @@
 import importlib.util
+import os, stat, textwrap
 import pathlib
 import sys
 
@@ -66,3 +67,37 @@ def test_build_manifest_duplicate_key_fails_loud():
         assert False, "expected ValueError"
     except ValueError as e:
         assert "two items" in str(e).lower() and "dup" in str(e)
+
+
+def _write_exec(path, body):
+    path.write_text(body)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def test_run_expander_parses_items(tmp_path):
+    lib = _load_lib()
+    pdir = tmp_path / "proto"
+    (pdir / "expand").mkdir(parents=True)
+    _write_exec(pdir / "expand" / "expand-items.py", textwrap.dedent("""\
+        #!/usr/bin/env python3
+        import json
+        print(json.dumps({"items": [{"path": "a"}, {"path": "b"}]}))
+    """))
+    proto = pdir / "protocol.json"
+    proto.write_text('{"name":"ocr"}')
+    items = lib.run_expander(str(tmp_path), "ocr", "pr-1", str(proto),
+                             {"expand": {"hook": "expand-items"}})
+    assert items == [{"path": "a"}, {"path": "b"}]
+
+
+def test_run_expander_nonzero_raises(tmp_path):
+    lib = _load_lib()
+    pdir = tmp_path / "proto"
+    (pdir / "expand").mkdir(parents=True)
+    _write_exec(pdir / "expand" / "expand-items.py", "#!/usr/bin/env python3\nimport sys; sys.exit(3)\n")
+    proto = pdir / "protocol.json"; proto.write_text('{"name":"ocr"}')
+    try:
+        lib.run_expander(str(tmp_path), "ocr", "pr-1", str(proto), {"expand": {"hook": "expand-items"}})
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "expander" in str(e).lower()

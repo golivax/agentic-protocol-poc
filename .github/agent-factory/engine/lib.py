@@ -162,6 +162,34 @@ def build_manifest(items, id_from, max_legs):
     return {"count": len(legs), "legs": legs}
 
 
+def run_expander(dir_, pid, instance, proto_path, fanout_node):
+    """Run a dynamic fanout's trusted expander hook and return its items list.
+    Resolved from <protocol-dir>/expand/<hook>. Raises ValueError (fail loud) on
+    unresolved / non-executable / nonzero / non-JSON / missing-`items` output.
+
+    Runs in zone 1 (plan); the hook re-fetches the diff itself and is handed only
+    a read token via the ambient env (never the state PAT beyond plan's, never the
+    publish token). Under ENGINE_LOCAL the stub reads a fixture file instead."""
+    pdir = os.path.dirname(os.path.abspath(proto_path))
+    expand = fanout_node.get("expand", {})
+    res = resolve_executable(f"{pdir}/expand", expand.get("hook", ""), pdir, expand.get("exec", ""))
+    kind, path = res.split("\t", 1)
+    if kind == "ERR" or not os.access(path, os.X_OK):
+        raise ValueError(f"expander '{expand.get('hook')}' unresolved/not-exec: {path}")
+    env = dict(os.environ)
+    env.setdefault("PR", instance[len("pr-"):] if instance.startswith("pr-") else instance)
+    r = subprocess.run([path, dir_, instance], text=True, capture_output=True, env=env)
+    if r.returncode != 0:
+        raise ValueError(f"expander '{expand.get('hook')}' failed (exit {r.returncode}): {r.stderr.strip()}")
+    try:
+        parsed = json.loads(r.stdout.strip())
+    except (json.JSONDecodeError, ValueError):
+        raise ValueError(f"expander '{expand.get('hook')}' returned non-JSON: {r.stdout[:200]!r}")
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("items"), list):
+        raise ValueError(f"expander '{expand.get('hook')}' output missing 'items' array")
+    return parsed["items"]
+
+
 def state_by_id(protocol, state_id):
     """Return the state dict with the given id, or None."""
     for s in protocol.get("states", []):
