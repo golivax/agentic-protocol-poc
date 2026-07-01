@@ -12,6 +12,7 @@
       "branches": [
         {
           "id": "legion",
+          "label": "codebase overview",
           "workflow": "mm-legion-agent",
           "evidence": "legion.evidence.schema.json",
           "max_iterations": 1,
@@ -19,6 +20,7 @@
         },
         {
           "id": "codeset",
+          "label": "per-file context and co-change analysis",
           "workflow": "mm-codeset-agent",
           "evidence": "codeset.evidence.schema.json",
           "max_iterations": 1,
@@ -26,6 +28,7 @@
         },
         {
           "id": "ubiquitous-language",
+          "label": "domain modelling",
           "workflow": "mm-ubiquitous-language-agent",
           "evidence": "ubiquitous-language.evidence.schema.json",
           "max_iterations": 1,
@@ -33,6 +36,7 @@
         },
         {
           "id": "socratic",
+          "label": "architecture decision record",
           "states": [
             {
               "id": "phase1",
