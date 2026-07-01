@@ -2,6 +2,7 @@
 """Engine shared library. Importable by the engine scripts AND a thin CLI
 (`python3 lib.py <subcommand> ...`) for helpers the orchestrator calls inline."""
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -103,6 +104,33 @@ def write_join(d, pid, instance, fanout_path, data):
     f = join_marker_file(d, pid, instance, fanout_path)
     os.makedirs(os.path.dirname(f), exist_ok=True)
     dump_yaml(f, data)
+
+
+def manifest_file(d, pid, instance, tree_path):
+    """Path to a dynamic fanout's manifest. Unlike leg/join files this is a NEW
+    file with no legacy byte-identity constraint, so it keys by the FULL tree
+    path (never dropped by state_path) — always unique and non-empty, for the
+    top fanout (['review'] -> review.__manifest.yaml) and nested alike."""
+    base = f"{d}/{pid}/{instance}"
+    return f"{base}/{'.'.join(tree_path)}.__manifest.yaml"
+
+
+def read_manifest(d, pid, instance, tree_path):
+    """Read the manifest dict, or {} if it does not exist yet."""
+    f = manifest_file(d, pid, instance, tree_path)
+    return load_yaml(f) if os.path.isfile(f) else {}
+
+
+def write_manifest(d, pid, instance, tree_path, data):
+    f = manifest_file(d, pid, instance, tree_path)
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    dump_yaml(f, data)
+
+
+def leg_id(raw_key):
+    """Stable, filesystem-safe leg id from an item's raw id_from value.
+    A short sha1 hex is alnum by construction (no sanitizing needed)."""
+    return hashlib.sha1(str(raw_key).encode("utf-8")).hexdigest()[:8]
 
 
 def state_by_id(protocol, state_id):
