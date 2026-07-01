@@ -119,8 +119,8 @@ What is / isn't covered here:
   filesystem `inputs/<as>.json`); verified offline via walks over the minimal
   `dyn-fanout-stub` protocol (a real diff-parsing `expand-files` expander, `/dyn-stub`
   trigger), live-verification pending. Still deferred to **Spec B**: the real
-  `code-review-ocr` protocol, nested `from_fanout` resolution, and per-finding
-  nested fan-out.
+  `code-review-ocr` protocol, nested `from_fanout` resolution, per-finding
+  nested fan-out, and **matrix leg-input size (Spec B):** each dynamic leg's runtime item (`{path, diff}`) is threaded to its agent via `matrix.leg.inputs` → the plan job's `legs` output (a `$GITHUB_OUTPUT`, ~1 MB cap) and `strategy.matrix`. Fine for small fan-outs; before the real `code-review-ocr` protocol (many files × large diffs) this must switch to threading only the file `path` (agent re-fetches its own diff from the checkout) or staging the item to the state branch and passing a reference, to stay under the output/matrix/`workflow_dispatch` input limits.
 - **Expander credential-scoping (design spec §14), enforced:** `lib.run_expander`
   now builds the subprocess env from a strict allowlist, handing the expander
   only a read-only token (`EXPANDER_TOKEN`), never `STATE_REMOTE` /

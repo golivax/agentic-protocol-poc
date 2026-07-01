@@ -865,7 +865,7 @@ def test_run_merge_hook_zero_item_manifest_is_ok(tmp_path):
 EXPANDER = ".github/agent-factory/protocols/dyn-fanout-stub/expand/expand-files"
 
 
-def _run_expander(env_extra, cwd="."):
+def _run_expander(env_extra):
     env = {**os.environ, **env_extra}
     r = subprocess.run([EXPANDER, "/tmp/state", "pr-1"], capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
@@ -1047,6 +1047,9 @@ def test_dyn_legs_carry_per_leg_inputs(engine_env, tmp_path):
         assert "inputs" in leg, "dynamic leg must carry its runtime item"
         assert "file" in leg["inputs"], "keyed by the expand `as` name"
         assert "path" in leg["inputs"]["file"]
+    # per-leg correctness: the two legs must carry DIFFERENT items (not leg0's item cloned)
+    paths = [leg["inputs"]["file"]["path"] for leg in legs]
+    assert len(set(paths)) == len(paths), f"legs must carry distinct items, got {paths}"
 
 
 def test_static_fanout_legs_have_no_inputs(engine_env, tmp_path):

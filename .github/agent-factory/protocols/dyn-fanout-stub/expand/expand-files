@@ -10,7 +10,7 @@ Modes:
 
 Thresholds come from EXPAND_PARAMS (JSON of the node's `expand` object) with defaults.
 """
-import json, os, re, subprocess, sys
+import json, os, re, subprocess
 
 VENDOR_RE = re.compile(
     r'(^|/)(vendor|node_modules|dist|build|third_party|\.venv)(/|$)'
