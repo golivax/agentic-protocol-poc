@@ -56,3 +56,9 @@ def test_mrp_preflight_input_resolves_to_the_gate():
     assert by_as["preflight"]["path"] == gate_ev
     assert by_as["preflight"]["path"].endswith("/preflight-gate.evidence.json")
     assert not by_as["preflight"]["path"].endswith("/preflight.evidence.json")
+    # mrp also reads the mm-compliance leg DIRECTLY (nested in the preflight fanout),
+    # resolving to the same terminal judge evidence the gate reads — the path-aware
+    # resolver finds the preflight fanout at root scope and appends the sub-pipeline
+    # terminal. Same mechanism/path as test_preflight_gate_inputs_resolve_to_cluster_terminals.
+    assert by_as["mm-compliance"]["path"].endswith("/preflight.mm-compliance.mm-compliance-judge.evidence.json")
+    assert by_as["mm-compliance"]["kind"] == "evidence"
