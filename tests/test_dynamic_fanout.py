@@ -1005,3 +1005,31 @@ def test_state_path_multiphase_keeps_leading_id_singlephase_drops_it():
         {"id": "join", "kind": "join", "of": "review", "next": "done"}]}
     assert lib.state_path(mp, ["review", "abcd1234"]) == ["review", "abcd1234"]
     assert lib.state_path(sp, ["review", "abcd1234"]) == ["abcd1234"]
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — per-leg runtime item threaded to the agent via matrix.leg.inputs
+# ---------------------------------------------------------------------------
+
+
+def test_dyn_legs_carry_per_leg_inputs(engine_env, tmp_path):
+    from conftest import run_engine
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-13", STUB, "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
+    legs = action["legs"]
+    assert len(legs) == 2
+    for leg in legs:
+        assert "inputs" in leg, "dynamic leg must carry its runtime item"
+        assert "file" in leg["inputs"], "keyed by the expand `as` name"
+        assert "path" in leg["inputs"]["file"]
+
+
+def test_static_fanout_legs_have_no_inputs(engine_env, tmp_path):
+    from conftest import run_engine
+    # Regression: a static fanout's legs are byte-identical (no inputs key).
+    SF = str(ROOT / "tests/fixtures/simple-fanout/protocol.json")
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-13", SF, "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
+    assert all("inputs" not in leg for leg in action["legs"])

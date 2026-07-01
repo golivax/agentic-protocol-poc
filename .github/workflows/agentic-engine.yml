@@ -372,6 +372,7 @@ jobs:
           NODE_PATH: ${{ matrix.leg.path }}
           LEG_WORKFLOW: ${{ matrix.leg.workflow }}
           INPUTS_JSON: ${{ needs.plan.outputs.inputs_json }}
+          LEG_INPUTS: ${{ toJSON(matrix.leg.inputs) }}
           CHECKOUT_REF: ${{ needs.plan.outputs.checkout_ref }}
           SHA: ${{ needs.plan.outputs.head_sha }}
         run: |
@@ -380,7 +381,13 @@ jobs:
           LEGTOK=$(printf '%s' "$NODE_PATH" | tr '.' '-')
           [ -n "$LEGTOK" ] || LEGTOK="agent"
           CID="${{ github.run_id }}-${{ github.run_attempt }}-${LEGTOK}"
-          INPUTS="$INPUTS_JSON"; [ -n "$INPUTS" ] || INPUTS='{}'
+          # Prefer this leg's per-leg runtime item (dynamic fanout); fall back to the
+          # shared declared-inputs blob (static). LEG_INPUTS is 'null' when absent.
+          if [ -n "$LEG_INPUTS" ] && [ "$LEG_INPUTS" != "null" ]; then
+            INPUTS="$LEG_INPUTS"
+          else
+            INPUTS="$INPUTS_JSON"; [ -n "$INPUTS" ] || INPUTS='{}'
+          fi
           # ref/sha let an agent check out the analyzed code for either target kind.
           # Prefer the explicit checkout ref (PR head ref, or the ref a ref-target
           # START requested); fall back to the resolved SHA for ref-target CONTINUE
