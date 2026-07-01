@@ -3,8 +3,21 @@ instance: ref-main
 state: answering
 head_sha: 7bc622f46ffc60c3691cbadfa8567447611c1480
 gates:
-  state: open
-  history: []
+  state: answered
+  history:
+  - actor: radinshayanfar
+    answers:
+    - Q1.2.2
+    - Q1.5
+    - Q1.6
+    - Q4.9
+    - Q5.5.actionsMinutes
+    - Q3.2.rationale
+    - Q3.9.PughMatrix
+    - Q4.2.target
+    - Q4.6.target
+    - Q5.4.protocolTrust
+    - Q5.3.runbook
   questions:
   - id: Q1.2.2
     text: "Who is the intended adopter persona? `dist/install.sh` shows how a repo\
