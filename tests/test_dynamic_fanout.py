@@ -108,6 +108,30 @@ def test_run_expander_nonzero_raises(tmp_path):
         assert "expander" in str(e).lower()
 
 
+def test_run_expander_scrubs_sensitive_env(tmp_path, monkeypatch):
+    lib = _load_lib()
+    pdir = tmp_path / "proto"
+    (pdir / "expand").mkdir(parents=True)
+    _write_exec(pdir / "expand" / "expand-items.py", textwrap.dedent("""\
+        #!/usr/bin/env python3
+        import json, os, sys
+        open(os.path.join(sys.argv[1], "envprobe.json"), "w").write(json.dumps(dict(os.environ)))
+        print(json.dumps({"items": [{"path": "x"}]}))
+    """))
+    proto = pdir / "protocol.json"; proto.write_text('{"name":"ocr"}')
+    monkeypatch.setenv("STATE_REMOTE", "https://x-access-token:SECRET@github.com/o/r.git")
+    monkeypatch.setenv("PUBLISH_TOKEN", "SECRET_PAT")
+    monkeypatch.setenv("GH_TOKEN", "SECRET_PAT")
+    monkeypatch.setenv("EXPANDER_TOKEN", "read-only-tok")
+    node = {"expand": {"hook": "expand-items", "id_from": "$.path", "max_legs": 4, "as": "x"}}
+    lib.run_expander(str(tmp_path), "ocr", "pr-1", str(proto), node)
+    seen = json.loads((tmp_path / "envprobe.json").read_text())
+    assert "STATE_REMOTE" not in seen
+    assert seen.get("PUBLISH_TOKEN") is None
+    assert seen.get("GH_TOKEN") == "read-only-tok"     # replaced by the read token
+    assert json.loads(seen["EXPAND_PARAMS"])["max_legs"] == 4
+
+
 @pytest.mark.parametrize("policy,done,total,ok", [
     ("all", 3, 3, True), ("all", 2, 3, False),
     ("any", 1, 3, True), ("any", 0, 3, False),

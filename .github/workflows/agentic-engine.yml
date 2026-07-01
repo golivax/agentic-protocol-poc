@@ -252,6 +252,9 @@ jobs:
           # download each leg's mm-tree artifact by run_id. The job already holds
           # this PAT via STATE_REMOTE/GH_TOKEN, so this grants no new privilege.
           PUBLISH_TOKEN: ${{ secrets.POC_DISPATCH_TOKEN }}
+          # Read-only token for the expander subprocess (lib.run_expander scopes the
+          # expander to THIS token only; the broad PAT above never reaches it).
+          EXPANDER_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ steps.head.outputs.sha }}
           PROTO: ${{ inputs.protocol }}
