@@ -455,3 +455,74 @@ def test_validate_accepts_good_from_fanout(tmp_path):
         {"id": "m", "kind": "merge", "hook": "hk",
          "inputs": [{"from_fanout": "review", "as": "legs"}], "next": "done"}]}
     lib.validate_protocol(proto)  # no raise
+
+
+# ---------------------------------------------------------------------------
+# Task 9 — edge-case coverage: over-cap, expander-failure, zero-items
+# ---------------------------------------------------------------------------
+
+
+def test_dynamic_fanout_over_cap_fails_loud(engine_env, tmp_path):
+    """The committed dyn-fanout-badcap fixture emits 5 items against max_legs:2 —
+    build_manifest must fail loud (ValueError, uncaught by next.py's start/reset
+    arm) before any manifest/leg state is written."""
+    from conftest import run_engine
+    import os
+    proto = str(ROOT / "tests/fixtures/dyn-fanout-badcap/protocol.json")
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-1", proto, "start", env=engine_env)
+    assert rc != 0, f"expected fail-loud on over-cap, got rc=0. out={out}"
+    assert "max_legs" in (err + out)
+    # No manifest / legs should have been written for the aborted run.
+    d = str(tmp_path / "dyn-fanout-badcap" / "pr-1")
+    assert not os.path.isfile(d + "/review.__manifest.yaml")
+
+
+def test_dynamic_fanout_expander_failure_halts(engine_env, tmp_path):
+    """An expander hook that exits nonzero must halt next.py loud (ValueError from
+    lib.run_expander, uncaught), mirroring the subpipeline-each guard's inline
+    protocol-in-tmp_path pattern but with a failing expander instead of a copied
+    good one."""
+    import os, stat, json as _json
+    from conftest import run_engine
+    pdir = tmp_path / "proto"; (pdir / "expand").mkdir(parents=True)
+    hook = pdir / "expand" / "expand-items.py"
+    hook.write_text("#!/usr/bin/env python3\nimport sys; sys.stderr.write('boom\\n'); sys.exit(2)\n")
+    hook.chmod(hook.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    proto = {"name": "dyn-expander-fail", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "expand-items", "as": "file", "id_from": "$.path", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "join"},
+        {"id": "join", "kind": "join", "of": "review", "policy": "any", "next": "done"}]}
+    ppath = pdir / "protocol.json"; ppath.write_text(_json.dumps(proto))
+    out, err, rc = run_engine("next.py", str(tmp_path / "state"), "pr-1", str(ppath), "start", env=engine_env)
+    assert rc != 0, f"expected halt on expander failure, got rc=0. out={out}"
+    assert "expander" in (err + out).lower()
+
+
+def test_dynamic_fanout_zero_items_is_vacuous(engine_env, tmp_path):
+    """Zero-items is a vacuous fanout, not an error (spec §11): manifest is
+    written with count 0, no legs are seeded, and the emitted run-fanout carries
+    empty branches/legs so the engine still advances toward the join (whose
+    `all` policy is vacuously satisfied for 0/0)."""
+    import os, stat, json as _json
+    from conftest import run_engine, read_state_yaml
+    pdir = tmp_path / "proto"; (pdir / "expand").mkdir(parents=True)
+    hook = pdir / "expand" / "expand-items.py"
+    hook.write_text("#!/usr/bin/env python3\nimport json; print(json.dumps({'items': []}))\n")
+    hook.chmod(hook.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    proto = {"name": "dyn-zero", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "expand-items", "as": "file", "id_from": "$.path", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "join"},
+        {"id": "join", "kind": "join", "of": "review", "policy": "all", "next": "done"}]}
+    ppath = pdir / "protocol.json"; ppath.write_text(_json.dumps(proto))
+    out, err, rc = run_engine("next.py", str(tmp_path / "state"), "pr-1", str(ppath), "start", env=engine_env)
+    assert rc == 0, f"zero-items should be a vacuous success, got rc={rc}. err={err}"
+    d = str(tmp_path / "state" / "dyn-zero" / "pr-1")
+    man = read_state_yaml(d + "/review.__manifest.yaml")
+    assert man["count"] == 0 and man["legs"] == []
+    # The emitted run-fanout has no legs.
+    import json as __json
+    action = __json.loads(out.strip().splitlines()[-1])
+    assert action["action"] == "run-fanout"
+    assert action.get("legs", []) == []
