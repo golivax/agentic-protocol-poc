@@ -36,6 +36,8 @@ safe-outputs:
   # emitting a comment, so this capability stays unused (no status issue, no comment).
   add-comment:
     max: 1
+  noop:
+    report-as-issue: false
   threat-detection: false
 pre-agent-steps:
   - name: Materialize task context
