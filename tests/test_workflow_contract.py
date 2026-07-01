@@ -86,13 +86,22 @@ def test_engine_yml_derives_issue_instance_and_default_branch():
 
 def test_design_agent_lock_is_readonly_and_bundles_spec():
     t = _load("impl-feature-auto-design-agent.lock.yml")
-    assert "pull-requests: write" not in t  # read-only
-    # design opens no PR — guard BOTH the hyphenated source key and the
-    # underscored token gh-aw actually compiles to (the hyphen form alone is
-    # dead, since the compiler only ever emits create_pull_request).
+    # The AGENT job (the one running the LLM) is read-only. gh-aw's vetted
+    # safe_outputs/conclusion post-processing jobs legitimately carry issues/
+    # pull-requests write (needed for any declared safe-output), so we assert the
+    # invariants that actually matter for the design agent rather than a coarse
+    # whole-lock "no write" scan:
+    assert "contents: write" not in t       # design writes NO repo content (no code, no push)
+    # design opens no PR — guard both the hyphenated source key and the underscored
+    # token gh-aw compiles to (the compiler only ever emits create_pull_request).
     assert "create_pull_request" not in t and "create-pull-request" not in t
-    assert "evidence" in t                  # uploads evidence artifact
-    assert ".claude/skills" in t            # stages superpowers
+    # design produces NO auto per-run status issue: the default create-issue is
+    # suppressed by declaring a real safe-output (add-comment, which the prompt
+    # forbids the agent from emitting, so it stays inert).
+    assert "create_issue" not in t
+    assert "add_comment" in t                # the (inert) suppressor of the default create-issue
+    assert "evidence" in t                   # uploads evidence artifact
+    assert ".claude/skills" in t             # stages superpowers
 
 
 def test_implement_agent_lock_opens_pr():

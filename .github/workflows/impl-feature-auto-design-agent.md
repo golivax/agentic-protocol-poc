@@ -28,6 +28,15 @@ tools:
     - "ls:*"
     - "mkdir:*"
     - "cp:*"
+safe-outputs:
+  # The design agent produces NO GitHub writes — its only output is the evidence
+  # artifact (post-steps). But gh-aw auto-injects a default `create-issue` (a per-run
+  # status issue) whenever an agent declares no real safe-output. Declaring one
+  # real output suppresses that auto-injection; the agent's prompt forbids it from
+  # emitting a comment, so this capability stays unused (no status issue, no comment).
+  add-comment:
+    max: 1
+  threat-detection: false
 pre-agent-steps:
   - name: Materialize task context
     env:
