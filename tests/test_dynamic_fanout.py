@@ -168,3 +168,23 @@ def test_validate_accepts_wellformed_dynamic():
          "each": {"workflow": "w"}, "next": "j"},
         {"id": "j", "kind": "join", "of": "f", "policy": "quorum:50%"}]}
     lib.validate_protocol(proto)  # no raise
+
+
+def test_schema_and_runtime_agree_on_fractional_quorum():
+    """Regression: the schema policy pattern must not reject a fractional
+    percent the runtime join_policy_satisfied accepts (else protocol-lint
+    falsely reports INVALID). See code review of 84fb95e."""
+    import json as _json
+    jsonschema = pytest.importorskip("jsonschema")
+    lib = _load_lib()
+    # runtime accepts it
+    assert lib.join_policy_satisfied("quorum:33.3%", 4, 10) is True   # ceil(10*33.3/100)=4
+    # schema accepts it too
+    with open(ENGINE / "protocol.schema.json") as f:
+        schema = _json.load(f)
+    proto = {"name": "x", "states": [
+        {"id": "f", "kind": "fanout",
+         "expand": {"hook": "h", "as": "i", "id_from": "$.p", "max_legs": 8},
+         "each": {"workflow": "w"}, "next": "j"},
+        {"id": "j", "kind": "join", "of": "f", "policy": "quorum:33.3%"}]}
+    jsonschema.Draft7Validator(schema).validate(proto)   # must not raise

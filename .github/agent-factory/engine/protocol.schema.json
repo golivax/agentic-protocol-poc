@@ -237,7 +237,7 @@
         },
         "policy": {
           "type": "string",
-          "pattern": "^(all|any|quorum:(\\d+|\\d+%))$",
+          "pattern": "^(all|any|quorum:(\\d+|\\d+(\\.\\d+)?%))$",
           "description": "join: the AND-barrier policy — 'all' (default), 'any', or 'quorum:<N|P%>'."
         },
         "questions_from": {
