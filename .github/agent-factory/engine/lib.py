@@ -133,6 +133,35 @@ def leg_id(raw_key):
     return hashlib.sha1(str(raw_key).encode("utf-8")).hexdigest()[:8]
 
 
+def extract_key(item, id_from):
+    """Resolve a simple JSONPath (`$.a.b`) against an item dict. Only the
+    dotted-`$.`-rooted form is supported (YAGNI — no wildcards/filters)."""
+    if not id_from.startswith("$."):
+        raise ValueError(f"id_from must start with '$.', got {id_from!r}")
+    cur = item
+    for seg in id_from[2:].split("."):
+        if not isinstance(cur, dict) or seg not in cur:
+            raise ValueError(f"id_from {id_from!r} did not resolve on item {item!r}")
+        cur = cur[seg]
+    return cur
+
+
+def build_manifest(items, id_from, max_legs):
+    """Turn the expander's items list into a manifest dict. Fails loud on
+    over-cap (> max_legs) and on duplicate leg keys."""
+    if len(items) > max_legs:
+        raise ValueError(f"expander emitted {len(items)} items > max_legs {max_legs}")
+    legs, seen = [], {}
+    for item in items:
+        key = extract_key(item, id_from)
+        lid = leg_id(key)
+        if lid in seen:
+            raise ValueError(f"two items map to leg id '{lid}' (keys {seen[lid]!r} and {key!r})")
+        seen[lid] = key
+        legs.append({"id": lid, "key": key, "item": item})
+    return {"count": len(legs), "legs": legs}
+
+
 def state_by_id(protocol, state_id):
     """Return the state dict with the given id, or None."""
     for s in protocol.get("states", []):

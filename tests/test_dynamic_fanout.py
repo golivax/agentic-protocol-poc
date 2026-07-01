@@ -36,3 +36,33 @@ def test_leg_id_is_stable_and_fs_safe():
     c = lib.leg_id("src/b.go")
     assert a == b and a != c
     assert a.isalnum() and len(a) == 8
+
+
+def test_build_manifest_keys_and_bounds():
+    lib = _load_lib()
+    items = [{"path": "src/a.go"}, {"path": "src/b.go"}]
+    m = lib.build_manifest(items, id_from="$.path", max_legs=256)
+    assert m["count"] == 2
+    assert [leg["key"] for leg in m["legs"]] == ["src/a.go", "src/b.go"]
+    assert m["legs"][0]["id"] == lib.leg_id("src/a.go")
+    assert m["legs"][0]["item"] == {"path": "src/a.go"}
+
+
+def test_build_manifest_over_cap_fails_loud():
+    lib = _load_lib()
+    items = [{"path": f"f{i}"} for i in range(5)]
+    try:
+        lib.build_manifest(items, id_from="$.path", max_legs=3)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "5 items" in str(e) and "max_legs 3" in str(e)
+
+
+def test_build_manifest_duplicate_key_fails_loud():
+    lib = _load_lib()
+    items = [{"path": "dup"}, {"path": "dup"}]
+    try:
+        lib.build_manifest(items, id_from="$.path", max_legs=256)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "two items" in str(e).lower() and "dup" in str(e)
