@@ -138,6 +138,38 @@ def resolve_leg_ids(dir_, pid, instance, tree_path, fanout_node):
     return [b["id"] for b in (fanout_node.get("branches", []) if fanout_node else [])]
 
 
+def collect_fanout_evidence(dir_, pid, instance, tree_path, fanout_node):
+    """Assemble the reduce input for a `merge` with from_fanout: one row per leg
+    in the manifest, carrying its terminal state + persisted evidence (or None).
+    Reads from the state branch, never job outputs — resilient to matrix clobber.
+
+    Milestone scope: tree_path is the TOP fanout's single-element path
+    (['<id>']); leg files are resolved flat (branch=leg-id, no phase prefix),
+    matching the single-phase file layout. Nested from_fanout / multi-phase
+    phase-prefixed legs are milestone 2."""
+    man = read_manifest(dir_, pid, instance, tree_path)
+    rows = []
+    for leg in man.get("legs", []):
+        lid = leg["id"]
+        sf = state_file(dir_, pid, instance, lid)          # single-phase leg file
+        state = ""
+        if os.path.isfile(sf):
+            try:
+                state = load_yaml(sf).get("state", "") or ""
+            except Exception:
+                state = ""
+        evid_path = output_artifact_path(dir_, pid, instance, branch=lid, kind="evidence")
+        evidence = None
+        if os.path.isfile(evid_path):
+            try:
+                with open(evid_path) as f:
+                    evidence = json.load(f)
+            except (json.JSONDecodeError, ValueError):
+                evidence = None
+        rows.append({"leg_id": lid, "key": leg.get("key"), "state": state, "evidence": evidence})
+    return rows
+
+
 def leg_id(raw_key):
     """Stable, filesystem-safe leg id from an item's raw id_from value.
     A short sha1 hex is alnum by construction (no sanitizing needed)."""
@@ -1421,12 +1453,26 @@ def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
         proto = json.load(f)
     fo = _fanout_state(proto)
     phase = fo["id"] if (fo and is_multiphase(proto)) else None
+    merge_inputs = merge_state.get("inputs", [])
+    # from_fanout inputs have no `from` key — resolve_inputs only understands
+    # `from`, so keep them out of that call and handle them in the loop below.
+    plain_inputs = [inp for inp in merge_inputs if "from" in inp]
     # Branch-id refs resolve against branch leg outputs (Plan 2 resolve_inputs).
     resolved = resolve_inputs(proto, dir_, pid, instance,
                               consuming_branch=None, consuming_phase=phase,
-                              inputs=merge_state.get("inputs", []))
+                              inputs=plain_inputs)
     workdir = tempfile.mkdtemp(prefix="merge-")
     materialize_inputs(resolved, workdir)
+    for inp in merge_inputs:
+        if inp.get("from_fanout"):
+            fo_id = inp["from_fanout"]
+            fo_node = state_by_id(proto, fo_id)
+            fo_tree_path = [fo_id]  # top fanout; nested merges pass full path (milestone 2)
+            rows = collect_fanout_evidence(dir_, pid, instance, fo_tree_path, fo_node)
+            inputs_dir = os.path.join(workdir, "inputs")
+            os.makedirs(inputs_dir, exist_ok=True)
+            with open(os.path.join(inputs_dir, f"{inp['as']}.json"), "w") as f:
+                json.dump(rows, f)
     res = resolve_executable(f"{pdir}/publish", merge_state.get("hook", ""), pdir, "")
     kind, path = res.split("\t", 1)
     if kind == "ERR" or not os.access(path, os.X_OK):

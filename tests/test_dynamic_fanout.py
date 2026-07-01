@@ -360,3 +360,48 @@ def test_dynamic_join_policy_all_one_failed_fails(tmp_path):
     assert "event_type=protocol-continue" not in out, out
     inst = _verify_instance(origin, tmp_path / "verify", pid, "pr-1")
     assert inst["joined"] is True
+
+
+def test_collect_fanout_evidence_tags_state(tmp_path):
+    lib = _load_lib()
+    d, pid, inst = str(tmp_path), "ocr", "pr-1"
+    lib.write_manifest(d, pid, inst, ["review"],
+                       {"count": 2, "legs": [{"id": "aa", "key": "a", "item": {"path": "a"}},
+                                             {"id": "bb", "key": "b", "item": {"path": "b"}}]})
+    base = f"{d}/{pid}/{inst}"
+    os.makedirs(base, exist_ok=True)
+    # Leg aa: done, with evidence.  Leg bb: failed, no evidence.
+    lib.dump_yaml(f"{base}/aa.yaml", {"state": "done"})
+    with open(f"{base}/aa.evidence.json", "w") as f:
+        json.dump({"finding": 1}, f)
+    lib.dump_yaml(f"{base}/bb.yaml", {"state": "failed"})
+    rows = lib.collect_fanout_evidence(d, pid, inst, ["review"], {"expand": {"hook": "h"}})
+    assert rows == [
+        {"leg_id": "aa", "key": "a", "state": "done", "evidence": {"finding": 1}},
+        {"leg_id": "bb", "key": "b", "state": "failed", "evidence": None},
+    ]
+
+
+def test_run_merge_hook_from_fanout_reduces(tmp_path):
+    lib = _load_lib()
+    pid, inst = "dyn-fanout-flat", "pr-1"
+    d = str(tmp_path)
+    # Seed a manifest + two leg states/evidence as if the fanout had run.
+    lib.write_manifest(d, pid, inst, ["review"],
+                       {"count": 2, "legs": [{"id": "aa", "key": "src/a.go", "item": {"path": "src/a.go"}},
+                                             {"id": "bb", "key": "src/b.go", "item": {"path": "src/b.go"}}]})
+    base = f"{d}/{pid}/{inst}"
+    os.makedirs(base, exist_ok=True)
+    lib.dump_yaml(f"{base}/aa.yaml", {"state": "done"})
+    with open(f"{base}/aa.evidence.json", "w") as f:
+        json.dump({"finding": 1}, f)
+    lib.dump_yaml(f"{base}/bb.yaml", {"state": "done"})
+    with open(f"{base}/bb.evidence.json", "w") as f:
+        json.dump({"finding": 2}, f)
+    proto = str(ROOT / "tests/fixtures/dyn-fanout-flat/protocol.json")
+    with open(proto) as f:
+        proto_dict = json.load(f)
+    merge_state = next(s for s in proto_dict["states"] if s.get("kind") == "merge")
+    result = lib.run_merge_hook(d, pid, inst, proto, merge_state)
+    assert result["conclusion"] == "success"
+    assert "reduced 2/2 legs" in result["summary"]
