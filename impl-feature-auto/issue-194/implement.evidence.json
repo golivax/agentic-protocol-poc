@@ -1,0 +1,1 @@
+{"summary":"Added lib.is_terminal_state(state)->bool returning True for done/failed/blocked with 8 pytest cases; PR opened on impl-feature-auto/issue-194","pr_branch":"impl-feature-auto/issue-194","run_id":"28524329702"}

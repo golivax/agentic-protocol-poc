@@ -1,7 +1,12 @@
 protocol: impl-feature-auto
 instance: issue-194
-state: implement
+state: done
 iteration: 1
 gates: {}
 head_sha: 65e1a2b941557f867c31eaa6d8d9cdcfb28519a5
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28524329702'
+  checks:
+    implement-schema-valid: pass
+  feedback: ''
