@@ -1,0 +1,74 @@
+protocol: recover-mental-model-interactive
+instance: ref-main
+state: answering
+head_sha: 276d7e4fbf1a19943851fe24d76d2debc1f36d0d
+gates:
+  state: open
+  history: []
+  questions:
+  - id: Q1.2
+    text: "Who are the primary users \u2014 a platform/DevEx team, an OSS maintainer,\
+      \ or an internal enterprise tooling group? (Product Owner)"
+  - id: Q1.4
+    text: "Why was this built \u2014 was the motivating pain making LLM code-review\
+      \ trustworthy via evidence, standardising many agentic workflows on one engine,\
+      \ or serving as a research vehicle for the theory-recovery methodology? (Product\
+      \ Owner, Domain Expert)"
+  - id: Q1.5
+    text: "What are the success metrics \u2014 reviewer time saved, defect-escape\
+      \ rate, adoption count, or something else? (Product Owner)"
+  - id: Q1.6
+    text: "What is the segment/priority ordering across users \u2014 which class (protocol\
+      \ authors vs. reviewers vs. UI integrators) is the primary bet? (Product Owner)"
+  - id: Q2.2.UC.RunCodeReview.Postconditions
+    text: "What does a completed review obligate \u2014 must the PR author act on\
+      \ CHANGES_REQUESTED, and is APPROVE advisory or merge-blocking? (Product Owner,\
+      \ Domain Expert)"
+  - id: Q2.5.TargetAcceptance
+    text: "What is the release/acceptance gate \u2014 what policy governs shipping\
+      \ a new engine version, bumping min_gh_aw_version, or promoting a stub protocol\
+      \ to production? (Product Owner)"
+  - id: Q3.9.RecursiveUnification.Context
+    text: "Why was the (BRANCH,PHASE,SUBSTATE) triple replaced by one NODE_PATH sequencer\
+      \ \u2014 what broke or became unmaintainable, and is deep nesting a supported\
+      \ goal or an accident of generality? (Architect)"
+  - id: Q3.9.StateInGit.Rationale
+    text: "Why is durable state stored on a git branch (CAS) rather than a real datastore\
+      \ \u2014 what trade-offs (latency, retry contention, the 256-file/leg limits)\
+      \ were consciously accepted? (Architect)"
+  - id: Q3.9.FirewallDisabled.PughMatrix
+    text: Which alternatives to disabling the egress firewall (allowlisted proxy,
+      self-hosted gateway, vendor default) were actually considered, and what is the
+      acceptance criterion for restoring the firewall in production? (Architect, Operations)
+  - id: Q3.9.ModelPin.Rationale
+    text: "Why is every agent pinned to claude-sonnet-4-6, and what would trigger\
+      \ a re-pin \u2014 cost, capability, or availability? (Architect)"
+  - id: Q4.4.target
+    text: "What is the usability/author-experience target \u2014 for example, is a\
+      \ new protocol expected to be authorable in under a day, or is there an onboarding-time\
+      \ goal? (Architect)"
+  - id: Q4.6.target
+    text: "What is the security target and threat model \u2014 is the disabled firewall\
+      \ acceptable for production, what compliance scope applies, and is bearer-token-only\
+      \ sufficient for the API? (Architect, Operations)"
+  - id: Q4.9
+    text: "Which quality characteristic has priority among Reliability, Security,\
+      \ and Maintainability, and where does Performance rank \u2014 required to fill\
+      \ the Pugh matrices in the Q3.9 ADRs? (Architect)"
+  - id: Q5.1.TrackedDebtLocation
+    text: "Where is technical debt formally tracked and prioritised \u2014 STATUS.md/BACKLOG.md\
+      \ narrate it but there is no in-code TODO/FIXME index or issue-tracker pointer?\
+      \ (Architect, Developer)"
+  - id: Q5.3.SLO
+    text: "What are the operational SLOs \u2014 acceptable engine-run latency, gate-response\
+      \ SLA, and API availability targets? (Operations)"
+  - id: Q5.4.VendorTrust
+    text: What is the vetting and secret-rotation policy for the ANTHROPIC_* secrets
+      and the custom endpoint host, which are unaudited trust anchors in code? (Architect,
+      Operations)
+  - id: Q5.5.ThroughputTarget
+    text: What are the scaling targets for concurrent instances and per-repo throughput,
+      and are the current caps (32 legs, depth 5, 500-run history) conservative or
+      binding? (Architect, Operations)
+  channel: issue
+  issue: '209'
