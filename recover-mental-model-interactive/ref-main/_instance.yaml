@@ -3,4 +3,4 @@ instance: ref-main
 head_sha: 7bc622f46ffc60c3691cbadfa8567447611c1480
 phase: combine
 joined: true
-phase_label: Combine
+phase_label: "\u2705 done"
