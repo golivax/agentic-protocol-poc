@@ -97,13 +97,14 @@ def _cluster_inputs(inputs_dir, per_leg, grades):
         (inputs_dir / f"{name}.json").write_text(json.dumps(obj))
 
 
-def _conclude(per_leg, blocking, tmp_path, grades=None, omit_gather=(), garble_gather=()):
+def _conclude(per_leg, blocking, tmp_path, grades=None, omit_gather=(), garble_gather=(), advisory=False):
     """Write gather evidence (scope+verdict) + cluster outputs (grades), then run the hook.
 
     per_leg     : {leg_id: gather_obj}
     grades      : {leg_id: [graded_finding, ...]}  (escalation grades, optional)
     omit_gather : leg ids whose gather file to skip (fail-safe: missing evidence)
     garble_gather: leg ids whose gather file to write as verdict-less junk (fail-safe)
+    advisory    : set PREFLIGHT_ADVISORY=1 (advisory preflight mode)
     """
     grades = grades or {}
     state_dir = tmp_path / "state"
@@ -121,6 +122,10 @@ def _conclude(per_leg, blocking, tmp_path, grades=None, omit_gather=(), garble_g
     gate_ev.write_text(json.dumps({"legs": [], "examined": []}))
     env = dict(os.environ)
     env["BLOCKING"] = "1" if blocking else "0"
+    if advisory:
+        env["PREFLIGHT_ADVISORY"] = "1"
+    else:
+        env.pop("PREFLIGHT_ADVISORY", None)
     env["CONCLUDE_STATE_DIR"] = str(state_dir)
     env["CONCLUDE_INPUTS_DIR"] = str(inputs)
     env["VERDICT_OUT"] = str(tmp_path / "verdict.json")
@@ -364,3 +369,66 @@ def test_live_pr7_replay_blocks_with_real_reasons(tmp_path):
     # mm compliant + security PASS + tests adequate => those legs add no reason
     assert not any("mental model" in r for r in out["reasons"])
     assert not any("LOCKED" in r for r in out["reasons"])
+
+
+# ── Advisory mode (PREFLIGHT_ADVISORY) — never blocks, surfaces would-block ──
+
+def _floors_block_case():
+    """A leg set that blocks in enforcing mode (underspec + underplan)."""
+    legs = _all_clear()
+    legs["plan-implements-spec"] = _plan_leg("underspec", code_changed=True, spec_present=True, plan_present=True)
+    legs["code-implements-plan"] = _code_leg("underplan", code_changed=True, plan_present=True)
+    return legs
+
+
+def test_advisory_does_not_block_but_surfaces_would_block(tmp_path):
+    legs = _floors_block_case()
+    # sanity: enforcing mode DOES block
+    enf, _v, _s = _conclude(legs, False, tmp_path / "enf")
+    assert enf["blocked"] is True and enf["conclusion"] == "blocked"
+    # advisory mode: same findings, but never blocks
+    adv, vpath, _s = _conclude(legs, False, tmp_path / "adv", advisory=True)
+    assert adv["blocked"] is False
+    assert adv["conclusion"] == "advisory"
+    assert adv["advisory"] is True
+    # the would-block reasons are surfaced (as advisory) not dropped
+    blob = " ".join(adv["warnings"])
+    assert "underspec" in blob and "underplan" in blob, adv["warnings"]
+    # verdict.json records the advisory verdict + the would_block list
+    v = json.loads(vpath.read_text())
+    verdict = next(r for r in v["records"] if r.get("type") == "verdict")
+    assert verdict["advisory"] is True and verdict["blocked"] is False
+    assert any("underspec" in r for r in verdict["would_block"])
+
+
+def test_advisory_security_locked_is_not_blocking(tmp_path):
+    """Per the decision, security LOCKED_VIOLATION also goes advisory."""
+    legs = _all_clear()
+    legs["security"] = _security_leg("LOCKED_VIOLATION")
+    adv, _v, _s = _conclude(legs, False, tmp_path, advisory=True)
+    assert adv["blocked"] is False and adv["conclusion"] == "advisory"
+    assert any("LOCKED_VIOLATION" in w for w in adv["warnings"]), adv["warnings"]
+
+
+def test_advisory_engine_blocking_still_does_not_block(tmp_path):
+    """Even the engine BLOCKING signal is advisory-only in advisory mode."""
+    adv, _v, _s = _conclude(_floors_block_case(), blocking=True, tmp_path=tmp_path, advisory=True)
+    assert adv["blocked"] is False and adv["conclusion"] == "advisory"
+
+
+def test_advisory_all_clear_is_clear(tmp_path):
+    adv, _v, _s = _conclude(_all_clear(), False, tmp_path, advisory=True)
+    assert adv["blocked"] is False
+    assert "clear" in adv["summary"].lower()
+
+
+def test_advisory_off_by_default_still_blocks(tmp_path):
+    """Opt-in: without the flag, a blocking case still blocks (regression guard)."""
+    out, _v, _s = _conclude(_floors_block_case(), False, tmp_path)
+    assert out["blocked"] is True and out["conclusion"] == "blocked"
+
+
+def test_advisory_comment_says_advisory(tmp_path):
+    _out, _v, stderr = _conclude(_floors_block_case(), False, tmp_path, advisory=True)
+    assert "advisory" in stderr.lower(), stderr
+    assert "/override" not in stderr, stderr  # no override notice in advisory mode
