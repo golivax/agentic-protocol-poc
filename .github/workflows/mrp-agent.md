@@ -58,10 +58,19 @@ post-steps:
   # evidence. Both run if: always() so a clean-absence still yields a valid pack.
   - name: Assemble MRP pack (mrp.json)
     if: always()
-    run: python3 .github/agent-factory/protocols/code-review/scripts/mrp/assemble-mrp.py /tmp/gh-aw/task-context.json /tmp/gh-aw/agent/agent-out.json /tmp/gh-aw/agent/pr.json > /tmp/gh-aw/mrp.json
+    env:
+      PROTO_DIR: "${{ fromJSON(github.event.inputs.aw_context || '{}').protocol_dir }}"
+    # Resolve THIS protocol's scripts/ (aw_context.protocol_dir); fall back to code-review.
+    run: |
+      BASE="${PROTO_DIR:-.github/agent-factory/protocols/code-review}"
+      python3 "$BASE/scripts/mrp/assemble-mrp.py" /tmp/gh-aw/task-context.json /tmp/gh-aw/agent/agent-out.json /tmp/gh-aw/agent/pr.json > /tmp/gh-aw/mrp.json
   - name: Derive engine evidence
     if: always()
-    run: python3 .github/agent-factory/protocols/code-review/scripts/mrp/to-evidence.py /tmp/gh-aw/mrp.json /tmp/gh-aw/evidence.json
+    env:
+      PROTO_DIR: "${{ fromJSON(github.event.inputs.aw_context || '{}').protocol_dir }}"
+    run: |
+      BASE="${PROTO_DIR:-.github/agent-factory/protocols/code-review}"
+      python3 "$BASE/scripts/mrp/to-evidence.py" /tmp/gh-aw/mrp.json /tmp/gh-aw/evidence.json
   - name: Upload MRP pack
     if: always()
     uses: actions/upload-artifact@v4
