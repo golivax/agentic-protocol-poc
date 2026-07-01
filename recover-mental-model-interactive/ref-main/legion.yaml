@@ -1,0 +1,6 @@
+protocol: recover-mental-model-interactive
+instance: ref-main
+state: recover
+iteration: 1
+gates: {}
+history: []

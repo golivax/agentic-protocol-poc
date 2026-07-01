@@ -1,0 +1,6 @@
+protocol: recover-mental-model-interactive
+instance: ref-main
+head_sha: 7bc622f46ffc60c3691cbadfa8567447611c1480
+phase: recover
+joined: false
+phase_label: recover mental model (interactive)
