@@ -1,0 +1,61 @@
+{
+  "spec_path": "docs/superpowers/specs/2026-07-01-is-terminal-state-design.md",
+  "plan_path": "docs/superpowers/plans/2026-07-01-is-terminal-state.md",
+  "summary": "Add lib.is_terminal_state(state) -> bool to the engine's lib.py (returns True for 'done', 'failed', 'blocked'; False for everything else including None/non-strings). One task: TDD — write tests, watch them fail, add the single-expression function, verify all tests pass, commit. No call-site refactoring, no CLI subcommand, no new deps.",
+  "run_id": "28491049746",
+  "ledger": [
+    {
+      "id": "L1",
+      "category": "DECISION",
+      "what": "New dedicated test module `tests/test_lib_is_terminal_state.py` rather than co-locating in an existing module",
+      "why": "The issue says 'focused pytest unit tests'; existing test modules are named per concept (test_decide.py for decide(), test_correlation.py for match_run_by_cid, etc.); a dedicated module follows the established repo convention and keeps the new tests easily discoverable.",
+      "what_i_did": "Created a new `tests/test_lib_is_terminal_state.py` module in the plan; it imports lib the same way test_decide.py and test_correlation.py do (sys.path + ENGINE path prefix).",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "A new file only; zero impact on existing tests or production code."
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Merging the tests into another module is a trivial git move/edit; no downstream consumers depend on this file's name."
+      },
+      "revisit_if": "Implementer prefers co-locating with an existing lib-unit test module such as test_correlation.py."
+    },
+    {
+      "id": "L2",
+      "category": "ASSUMPTION",
+      "what": "The three terminal states are exactly `\"done\"`, `\"failed\"`, `\"blocked\"` — no others exist or are planned",
+      "why": "The issue specifies them explicitly. PHASE_LABEL_DEFAULTS at lib.py:586-591 confirms these are the engine-level terminal head keys; 'setup' is the only other entry and is a transient initial state. Usage in advance.py and next.py corroborates: done/failed/blocked are the only values written as final process states.",
+      "what_i_did": "Verified in .github/agent-factory/engine/lib.py lines 586-591 (PHASE_LABEL_DEFAULTS) and cross-checked against advance.py and next.py grep output showing done/failed/blocked as the only written final states.",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Defines the function's exact contract. Any future terminal-state extension would need to update this set, but that is a trivial one-line change with no cascading effects."
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Adding a fourth terminal state is a one-line set expansion in the function body; the function has no side effects and no downstream callers to update in this change."
+      },
+      "revisit_if": "A new terminal state (beyond done/failed/blocked) is added to the engine protocol.",
+      "verified": true
+    },
+    {
+      "id": "L3",
+      "category": "DECISION",
+      "what": "No `_cli()` subcommand added for `is_terminal_state`",
+      "why": "The issue scopes the change to 'add the helper + tests only'; the CLI in _cli() is for orchestrator shell use; no workflow currently needs to call this predicate from a shell run: step; adding an unneeded subcommand would be YAGNI.",
+      "what_i_did": "Omitted from _cli(); the function is library-only (callers import lib and call lib.is_terminal_state()).",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "The CLI is not changed; existing orchestrator steps are unaffected."
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Adding a subcommand later is a purely additive change; no existing code would need modification."
+      },
+      "revisit_if": "An orchestrator workflow step needs to call is_terminal_state from a shell run: block."
+    }
+  ],
+  "read_these_first": ["L2", "L1", "L3"]
+}
