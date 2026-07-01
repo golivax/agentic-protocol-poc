@@ -1,0 +1,60 @@
+= ADR-002: Durable state is a YAML file on a git branch advanced by CAS
+:doctype: article
+
+// Nygard-format ADR synthesized from the Q3.9.StateInGit leaves.
+
+== Status
+
+Accepted (implemented) [lib.py:645-683, README.md:69-70].
+
+== Context
+
+A workflow run is one transition of a state machine, and compute is ephemeral — the
+engine holds no long-lived driver process [CLAUDE.md]. The state therefore needs a
+durable store that survives between runs and is re-derivable on every wake-up.
+
+The team's driving reason is that everything should be on version control (team
+answer). The audit-trail and no-extra-infrastructure benefits follow from this: the
+full history of any instance is `git log agentic-state -- <protocol>/<instance>.yaml`
+[CLAUDE.md].
+
+== Decision
+
+Store durable state as a YAML file on the `agentic-state` git branch, advanced only
+by fast-forward compare-and-swap; compute stays ephemeral (one transition per run)
+[lib.py:645-683, CLAUDE.md, README.md:69-70].
+
+== Consequences
+
+* Full, native audit trail per instance via git history [CLAUDE.md].
+* No external datastore to provision, secure, or operate — everything is on version
+  control (team answer).
+* Writes serialize via fast-forward-only push with up to 5 bounded rebase retries;
+  each node writes only its own file, so CAS has no cross-node contention
+  [lib.py:663-683].
+* Accepted trade-offs (latency of git operations, CAS retry contention under
+  concurrency, and the matrix-leg file-count limits) are inherent to the git-backed
+  approach; their acceptable bounds are not quantified because this is only a POC for
+  now (team answer).
+
+== Pugh Matrix
+
+Baseline: a hosted datastore (e.g. DynamoDB / a workflow-native store). Priority
+quality goal: Reliability (team answer).
+
+[cols="2,1,1",options="header"]
+|===
+| Quality goal | Hosted datastore (baseline) | Git-branch CAS (chosen)
+| Reliability (priority) | 0 | +1
+| Portability / no-infra | 0 | +1
+| Auditability | 0 | +1
+| Performance (write latency) | 0 | -1
+| Scaling under contention | 0 | -1
+| *Total* | *0* | *+1*
+|===
+
+Git-branch CAS wins on Reliability (fast-forward-only, never force-pushed,
+missing-state recovery), Portability (no datastore to operate), and Auditability
+(native history) — the last aligning directly with the team's "everything on version
+control" rationale (team answer). It concedes write latency and contention scaling;
+those concessions are accepted because this is only a POC for now (team answer).

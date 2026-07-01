@@ -1,0 +1,64 @@
+= ADR-003: Disable the gh-aw egress firewall for the custom Anthropic endpoint
+:doctype: article
+
+// Nygard-format ADR synthesized from the Q3.9.FirewallDisabled leaves.
+
+== Status
+
+Accepted (implemented), declared as the biggest security weakening [*-agent.md:6,
+:8, CLAUDE.md, docs/STATUS.md:338-367].
+
+== Context
+
+The agent's LLM inference goes to a custom Anthropic endpoint that cannot be carried
+in AWF's static allowlist, so the gh-aw egress firewall cannot reach it as
+configured [CLAUDE.md]. The agent nevertheless stays read-only and never holds the
+state PAT [CLAUDE.md].
+
+Which alternatives were considered (allowlisted proxy, self-hosted gateway, vendor
+default) and the acceptance criterion for restoring the firewall in production are
+deferred: this is only a POC for now (team answer). From an ops standpoint, what it
+would take to run agents behind an allowlisted egress path in production is likewise
+deferred for the same reason (team answer).
+
+== Decision
+
+Set `strict: false` + `sandbox.agent: false` to disable the gh-aw egress firewall so
+the custom Anthropic endpoint is reachable [*-agent.md:6, :8, CLAUDE.md]. The agent
+remains read-only and credential-isolated from the engine [CLAUDE.md].
+
+== Consequences
+
+* The agent's outbound network is unrestricted — the self-declared biggest security
+  weakening; it must not be copied to production without restoring the firewall
+  [CLAUDE.md, docs/STATUS.md:338-367].
+* The real firewall and the checks-execute-agent-code path are explicitly not
+  exercised by the PoC [docs/STATUS.md:538-551].
+* The residual protection is the four-zone credential isolation: the agent never
+  holds the state PAT and cannot write state [CLAUDE.md].
+* A production acceptance criterion for re-enabling egress control remains an open
+  gap because this is only a POC for now (team answer).
+
+== Pugh Matrix
+
+Baseline: the gh-aw vendor-default egress firewall (which cannot reach the custom
+endpoint). Priority quality goal: Reliability (team answer). Alternatives were not
+scored in code; the columns below are the design options named in the OPEN leaf, and
+only the chosen option is implemented — the others' scores are indicative pending the
+deferred production evaluation (team answer).
+
+[cols="2,1,1,1,1",options="header"]
+|===
+| Quality goal | Vendor-default firewall (baseline) | Disable firewall (chosen) | Allowlisted proxy | Self-hosted gateway
+| Reliability (priority) — endpoint reachable | -1 | +1 | +1 | +1
+| Security | 0 | -1 | +1 | +1
+| Usability / setup effort | 0 | +1 | -1 | -1
+| Portability | 0 | +1 | 0 | -1
+| *Total* | *-1* | *+2* | *+1* | *0*
+|===
+
+Disabling the firewall maximizes short-term Reliability (the endpoint is reachable)
+and Usability (no proxy to stand up) at a direct Security cost. For a production
+posture the allowlisted-proxy or self-hosted-gateway columns recover Security; which
+to adopt, and the acceptance criterion for restoring egress control, is deferred
+because this is only a POC for now (team answer).

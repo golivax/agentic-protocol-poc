@@ -1,0 +1,130 @@
+= Product Requirements Document — Agentic Protocol Engine
+:doctype: book
+:toc: left
+:sectnums:
+
+// Synthesized by Socratic Code-Theory Recovery, Phase 2, from the Q1 branch of
+// QUESTION_TREE-agentic-protocol-engine.adoc plus team answers in
+// OPEN_QUESTIONS-agentic-protocol-engine.adoc.
+// Code-derived claims cite [file:line] evidence. Team-supplied facts are marked
+// (team answer). Deferred items are left as explicit gaps.
+
+== Problem Statement
+
+The Agentic Protocol Engine is a generic state machine for running reliable,
+multi-step *agentic processes on GitHub*: you declare a protocol as data (phases,
+agent steps, deterministic checks, human gates) and one engine drives it, plus a
+read-only visibility REST API over the engine's state [pyproject.toml:2,
+pyproject.toml:4, README.md:1-6].
+
+The motivating pain is to make sure agentic workflows follow specific pathways
+(team answer). LLM agents left to their own devices produce confident prose and
+skip steps; this engine exists so that every step of an agentic process proceeds
+through predefined stages that are verified deterministically rather than trusted.
+The originating problem, in domain terms, is the same: guaranteeing that agentic
+workflows follow their intended pathway (team answer).
+
+The engine enforces this through control inversion relative to porch/gh-aw: the
+engine drives and the agent is dispatched — the agent exists only when the engine
+spawns it, can affect the world only through an `evidence.json` artifact, and is
+gone before the engine writes state, so it cannot skip the engine [README.md:42-45].
+
+== Target Users
+
+The primary user is an OSS maintainer (team answer).
+
+The code exposes three operator roles and a distinct author role:
+
+* *Reviewer / requester* — issues slash commands on a PR (e.g. `/review`,
+  `/override`, `/approve`, `/request-changes`, `/reject`)
+  [.github/agent-factory/protocols/code-review/protocol.json:6-11,
+  agentic-orchestrator.yml:14-21].
+* *Approver* — answers a human gate.
+* *UI / automation caller* — triggers ref-keyed runs via `workflow_dispatch`
+  [agentic-orchestrator.yml:14-21].
+* *Protocol author* — writes a protocol directory (protocol.json + evidence
+  schemas + checks + publish hooks) and never edits the engine; served by the
+  authoring hub and the lint/visualize tool
+  [CLAUDE.md, docs/AUTHORING.md, .github/agent-factory/engine/protocol-lint.py:82-115].
+
+The priority ordering across these user classes (protocol authors vs. reviewers
+vs. UI integrators) is deferred and must be resolved before it can drive
+segmentation decisions.
+
+== Consumption Channels
+
+The product is consumed through four channels [agentic-orchestrator.yml:14-21,
+api/app.py:78-171, dist/install.sh:337-359]:
+
+. GitHub PR/issue *comments* (slash commands).
+. *workflow_dispatch* (a UI/API acting against a ref).
+. A read-only *REST API* (`api/app.py`) for visibility.
+. An *installer CLI* (`dist/install.sh`) that drops the engine into another repo.
+
+== Goals
+
+* Drive gh-aw agents through porch-style protocols reliably: declare a protocol as
+  data, demand structured evidence, verify it deterministically, and keep
+  engine/agent credentials separate [README.md:1-6, README.md:42-49,
+  README.md:64-66].
+* Guarantee that a workflow proceeds only through its predefined steps (team
+  answer) — the durable-state / deterministic-check machinery is in service of
+  this goal.
+* Let a protocol author add a new protocol without touching the engine
+  [CLAUDE.md].
+
+== Success Criteria
+
+Success is guaranteeing that workflows proceed with the predefined steps (team
+answer). No numeric metric, SLO, or KPI is encoded in the code; the API computes
+`action_minutes_approx` as an operational rollup [api/state_reader.py:284-291] but
+the code never states what outcome counts as success. Beyond the "predefined-steps"
+criterion, quantified success targets (reviewer time saved, defect-escape rate,
+adoption count) are not defined.
+
+== Scope Boundaries
+
+In scope — the shipped protocols and surfaces:
+
+* *code-review* — `preflight` (agent gate) → `review` (fanout to `grumpy` +
+  `security` legs) → `join` (AND-barrier) → `approval` (human gate) → `done`
+  [code-review/protocol.json:16, :38, :71, :77, :81].
+* *recover-mental-model* and *recover-mental-model-interactive* — four parallel
+  recovery methods → join → combine to an orphan `_mental_model` branch
+  [recover-mental-model/protocol.json:9-74].
+* *deep-review-stub* — a depth-4 nested tree exercising the recursive engine
+  [deep-review-stub/protocol.json:6-12].
+* *impl-feature-auto*, *dyn-fanout-stub* — autonomous implementation and
+  runtime-derived fanout [impl-feature-auto/protocol.json:6-40,
+  dyn-fanout-stub/protocol.json:9-14].
+* The read-only visibility REST API [api/app.py:88-171].
+* The installer that drops the engine + chosen protocols into a repo
+  [dist/install.sh:337-359].
+
+External context is limited to GitHub (events + Actions runs + git branches as the
+state store), a custom Anthropic LLM endpoint (agent inference), and API consumers;
+nothing else crosses the boundary [agentic-orchestrator.yml:9-31,
+api/github_client.py:34-69, recover-mental-model/publish/push-mental-model.py].
+
+== Constraints
+
+* The whole system is currently a proof of concept (team answer): production
+  security, scaling, SLO, and vendor-trust bars are deliberately deferred (see the
+  Open Questions section and the arc42 quality and risk chapters).
+* Runtime engine needs only Python 3.10+ + PyYAML; the API adds
+  fastapi/httpx/uvicorn; gh-aw ≥ 0.77.0 is required; the agent model is pinned to
+  `claude-sonnet-4-6` [pyproject.toml:6, pyproject.toml:7-15, dist/manifest.json:5].
+
+== Open Questions
+
+* *User segment priority* — which class (protocol authors vs. reviewers vs. UI
+  integrators) is the primary bet is deferred and not yet decided (team answer).
+* *Code-review obligation* — whether a PR author must act on CHANGES_REQUESTED and
+  whether APPROVE is advisory or merge-blocking is deferred and not yet decided
+  (team answer).
+* *Release / acceptance gate* — the engine is not coupled to the protocols; a
+  change into the internals of the engine warrants a version bump (team answer).
+  Any further policy (min_gh_aw_version bumps, stub-to-production promotion) beyond
+  this rule is not defined.
+* *Quantified success metrics* beyond "workflows follow the predefined steps" are
+  not defined.

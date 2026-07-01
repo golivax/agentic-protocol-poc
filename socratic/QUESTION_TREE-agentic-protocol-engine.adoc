@@ -1,0 +1,687 @@
+= Question Tree — Agentic Protocol Engine
+:doctype: book
+:context-name: agentic-protocol-engine
+
+// Socratic Code-Theory Recovery, Phase 1.
+// Bounded context: the ENTIRE repository, treated as one context on request.
+// Context root: /home/runner/work/agentic-protocol-poc/agentic-protocol-poc/target
+// Evidence file:line is relative to that root. A directory is never valid evidence.
+// The fixed second level (Q1.1–Q5.5) is emitted in full; depth below it is adaptive.
+
+== Q1: What problem does this bounded context solve, and for whom?
+
+=== Q1.1: Product identity — what is this?
+[ANSWERED]
+Evidence: pyproject.toml:2 (name = "agentic-protocol-engine"), pyproject.toml:4 (description), README.md:1-6
+A generic state machine for running reliable, multi-step *agentic processes on
+GitHub*: you declare a protocol as data (phases, agent steps, deterministic
+checks, human gates) and one engine drives it — plus a read-only visibility REST
+API over the engine's state.
+
+==== Q1.1.1: What is the durable unit of work?
+[ANSWERED]
+Evidence: CLAUDE.md:"A workflow run is one transition of a state machine whose state lives in git", lib.py:645-660 (state_checkout), lib.py:663 (cas_push)
+One workflow run = one transition of a state machine whose state is a YAML file
+on the `agentic-state` git branch; compute is ephemeral, state is durable.
+
+==== Q1.1.2: What is the control-inversion claim vs. porch/gh-aw?
+[ANSWERED]
+Evidence: README.md:42-45, CLAUDE.md:"The engine drives; the agent is dispatched"
+The engine drives and the agent is dispatched: the agent exists only when the
+engine spawns it, can affect the world only through an `evidence.json` artifact,
+and is gone before the engine writes state — it cannot skip the engine.
+
+=== Q1.2: Who are the primary users?
+[OPEN]
+Category: business-context
+Ask role: Product Owner
+The code reveals *operator-facing* surfaces (a developer types `/review` on a PR;
+a UI/API calls `workflow_dispatch`; a protocol author writes a `protocol.json`)
+but not the target user segment or persona this is built for. Is the primary user
+a platform/DevEx team, an individual OSS maintainer, or an internal enterprise
+tooling group? Determines how Q2 use cases are framed.
+
+==== Q1.2.1: What operator roles does the code expose?
+[ANSWERED]
+Evidence: .github/agent-factory/protocols/code-review/protocol.json:6-11 (`/review`, `/override`, `/approve`, `/request-changes`, `/reject`), agentic-orchestrator.yml:14-21 (issue_comment + workflow_dispatch), mm-interactive-resume.yml (`/answer` on marked issues)
+Three operator roles are visible: a *reviewer/requester* (issues slash commands
+on a PR), an *approver* (answers a human gate), and a *UI/automation caller*
+(triggers ref-keyed runs via `workflow_dispatch`).
+
+==== Q1.2.2: Who is the protocol author?
+[ANSWERED]
+Evidence: CLAUDE.md:"To build a new protocol you write a new protocols/<name>/", docs/AUTHORING.md, .github/agent-factory/engine/protocol-lint.py:82-115
+A second user class is the *protocol author*, who writes a protocol directory
+(protocol.json + evidence schemas + checks + publish hooks) and never edits the
+engine; served by the authoring hub and the lint/visualize tool.
+
+=== Q1.3: Through what channels is it consumed?
+[ANSWERED]
+Evidence: agentic-orchestrator.yml:14-21 (issue_comment, repository_dispatch:protocol-continue, workflow_dispatch), api/app.py:78-171 (HTTP REST), dist/install.sh:337-359 (installer CLI)
+Four channels: (1) GitHub PR/issue *comments* (slash commands), (2)
+*workflow_dispatch* (UI/API against a ref), (3) a read-only *REST API*
+(`api/app.py`) for visibility, and (4) an *installer CLI* (`dist/install.sh`)
+that drops the engine into another repo.
+
+=== Q1.4: Why was this built — what problem does it solve?
+[OPEN]
+Category: business-context
+Ask role: Product Owner, Domain Expert
+The repo is self-described as an outgrown PoC (CLAUDE.md, README.md) and demo-plan.md
+lists demo objectives, but the *motivating pain* is not in code. Was this built to
+make LLM code-review trustworthy (evidence over prose), to standardize many agentic
+workflows on one engine, or as a research vehicle for the "Programming as Theory
+Building" recovery methodology? Affects the PRD problem statement.
+
+=== Q1.5: What are the success metrics?
+[OPEN]
+Category: business-context
+Ask role: Product Owner
+No success metric, SLO, or KPI is encoded anywhere in the code. The API computes
+`action_minutes_approx` (api/state_reader.py:284-291) as an operational rollup,
+but the code never states what outcome counts as success (reviewer time saved,
+defect-escape rate, adoption count). Must come from the team.
+
+=== Q1.6: What is the segment/priority ordering across users?
+[OPEN]
+Category: business-context
+Ask role: Product Owner
+The code treats all operator roles uniformly; there is no tiering, entitlement, or
+prioritized segment. Which user class (protocol authors vs. reviewers vs. UI
+integrators) is the primary bet cannot be derived from code.
+
+== Q2: What is the specification of this bounded context?
+
+=== Q2.1: Who/what are the actors?
+[ANSWERED]
+Evidence: CLAUDE.md (four trust zones table), agentic-engine.yml:35 (plan), :356 (dispatch), :434 (checks), :524 (advance), api/app.py:25-28 (bearer-auth caller)
+Actors: (1) the *human reviewer/approver* (slash commands, gate answers); (2) the
+*UI/automation caller* (workflow_dispatch); (3) the *dispatched gh-aw agent* (a
+sandboxed, read-only actor that emits evidence); (4) the *engine itself* (plan →
+dispatch → checks → advance jobs); (5) the *API consumer* (bearer-token client).
+
+=== Q2.2: Use-case catalog
+==== Q2.2.UC.RunCodeReview: Run a code review on a PR
+===== Q2.2.UC.RunCodeReview.Trigger
+[ANSWERED]
+Evidence: .github/agent-factory/protocols/code-review/protocol.json:6-7 (`/review` issue_comment), agentic-orchestrator.yml:51-84 (route job), lib.py:507 (route)
+A reviewer comments `/review` on a PR; the orchestrator's read-only `route` job
+matches it against every protocol's `triggers` and selects `code-review`.
+===== Q2.2.UC.RunCodeReview.MainSuccess
+[ANSWERED]
+Evidence: code-review/protocol.json:16 (preflight agent), :38 (review fanout), :71 (join), :77 (approval gate), :81 (done)
+Flow: `preflight` (agent gate) → `review` (fanout to `grumpy` + `security` legs,
+each iterate-with-feedback) → `join` (AND-barrier) → `approval` (human gate) →
+`done`.
+===== Q2.2.UC.RunCodeReview.IterateLoop
+[ANSWERED]
+Evidence: code-review/protocol.json:45 & :58 (max_iterations: 3), advance.py:648-677 (iterate branch re-dispatches protocol-continue), lib.py:918-946 (decide fold)
+Each review leg re-runs up to `max_iterations` times; a failed `iterate` check
+increments the iteration and re-dispatches the agent with feedback until checks
+pass or the budget is exhausted.
+===== Q2.2.UC.RunCodeReview.Postconditions
+[OPEN]
+Category: business-context
+Ask role: Product Owner, Domain Expert
+Code posts a verdict and requires human approval to reach `done`, but does not
+state what a completed review *obligates* (must the PR author act on
+CHANGES_REQUESTED? is APPROVE advisory or blocking on merge?). The process/verdict
+axes are orthogonal in code (CLAUDE.md) but the business meaning of the verdict
+is not encoded.
+
+==== Q2.2.UC.RecoverMentalModel: Recover a codebase's mental model
+===== Q2.2.UC.RecoverMentalModel.Trigger
+[ANSWERED]
+Evidence: recover-mental-model/protocol.json:6 (triggers: []), CLAUDE.md ("Started via workflow_dispatch … against a branch/ref"), agentic-orchestrator.yml:21 (workflow_dispatch inputs protocol/ref/instance)
+Started by a UI/API `workflow_dispatch` against a ref (not a PR); the instance key
+is ref-/UI-keyed (`ref-<ref>`/`ui-<id>`), not `pr-<N>`.
+===== Q2.2.UC.RecoverMentalModel.MainSuccess
+[ANSWERED]
+Evidence: recover-mental-model/protocol.json:9 (recover fanout), :14 legion, :21 codeset, :28 ubiquitous-language, :35 socratic sequence, :71 join, :74 combine
+Four parallel methods (legion ∥ codeset ∥ ubiquitous-language ∥ socratic
+sub-pipeline) → join → combine merge that pushes all outputs to an orphan
+`_mental_model` branch.
+===== Q2.2.UC.RecoverMentalModel.SocraticSubPipeline
+[ANSWERED]
+Evidence: recover-mental-model/protocol.json:38 (phase1 agent), :46 (answering agent), :55 (phase2 agent)
+The socratic leg is a three-step sub-pipeline: phase1 (build Question Tree) →
+answering (auto-answer OPEN leaves) → phase2 (synthesize docs).
+
+==== Q2.2.UC.RecoverMentalModelInteractive: Human-answered recovery
+===== Q2.2.UC.RecoverMentalModelInteractive.GateDifference
+[ANSWERED]
+Evidence: recover-mental-model-interactive/protocol.json:51-56 (answering kind:gate, questions_from:"phase1", channel:"issue"), lib.py:588 (open_gate create_issue/close_issue), mm-interactive-resume.yml
+Identical to the non-interactive protocol except socratic `answering` is a human
+gate on an issue channel: the engine posts an issue with the OPEN questions +
+machine marker; a human answers `/answer <id>: <value>`; `mm-interactive-resume.yml`
+drives the `answer` command and resumes phase2 once every question is answered.
+
+==== Q2.2.UC.DeepReview: Exercise the recursive engine (stub)
+[ANSWERED]
+Evidence: deep-review-stub/protocol.json:6 (max_depth:4), :7-9 (`/deep-review`), :12 preflight fanout → quick + deep(triage → analyze fanout(sec ∥ perf) → join-analyze → report) → join-preflight
+A depth-4 nested fanout/sub-pipeline tree with stub agents, demonstrating the
+recursive engine end-to-end.
+
+==== Q2.2.UC.ImplementFeatureAuto: Autonomous feature implementation
+[ANSWERED]
+Evidence: impl-feature-auto/protocol.json:6-7 (`/impl-feature-auto` on issue), :11 design agent, :28 implement agent, :40 next done
+`design` (produce spec + ledger + plan, checks + on_blocked:halt) → `implement`
+(TDD + open PR) → `done`.
+
+==== Q2.2.UC.RunDynamicFanout: Runtime-derived parallel legs (stub)
+[ANSWERED]
+Evidence: dyn-fanout-stub/protocol.json:9 (expand hook expand-files, as:"file", id_from:"$.path", max_legs:32), :14 (join policy:"all")
+A fanout whose legs are generated at runtime from an expand hook (one leg per
+changed file, capped at 32), joined under an "all" policy.
+
+==== Q2.2.UC.QueryVisibilityAPI: Read live run status
+[ANSWERED]
+Evidence: api/app.py:88-171 (protocols/instances/status/stats/evidence/gates endpoints)
+A bearer-authenticated client reads protocol catalogs, per-instance status/stats,
+evidence sidecars, global stats, and open gates from the state branch.
+
+==== Q2.2.UC.InstallEngine: Install engine + protocols into a repo
+[ANSWERED]
+Evidence: dist/install.sh:337-359 (cmd_install), :360-394 (cmd_update), dist/manifest.json:2-6
+An operator runs the installer to fetch the engine + chosen protocols into a target
+repo, wire secrets/state branch, and write a drift-tracking receipt.
+
+=== Q2.3: Per-interface system specifications
+==== Q2.3.SUC.SlashCommandRouting: The orchestrator router
+[ANSWERED]
+Evidence: agentic-orchestrator.yml:9-31 (on: block), :51-84 (route job), lib.py:507-552 (route)
+The router unions all static triggers (`issue_comment`, `repository_dispatch:protocol-continue`,
+`workflow_dispatch`), runs a read-only `route` job that calls `lib.route` to scan
+every protocol's `triggers`, then invokes the reusable engine with the resolved
+protocol + command.
+==== Q2.3.SUC.EngineTrustZones: The four-zone engine
+[ANSWERED]
+Evidence: agentic-engine.yml:13 (workflow_call), :35 plan, :356 dispatch, :434 checks, :524 advance
+The reusable engine is one `workflow_call` with four jobs: `plan` (state PAT,
+next.py), `dispatch` (sandboxed gh-aw agent), `checks` (read-only, run-checks.py),
+`advance` (state PAT + publish, advance.py).
+==== Q2.3.SUC.CheckABI: The deterministic-check contract
+[ANSWERED]
+Evidence: run-checks.py:2-10 (ABI comment), run-checks.py:97-99 (CHECK_PARAMS), run-checks.py:154-177 (verdict shape + on_fail stamp), CLAUDE.md (Check ABI)
+A check is invoked `<check> <evidence.json> <diff.txt> <changed-files.txt>`, reads
+node config from `CHECK_PARAMS`, prints one JSON `{check,pass,feedback}` to stdout,
+and always exits 0; the runner stamps each entry's `on_fail`
+(iterate|advisory|block).
+==== Q2.3.SUC.PublishHookABI: The publish-hook contract
+[ANSWERED]
+Evidence: CLAUDE.md (Publish hook ABI), code-review/publish/publish-verdict.py:1-29, recover-mental-model/publish/push-mental-model.py
+A publish hook is invoked `<hook> <evidence.json> <instance-key>` with env
+(ENGINE_LOCAL, GITHUB_REPOSITORY, PUBLISH_TOKEN, PR), prints
+`{conclusion,summary}`, and runs *trusted* in zone 4 (not sandboxed).
+==== Q2.3.SUC.RestAPI: The visibility REST surface
+[ANSWERED]
+Evidence: api/app.py:78 (GET /healthz, no auth), :88 /protocols, :100 /protocols/{p}, :104 /instances, :111 /status, :116 /stats, :121 /evidence, :129 /stats (global), :158 /gates, :25-28 (bearer auth)
+Ten endpoints: `/healthz` (unauthenticated liveness); everything else requires a
+bearer token — protocol catalog/detail, instance list/status/stats/evidence,
+global stats, and open gates.
+==== Q2.3.SUC.RestAPI.Errors: API error mapping
+[ANSWERED]
+Evidence: api/app.py:63-76 (NotFound/RateLimited/UpstreamError handlers), api/github_client.py:25-32 (404 NotFound, 429 RateLimited+Retry-After, ≥400 UpstreamError)
+Upstream GitHub errors map to typed exceptions surfaced by exception handlers:
+404→NotFound, 429→RateLimited (honoring Retry-After), other ≥400→UpstreamError.
+==== Q2.3.SUC.InstallerCLI: The installer command surface
+[ANSWERED]
+Evidence: dist/install.sh:55 (cmd_list), :337-359 (cmd_install), :360-394 (cmd_update), :93-104 (preflight checks)
+The installer offers `list`, `install`, and `update`; install runs a preflight
+(git/gh/auth/gh-aw/push access), fetches files, adds agents, configures endpoints,
+ensures state branch + secrets, and writes a receipt.
+
+=== Q2.4: Data / entity model
+==== Q2.4.StateFile: The per-node state YAML
+[ANSWERED]
+Evidence: lib.py:56-65 (state_file naming), lib.py:68-84 (state_path/output_artifact_path), paths.py:30-52 (node_at_path), tests/api/fixtures/state/code-review/pr-62/*.yaml
+Each node writes exactly one YAML file keyed by its NODE_PATH: single phase →
+`<protocol>/<instance>/<phase>.yaml`; fanout legs → `review.grumpy.yaml` /
+`review.security.yaml`; sidecars `.evidence.json` / `.answers.json`.
+==== Q2.4.InstanceCursor: The root + nested cursors
+[ANSWERED]
+Evidence: lib.py:87-94 (join_marker_file / _instance.yaml), CLAUDE.md ("root cursor lives in _instance.yaml (phase key)"), tests/api/fixtures/state/code-review/pr-62/_instance.yaml
+The root cursor is `_instance.yaml` (a `phase` key); nested sequence cursors live
+in `<seq>.yaml`; a nested fanout's barrier marker is `<fanout>.__join.yaml`.
+==== Q2.4.EvidenceSchema.CodeReview: The review evidence rubric
+[ANSWERED]
+Evidence: grumpy.evidence.schema.json:5 (files), :18-20 (category/verdict enums), :22-34 (findings: existing_code/comment/side/line/start_line), :36-43 (none-found ⇒ examined)
+A grumpy/security finding carries verbatim `existing_code` + a `side` (LEFT/RIGHT)
++ `line` (+ optional `start_line`) anchor; a `none-found` verdict must carry an
+`examined` list (negative attestation).
+==== Q2.4.EvidenceSchema.Preflight: Preflight evidence
+[ANSWERED]
+Evidence: preflight.evidence.schema.json:7-20 (checks[] {id,status,summary,evidence,remediation}), :21 (examined[])
+Preflight evidence is a list of self-reported check results plus an `examined`
+attestation of files read.
+==== Q2.4.EvidenceSchema.Ledger: The impl-feature-auto design ledger
+[ANSWERED]
+Evidence: design.evidence.schema.json:13-48 (ledger[] {id ^L[0-9]+$, category enum, what/why/what_i_did/revisit_if, confidence, blast_radius, reversibility, verified}), :51-54 (read_these_first)
+The design ledger is an array of decision records with a strict id pattern,
+category/confidence enums, blast-radius + reversibility sub-objects, and a
+risk-sorted `read_these_first` index.
+==== Q2.4.InstallReceipt: The distribution receipt
+[ANSWERED]
+Evidence: dist/receipt.py:22-29 (build_receipt), :14-19 (file_hash sha256), :38-40 (orphans), :43-49 (drifted), dist/manifest.json:4 (engine_version)
+`.github/agent-factory/.install.json` records source/ref/engine_version + per-file
+SHA256 hashes; updates use it to detect drift and orphaned files.
+
+=== Q2.5: Acceptance criteria
+==== Q2.5.CheckSuite: What the deterministic checks assert
+[ANSWERED]
+Evidence: code-review/checks/rubric-coverage.py:1-79 (every file × category has one verdict), checks/traces-exist-in-diff.py, checks/schema-valid.py:1-56, code-review/protocol.json:22-30 & :47-51 & :60-62
+Acceptance is deterministic: schema-valid (evidence conforms), rubric-coverage
+(complete verdict matrix), traces-exist-in-diff (each finding anchors to a real
+diff line), plus preflight's spec/plan-present.
+==== Q2.5.OnFailSeverities: How check outcomes gate transitions
+[ANSWERED]
+Evidence: lib.py:918-946 (decide fold), lib.py:938-946 (iterate drives loop, block sets blocking, advisory recorded), run-checks.py:176 (on_fail stamped)
+Each check's `on_fail` (default `iterate`) folds into the decision: `iterate`
+retries, `block` blocks the conclusion without iterating, `advisory` is recorded
+only.
+==== Q2.5.TestSuite: The regression contract
+[ANSWERED]
+Evidence: tests/ (~63 top-level test_*.py + 8 api/ modules; `grep -rc "def test_" tests/` ≈ 582 functions), tests/conftest.py:20-93 (fixtures)
+The executable acceptance contract is a pytest suite (~582 test functions) run via
+`uv run pytest tests/ -q`, self-contained per test via `tmp_path` + a fake
+`agentic-state` origin.
+==== Q2.5.TargetAcceptance: What "acceptance" means for a release
+[OPEN]
+Category: business-context
+Ask role: Product Owner, Architect
+Passing tests + green checks are code-visible, but the release gate (what must be
+true to ship a new engine version, cut a `min_gh_aw_version` bump, or promote a
+stub protocol to production) is a policy the code does not encode.
+
+=== Q2.6: Cross-cutting business rules
+==== Q2.6.StateSacred: State advances only by fast-forward CAS
+[ANSWERED]
+Evidence: lib.py:663-683 (cas_push, attempts=5, rebase retry, never force), CLAUDE.md ("Never force-push agentic-state")
+Non-initial state is written only by fast-forward compare-and-swap; `agentic-state`
+is never force-pushed. The sole exception is the combine hook's orphan
+`_mental_model` branch (push-mental-model.py).
+==== Q2.6.EngineAgentSeparation: Engine and agent never share a job/credential
+[ANSWERED]
+Evidence: CLAUDE.md (four trust zones invariant), agentic-engine.yml:42-46 (plan perms) vs :442-445 (checks read-only)
+The load-bearing rule: the engine (state PAT) and the agent (read-only + LLM
+creds) never share a job or credential; the checks job even re-fetches `gh pr diff`
+itself rather than trusting agent data.
+==== Q2.6.NoShellInjection: Agent strings via env, never interpolated
+[ANSWERED]
+Evidence: agentic-orchestrator.yml:76-84, agentic-engine.yml:78-79, mm-interactive-resume.yml:56-57, CLAUDE.md (security rule)
+Agent-derived strings (feedback, verdicts, comment bodies, filenames) are passed
+to shell via `env:`, never interpolated into `run:` blocks.
+==== Q2.6.EventsAreWakeups: Events carry no state
+[ANSWERED]
+Evidence: CLAUDE.md ("Events are wake-ups, not state carriers"), next.py:6-12 (commands re-derive from state)
+A trigger only tells the engine to look; everything load-bearing is re-derived
+from the state file, not from the event payload.
+
+== Q3: What is the architecture of this bounded context?
+
+=== Q3.1: Introduction and Goals
+[ANSWERED]
+Evidence: README.md:1-6, README.md:42-49 (engine drives; evidence over prose), README.md:64-66 (four trust zones)
+Goal: drive gh-aw agents through porch-style protocols reliably — declare a
+protocol as data, demand structured evidence, verify it deterministically, and
+keep engine/agent credentials separate. The 3–5 quality-goal *ranking*, however,
+is Q3.10/Q4.9 and is [OPEN].
+
+=== Q3.2: Architecture Constraints
+==== Q3.2.1: Technical constraints
+[ANSWERED]
+Evidence: pyproject.toml:6 (requires-python >=3.10), pyproject.toml:7-15 (fastapi/httpx/PyYAML/uvicorn), CLAUDE.md ("needs only Python 3 + PyYAML at runtime"), dist/manifest.json:5 (min_gh_aw_version 0.77.0), *-agent.md engine.model claude-sonnet-4-6
+Runtime engine needs only Python 3.10+ + PyYAML; the API adds fastapi/httpx/uvicorn.
+gh-aw ≥ 0.77.0 is required; agent model is pinned to `claude-sonnet-4-6`; checks may
+be any language (extension-agnostic ABI).
+==== Q3.2.2: Organizational / process constraints
+[ANSWERED]
+Evidence: CLAUDE.md ("Keep agentic-orchestrator.yml, agentic-engine.yml, and agent locks on main"), CLAUDE.md ("*.lock.yml is the committed compiled output — recompile with gh aw compile"), .gitattributes:1 (lock.yml linguist-generated, merge=ours)
+Workflows + agent locks must live on the default branch `main`; `*-agent.md` is
+source and `*-agent.lock.yml` the committed compiled artifact (recompiled with
+`gh aw compile`); lock files are marked generated + `merge=ours`.
+==== Q3.2.3: Conventional constraints
+[ANSWERED]
+Evidence: CLAUDE.md ("To build a new protocol you write protocols/<name>/ … you do NOT touch engine/"), lib.py:68-76 (state file naming), design.evidence.schema.json:21 (ledger id pattern ^L[0-9]+$), *-agent.md run-name "cid:[<cid>]"
+Conventions: engine vs. protocol strict separation; state files named
+`<protocol>/<instance>/<dot-path>.yaml`; ledger ids `^L[0-9]+$`; agent `run-name`
+embeds `cid:[<cid>]` for correlation.
+
+=== Q3.3: Context and Scope
+[ANSWERED]
+Evidence: agentic-orchestrator.yml:9-31 (GitHub events in), api/github_client.py:34-69 (GitHub API out), *-agent.md engine.env (ANTHROPIC_BASE_URL/AUTH_TOKEN — LLM endpoint), recover-mental-model/publish/push-mental-model.py (orphan branch out)
+External context: GitHub (events + Actions runs + git branches, the state store),
+a custom Anthropic LLM endpoint (agent inference), and API consumers. Nothing else
+crosses the boundary.
+
+=== Q3.4: Solution Strategy
+[ANSWERED]
+Evidence: CLAUDE.md ("one recursive code path for every protocol shape"), README.md:121-125, next.py:249 (enter_root), paths.py:30 (node_at_path), advance.py:2-10
+Strategy: one recursive engine interpreting a data-declared protocol tree over a
+single NODE_PATH coordinate; durable state in git; 4 credential-isolated trust
+zones; evidence schemas + deterministic checks as the agent contract.
+
+=== Q3.5: Building Block View
+==== Q3.5.1: engine/lib.py — shared library + CLI
+[ANSWERED]
+Evidence: lib.py:507 (route), :588 (open_gate), :663 (cas_push), :716-752 (set_check_run), :872 (match_run_by_cid), :918 (decide), :1315 (validate_protocol), :1621-1650 (_cli dispatch)
+The generic shared library: state checkout/CAS, routing, gate open/close, check-run
+emission, correlation-id resolution, the decide() fold, protocol validation — usable
+as a module and as `python3 lib.py <subcommand>`.
+==== Q3.5.2: engine/next.py — pure planner
+[ANSWERED]
+Evidence: next.py:90 (enter_node), :249 (enter_root), :271 (do_override), :338 (do_resolve_gate), :542 (do_answer), :702-724 (command dispatch)
+Pure planner: `(state, protocol, command) → action JSON`. Commands: start/reset
+(enter_root), continue (resume NODE_PATH leg), answer/override/resolve-gate.
+==== Q3.5.3: engine/advance.py — sole state writer
+[ANSWERED]
+Evidence: advance.py:396 (main), :476-488 (decide call), :530-646 (done branch: publish+cas+dispatch), :648-677 (iterate), :679-716 (failed)
+The only writer of non-initial state: reads verdicts, folds via decide(), then
+persists evidence, runs the publish hook, CAS-pushes, and re-dispatches or fires
+the join.
+==== Q3.5.4: engine/paths.py — NODE_PATH addressing
+[ANSWERED]
+Evidence: paths.py:30 (node_at_path), :109 (next_sibling), :131 (enclosing_fanout_id), :176 (max_static_depth)
+Pure tree navigation over (protocol dict, node-path): resolves the node at any
+depth, the ordered successor, the enclosing fanout, and the static depth.
+==== Q3.5.5: engine/run-checks.py — check runner
+[ANSWERED]
+Evidence: run-checks.py:33 (main), :48-96 (NODE_PATH resolution), :97-99 (CHECK_PARAMS), :103-177 (resolve+run+verdict)
+Resolves a node's checks (exec: path, else `checks/<run>[.ext]`), forwards
+node-scoped params, runs them in any language, and collects `{check,pass,feedback}`
+verdicts with `on_fail` stamped.
+==== Q3.5.6: engine/join.py — recursive AND-barrier
+[ANSWERED]
+Evidence: join.py:18-140 (_nested_join), lib.py:890-915 (join_policy_satisfied: all/any/quorum:N/quorum:P%), join.py:177-290 (top-level join)
+Evaluates fanout barriers by policy (all/any/quorum), advancing the cursor to the
+join's `.next` on success and bubbling nested joins up the enclosing sub-pipeline.
+==== Q3.5.7: engine/protocol-lint.py + protocol.schema.json — authoring guardrails
+[ANSWERED]
+Evidence: protocol-lint.py:82-115 (validate = schema + semantic + check_depth + visualize), protocol.schema.json:27-30 (max_depth), lib.py:1187-1312 (six authoring rules)
+Structural (JSON Schema) + semantic (validate_protocol) linting with a tree/block
+visualizer; degrades to semantic-only when `jsonschema` is absent.
+==== Q3.5.8: workflows — orchestrator + engine + join + agents
+[ANSWERED]
+Evidence: agentic-orchestrator.yml:51 (route), agentic-engine.yml:35/356/434/524 (4 zones), protocol-join.yml:4-6 (repository_dispatch:protocol-join), mm-interactive-resume.yml
+The GitHub Actions layer: the union router, the reusable 4-zone engine, the
+serialized join evaluator, the interactive-resume worker, and ~18 gh-aw agent
+lock files.
+==== Q3.5.9: api/ — read-only visibility service
+[ANSWERED]
+Evidence: api/app.py:18 (FastAPI app), api/state_reader.py:133-202 (status_projection), :212-238 (instance_stats), api/github_client.py:34-69, api/config.py:16-31, api/main.py:7-8
+A FastAPI service that reads the state branch YAML as a data contract (never
+importing the engine) and projects status/stats/gates for a `<protocol, instance>`.
+==== Q3.5.10: dist/ — installer
+[ANSWERED]
+Evidence: dist/install.sh:337-394 (install/update), dist/resolve.py:13-35 (derive_agents), dist/receipt.py:22-64 (build/orphans/drifted/compat), dist/manifest.json:2-11
+The distribution unit: a bash installer + pure-Python agent resolver + receipt
+(hash/drift/compat) + manifest declaring source/ref/engine_version/workflows.
+
+=== Q3.6: Runtime View
+==== Q3.6.1: One iteration — plan → dispatch → checks → advance
+[ANSWERED]
+Evidence: agentic-engine.yml:35 (plan/next.py), :356 (dispatch/agent), :434 (checks/run-checks.py), :524 (advance/advance.py), CLAUDE.md (trust-zone table)
+One engine run is one transition: plan computes the action, dispatch runs the
+sandboxed agent, checks verify the evidence + re-fetched diff, advance folds
+verdicts and writes state.
+==== Q3.6.2: The iterate-with-feedback loop
+[ANSWERED]
+Evidence: advance.py:648-677 (increment + re-dispatch protocol-continue), lib.py:918-946 (decide), advance.py:478 (default max_iter 3)
+On a failing `iterate` check, advance increments the iteration counter and
+re-dispatches `protocol-continue` on the same NODE_PATH until checks pass or the
+per-node `max_iterations` (default 3) is exhausted → `failed`.
+==== Q3.6.3: Fanout, matrix legs, and join
+[ANSWERED]
+Evidence: next.py:60-87 (_fanout_action legs), CLAUDE.md ("Matrix legs pass per-leg data via path-keyed artifacts"), protocol-join.yml:13-15 (per-(instance,path) concurrency), join.py:18-140
+Fanout branches run as matrix legs passing per-leg run-ids/verdicts via path-keyed
+artifacts; the join is a separately-dispatched, per-path-serialized AND-barrier.
+==== Q3.6.4: Human gate open/answer/resume
+[ANSWERED]
+Evidence: lib.py:588-642 (open_gate seeds file + check-run + status comment), next.py:338-464 (do_resolve_gate), next.py:542-696 (do_answer), mm-interactive-resume.yml:19-62
+A gate seeds a state file + check-run + status comment; approval gates resolve via
+`/approve|/request-changes|/reject`; data gates accumulate `/answer` lines until
+coverage is met, then resume the next sub-state.
+
+=== Q3.7: Deployment View
+[ANSWERED]
+Evidence: agentic-orchestrator.yml:9-31 (runs on GitHub Actions), api/main.py:7-8 + api/README.md ("uv run uvicorn api.main:app"), CLAUDE.md (secrets: ANTHROPIC_API_KEY/BASE_URL, POC_DISPATCH_TOKEN), dist/install.sh:254-310
+Deployment: the engine runs as GitHub Actions workflows in a target repo (state on
+the `agentic-state` branch, secrets ANTHROPIC_*/POC_DISPATCH_TOKEN); the API is a
+separately-hosted uvicorn service; the installer wires all of this into a repo.
+==== Q3.7.1: API runtime configuration
+[ANSWERED]
+Evidence: api/config.py:24-30 (API_BEARER_TOKEN, GITHUB_TOKEN, GITHUB_REPO required; STATE_BRANCH default "agentic-state", PROTOCOLS_REF default "main", GITHUB_API_URL default https://api.github.com), api/github_client.py:16 (timeout 15.0s)
+The API is configured entirely by env vars with sensible defaults; it talks to the
+GitHub REST API with a 15-second client timeout.
+
+=== Q3.8: Crosscutting Concepts
+==== Q3.8.1: Evidence-as-contract + negative attestation
+[ANSWERED]
+Evidence: grumpy.evidence.schema.json:36-43 (none-found ⇒ examined), leg.evidence.schema.json:4-11 (examined minItems 1), CLAUDE.md (Evidence ABI)
+Every agent output is an evidence artifact; "none-found" is legal only with an
+`examined` trace proving the agent read the code.
+==== Q3.8.2: Correlation-id run resolution
+[ANSWERED]
+Evidence: lib.py:872-887 (match_run_by_cid: databaseId where displayTitle contains "cid:[<cid>]"), agentic-engine.yml:384-386 & :417, *-agent.md run-name
+The engine matches the exact run it launched by a correlation id embedded in the
+agent's `run-name`, solving the concurrent-dispatch identification problem.
+==== Q3.8.3: Compare-and-swap concurrency control
+[ANSWERED]
+Evidence: lib.py:663-683 (cas_push attempts=5, sleep 0.1*(i+1), rebase), tests/test_cas.py
+State writes serialize via fast-forward-only push with bounded rebase retries; each
+node writes only its own file so CAS has no cross-node contention.
+==== Q3.8.4: Status-comment / check-run projection
+[ANSWERED]
+Evidence: lib.py:949-989 (upsert_status_comment: create once, then PATCH), lib.py:716-752 (set_check_run), advance.py:346-360 (render_status_body)
+Human-visible progress is an idempotently-upserted PR status comment plus per-node
+check runs.
+
+=== Q3.9: Architecture Decisions (ADRs)
+==== Q3.9.RecursiveUnification.Decision
+[ANSWERED]
+Evidence: CLAUDE.md ("one recursive code path … pre-unification (BRANCH,PHASE,SUBSTATE) triple deleted in Stage 4a"), docs/superpowers/specs/2026-06-23-stage4-recursive-engine-unification-design.md, paths.py:30
+Decision: replace the fixed (BRANCH,PHASE,SUBSTATE) triple with one recursive
+sequencer over a variable-length NODE_PATH — one code path for every protocol shape.
+==== Q3.9.RecursiveUnification.Context
+[OPEN]
+Category: design-rationale
+Ask role: Architect
+The code shows the unification happened, but not the forcing function. What broke
+or became unmaintainable under the triple model that justified the rewrite? Needed
+to decide whether nested depth beyond current usage is a supported goal or an
+accident of generality.
+==== Q3.9.StateInGit.Decision
+[ANSWERED]
+Evidence: lib.py:645-683 (state_checkout + cas_push), CLAUDE.md (core mental model), README.md:69-70
+Decision: durable state is a YAML file on a git branch advanced by CAS; compute is
+ephemeral (one transition per run, no long-lived driver).
+==== Q3.9.StateInGit.Rationale
+[OPEN]
+Category: design-rationale
+Ask role: Architect
+Why git-as-database over a real datastore (DynamoDB, a workflow-native store)?
+The audit-trail / no-infra benefits are inferable but the actual trade-off the
+architect accepted (latency, CAS retries, 256-file limits) is not in code.
+==== Q3.9.FirewallDisabled.Decision
+[ANSWERED]
+Evidence: *-agent.md:6 (strict: false), :8 (sandbox.agent: false), CLAUDE.md ("egress firewall is deliberately disabled because the custom LLM endpoint can't be carried in AWF's static allowlist"), docs/STATUS.md:338-367
+Decision (declared as the biggest security weakening): disable the gh-aw egress
+firewall so the custom Anthropic endpoint is reachable; the agent stays read-only
+and never holds the state PAT.
+==== Q3.9.FirewallDisabled.PughMatrix
+[OPEN]
+Category: design-rationale
+Ask role: Architect, Operations
+Code confirms the choice; alternatives (proxy the endpoint through an allowlisted
+host, self-host a compatible gateway, accept the vendor default) were not scored in
+code. Need the architect to confirm what was considered and the acceptance
+criteria for restoring the firewall in production.
+==== Q3.9.ModelPin.Decision
+[ANSWERED]
+Evidence: *-agent.md engine.model claude-sonnet-4-6, CLAUDE.md ("Model is pinned to claude-sonnet-4-6"), docs/STATUS.md:338-367
+Decision: pin every agent to `claude-sonnet-4-6`.
+==== Q3.9.ModelPin.Rationale
+[OPEN]
+Category: design-rationale
+Ask role: Architect
+Why this specific model, and what would trigger a re-pin (cost, capability,
+availability)? Not encoded.
+
+=== Q3.10: Quality Requirements
+[ANSWERED-in-part]
+Evidence: Q4 sub-tree (measurable scenarios below); ranking is [OPEN] at Q4.9
+Measurable quality scenarios are code-derived (see Q4.2, Q4.5, Q4.6); the
+*priority ranking* among quality goals is not derivable and is captured at Q4.9.
+
+=== Q3.11: Risks and Technical Debt
+[ANSWERED]
+Evidence: docs/STATUS.md:313-336 (simplifications declared up front), :538-551 (not exercised by PoC), :338-367 (live-integration deviations)
+The team maintains an explicit, extensive risk/debt ledger in STATUS.md — declared
+simplifications, disabled firewall, model pin, and capabilities not exercised by the
+PoC. Full enumeration under Q5.
+
+=== Q3.12: Glossary
+[ANSWERED]
+Evidence: CLAUDE.md (defines trust zones, NODE_PATH, fanout branch/leg, join, gate, evidence, CAS), docs/PROTOCOL-DSL.md (kind/branches/expand/gate/merge terms)
+The domain vocabulary (protocol, node, NODE_PATH, fanout leg, join barrier, gate,
+evidence, check, publish hook, trust zone, instance key, CAS) is defined in CLAUDE.md
+and the DSL reference. A code-only ubiquitous-language glossary is itself a protocol
+output (ubiquitous-language leg → CONTEXT.md), not committed here.
+
+== Q4: What quality goals drive the design?
+
+=== Q4.1: Functional Suitability
+[ANSWERED]
+Evidence: tests/ (~582 test functions), tests/test_unified_codereview_e2e.py, tests/test_deep_review_stub_e2e.py, lib.py:1315 (validate_protocol), code-review/checks/*
+Functional correctness is enforced by a large pytest suite (e2e oracle walks per
+protocol), protocol validation, and per-node deterministic checks.
+
+=== Q4.2: Performance Efficiency
+[ANSWERED]
+Evidence: dyn-fanout-stub/protocol.json:9 (max_legs 32), tests/fixtures/dyn-fanout-stub expand-files (max_diff_lines default 1500, skip binary/vendor), api/github_client.py:16 (15s timeout), :55-69 (max 5 pages × 100 = 500 runs), *-agent.md timeout_minutes (10 for quick agents; 30–45 for MM; 60 for implement), lib.py:681 (CAS backoff 0.1*(i+1))
+Concrete performance scenarios: fanout capped at 32 legs; dynamic-expand skips
+binaries/vendor and diffs > 1500 lines; API client 15s timeout + 500-run pagination
+cap; agent wall-clock timeouts 10–60 min; bounded CAS retry backoff.
+
+=== Q4.3: Compatibility
+[ANSWERED]
+Evidence: run-checks.py:2-10 (language-agnostic check ABI), dist/receipt.py:52-64 (is_compatible/is_breaking_bump semver), dist/manifest.json:5 (min_gh_aw_version 0.77.0), CLAUDE.md (checks any language; runtime needs only Python 3 + PyYAML)
+Compatibility is explicit: checks/publish hooks are any language via a stable
+argv/stdout ABI; the installer enforces a semver engine/gh-aw compatibility gate.
+
+=== Q4.4: Usability (operator/author experience)
+[ANSWERED]
+Evidence: protocol-lint.py:82-115 (actionable authoring errors + visualizer), lib.py:949-989 (status comment), docs/AUTHORING.md, api/app.py:78 (healthz)
+Author-facing usability: a lint-and-visualize tool with actionable error messages;
+operator-facing: an upserted PR status comment and a visibility API. Any *target*
+usability level (time-to-author a protocol) is [OPEN] at Q4.4.target.
+==== Q4.4.target
+[OPEN]
+Category: quality-goals
+Ask role: Product Owner, Architect
+Mechanisms exist but no usability target (e.g. "a new protocol authorable in < 1
+day", onboarding time) is encoded.
+
+=== Q4.5: Reliability
+[ANSWERED]
+Evidence: lib.py:663-683 (CAS never force-push, 5 retries), advance.py:2-10 ("Tolerates missing state file (recovers from lost init)"), CLAUDE.md ("Two axes orthogonal: process done/failed vs verdict"), join.py (idempotent barrier), tests/test_recursive_join.py
+Reliability is a first-class design driver: fast-forward-only CAS, missing-state
+recovery, idempotent joins, bounded iteration → deterministic `failed`, and events
+that carry no state.
+
+=== Q4.6: Security
+[ANSWERED]
+Evidence: CLAUDE.md (four trust zones; engine/agent never share credential), agentic-engine.yml:442-445 (checks read-only), agentic-orchestrator.yml:76-84 (env not run:), lib.py:229-236 (expander env allowlist), api/app.py:25-28 (bearer auth)
+Security mechanisms: credential-isolated trust zones, agent read-only + never holds
+state PAT, no-shell-injection via env, a strict expander env allowlist, and
+bearer-token API auth. The deliberate weakening is the disabled egress firewall
+(Q3.9.FirewallDisabled).
+==== Q4.6.target
+[OPEN]
+Category: quality-goals
+Ask role: Architect, Operations
+The threat model and the acceptance bar (is the disabled firewall acceptable for
+production? what compliance scope applies? is bearer-token-only sufficient for the
+API?) are not derivable from code.
+
+=== Q4.7: Maintainability
+[ANSWERED]
+Evidence: CLAUDE.md ("To build a new protocol you do NOT touch engine/"), lib.py:1-3 (importable + CLI), ~582 tests, docs/superpowers/ (46 dated plans/specs)
+Maintainability driver: strict engine/protocol separation, one recursive code path,
+extensive tests, and a dense design-decision record.
+
+=== Q4.8: Portability
+[ANSWERED]
+Evidence: dist/install.sh:337-394 (install into any repo), dist/resolve.py, dist/manifest.json, CLAUDE.md (runtime = Python 3 + PyYAML only)
+Portability driver: the installer drops the engine+protocols into any GitHub repo;
+the runtime unit deliberately has near-zero dependencies.
+
+=== Q4.9: Which quality characteristic has priority?
+[OPEN]
+Category: quality-goals
+Ask role: Architect, Product Owner
+The code exercises Reliability, Security, and Maintainability heavily, but the
+*ranking* (is Security > Reliability > Maintainability? where does Performance sit?)
+is not encoded and is required to fill the Pugh matrices in the Q3.9 ADRs.
+
+== Q5: What risks and technical debt exist?
+
+=== Q5.1: Technical debt
+[ANSWERED]
+Evidence: docs/STATUS.md:313-336 (declared simplifications), README.md ("repo name still says poc"), CLAUDE.md (historical note: pre-unification machinery deleted)
+Tracked debt is explicit in STATUS.md: agent output limited to evidence.json,
+orchestrator polls rather than callbacks, findings originally quoted code without
+line anchors (later superseded). The "poc" name is acknowledged legacy.
+==== Q5.1.TrackedDebtLocation
+[OPEN]
+Category: future-direction
+Ask role: Developer, Architect
+Debt is narrated in STATUS.md/BACKLOG.md but there is no in-code TODO/FIXME index
+or issue-tracker pointer. Where is debt formally tracked and prioritized?
+
+=== Q5.2: Security risks
+[ANSWERED]
+Evidence: *-agent.md:8 (sandbox.agent: false), CLAUDE.md ("biggest security weakening … Do not copy to production without restoring it"), docs/STATUS.md:338-367 & :538-551 (gh-aw egress firewall not exercised)
+The dominant, self-declared security risk is the disabled egress firewall for
+agents; the checks-execute-agent-code path and the real firewall are explicitly not
+exercised by the PoC.
+
+=== Q5.3: Operational risks
+[ANSWERED]
+Evidence: CLAUDE.md ("gh secret set NAME --body - stores literal -"), CLAUDE.md (POC_DISPATCH_TOKEN needed; default GITHUB_TOKEN can't trigger workflows), CLAUDE.md ("Never commit workflows onto a demo PR branch"), api/state_reader.py:284-291 (action_minutes is wall-clock approximation)
+Operational hazards: token misconfiguration (dispatch PAT vs default token; the
+`--body -` footgun), workflows leaking onto PR branches, and the API's billed-minute
+figure being a wall-clock approximation only.
+==== Q5.3.SLO
+[OPEN]
+Category: quality-goals
+Ask role: Operations
+No SLO/alerting/on-call posture is encoded (e.g. acceptable engine-run latency,
+gate-response SLA, API availability target).
+
+=== Q5.4: Dependency / supply-chain risks
+[ANSWERED]
+Evidence: .github/aw/actions-lock.json:3-21 (pinned action SHAs), pyproject.toml:7-24 + uv.lock (locked deps), dist/receipt.py:52-64 (min-engine/breaking-bump gate), dist/manifest.json:5 (min_gh_aw_version)
+Supply-chain surface: GitHub Actions pinned by SHA, Python deps locked via uv.lock,
+and a semver compatibility gate on install/update. External LLM endpoint + gh-aw
+extension are trusted third parties.
+==== Q5.4.VendorTrust
+[OPEN]
+Category: stakeholder-context
+Ask role: Architect, Operations
+The custom Anthropic endpoint and gh-aw extension are unaudited trust anchors in
+code. What is the vetting/rotation policy for the ANTHROPIC_* secrets and the
+endpoint host?
+
+=== Q5.5: Scaling / performance risks
+[ANSWERED]
+Evidence: dyn-fanout-stub/protocol.json:9 (max_legs 32), lib.py:1287-1290 (max_legs ∈ [1,256]), lib.py:1170 (DEFAULT_MAX_DEPTH 5), api/github_client.py:55-69 (500-run pagination cap), docs/STATUS.md:116-162 (dynamic-fanout Spec B leg-input size deferred)
+Known scaling ceilings: fanout legs capped (32 default, 256 hard), static depth
+capped at 5, API run history capped at 500, and matrix leg-input size handling
+deferred (STATUS Spec B).
+==== Q5.5.ThroughputTarget
+[OPEN]
+Category: quality-goals
+Ask role: Architect, Operations
+No target for concurrent instances, per-repo throughput, or CAS-contention limits
+is encoded. Needed to know whether the current caps are conservative or binding.

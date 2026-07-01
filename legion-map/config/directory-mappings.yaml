@@ -1,0 +1,97 @@
+generated: "2026-07-01"
+source: "CODEBASE.md"
+version: "1.0"
+
+# Project root mappings (single-package Python project: engine + api + dist + tests).
+mappings:
+  engine:
+    paths:
+      - ".github/agent-factory/engine"
+    priority: 10
+    pattern: "**/*.py"
+    description: "Generic, protocol-agnostic state-machine engine (planner, writer, checks, join, paths, lib, lint)."
+  protocols:
+    paths:
+      - ".github/agent-factory/protocols"
+    priority: 10
+    pattern: "**/protocol.json"
+    description: "Self-contained protocols: states, evidence schemas, checks, publish hooks."
+  checks:
+    paths:
+      - ".github/agent-factory/protocols"
+    priority: 10
+    pattern: "**/checks/*"
+    description: "Deterministic check executables (Check ABI: any language, always exit 0)."
+  publish_hooks:
+    paths:
+      - ".github/agent-factory/protocols"
+    priority: 10
+    pattern: "**/publish/*"
+    description: "Trusted zone-4 publish hooks (emit {conclusion,summary})."
+  evidence_schemas:
+    paths:
+      - ".github/agent-factory/protocols"
+    priority: 10
+    pattern: "**/*.evidence.schema.json"
+    description: "The rubric contract each agent step must fill."
+  workflows:
+    paths:
+      - ".github/workflows"
+    priority: 10
+    pattern: "**/*.{yml,yaml,md}"
+    description: "Router orchestrator, reusable engine, gh-aw agent sources (*.md) + locks (*.lock.yml)."
+  api:
+    paths:
+      - "api"
+    priority: 10
+    pattern: "**/*.py"
+    description: "Read-only FastAPI visibility service over engine state."
+  tests:
+    paths:
+      - "tests"
+    priority: 10
+    pattern: "test_*.py"
+    description: "pytest suite (63 modules); self-contained via tmp_path."
+  fixtures:
+    paths:
+      - "tests/fixtures"
+    priority: 10
+    pattern: "**/*"
+    description: "Minimal engine shapes + evidence/diff fixtures for capability/regression tests."
+  installer:
+    paths:
+      - "dist"
+    priority: 10
+    pattern: "**/*.{py,sh,json}"
+    description: "Distribution installer (resolve + receipt + install.sh)."
+  docs:
+    paths:
+      - "docs"
+    priority: 10
+    pattern: "**/*.md"
+    description: "Design rationale, DSL reference, authoring hub, status/deviations."
+  config:
+    paths:
+      - "."
+    priority: 5
+    pattern: "{pyproject.toml,uv.lock}"
+    description: "uv project manifest and lockfile."
+
+# Validation rules for path enforcement.
+rules:
+  strictness: warn  # strict | warn | off
+  exceptions: []
+  notes:
+    - "New engine code goes under .github/agent-factory/engine/; new protocol code under .github/agent-factory/protocols/<name>/ — never in engine/."
+    - "Keep agentic-orchestrator.yml, agentic-engine.yml, and *-agent.lock.yml on the default branch (main)."
+
+autoUpdate:
+  enabled: true
+  mode: "prompt"
+  threshold:
+    newDirectoryFiles: 3
+    newCategoryFiles: 10
+    categoryChangePercent: 20
+  backup:
+    enabled: true
+    keepCount: 5

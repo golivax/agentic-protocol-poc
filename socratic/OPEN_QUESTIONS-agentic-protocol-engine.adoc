@@ -1,0 +1,248 @@
+= Open Questions — Agentic Protocol Engine
+:doctype: book
+:context-name: agentic-protocol-engine
+
+// Role-grouped projection of every [OPEN] leaf in
+// QUESTION_TREE-agentic-protocol-engine.adoc.
+// Answer in 1–3 sentences under each *Your answer:* block, or mark
+// "(deferred — <reason>)". Phase 2 is gated: it does not run until every
+// leaf below has an answer or an explicit deferral.
+
+== For Product Owner
+
+=== Q1.2: Who are the primary users?
+Category: business-context
+
+The code exposes operator surfaces (reviewer slash commands, workflow_dispatch
+callers, protocol authors) but not the target segment/persona. Is the primary user
+a platform/DevEx team, an OSS maintainer, or an internal enterprise tooling group?
+
+*Your answer:*
+An OSS maintainer.
+
+=== Q1.4: Why was this built — what problem does it solve?
+Category: business-context
+
+The repo is a self-described outgrown PoC; the motivating pain is not in code. Was
+it built to make LLM code-review trustworthy (evidence over prose), to standardize
+many agentic workflows on one engine, or as a research vehicle for the theory-recovery
+methodology?
+
+*Your answer:*
+To make sure agentic workflows follow specific pathways.
+
+=== Q1.5: What are the success metrics?
+Category: business-context
+
+No metric/SLO/KPI is encoded. What outcome counts as success — reviewer time saved,
+defect-escape rate, adoption count, something else?
+
+*Your answer:*
+Guaranteeing workflows proceed with the predefined steps.
+
+=== Q1.6: What is the segment/priority ordering across users?
+Category: business-context
+
+All operator roles are treated uniformly in code. Which user class (protocol authors
+vs. reviewers vs. UI integrators) is the primary bet?
+
+*Your answer:*
+(deferred — not yet decided)
+
+=== Q2.2.UC.RunCodeReview.Postconditions: What does a completed review obligate?
+Category: business-context
+
+Code posts a verdict and requires human approval to reach `done`, but does not encode
+the business meaning: must the PR author act on CHANGES_REQUESTED? Is APPROVE advisory
+or merge-blocking?
+
+*Your answer:*
+(deferred — not yet decided)
+
+=== Q2.5.TargetAcceptance: What is the release/acceptance gate?
+Category: business-context
+
+Green tests + checks are code-visible, but the policy for shipping a new engine
+version, bumping `min_gh_aw_version`, or promoting a stub protocol to production is
+not encoded.
+
+*Your answer:*
+The engine is not coupled to the protocols. A change into the internals of the
+engine warrants a version bump.
+
+== For Architect
+
+=== Q3.9.RecursiveUnification.Context: Why the recursive rewrite?
+Category: design-rationale
+
+The code shows the (BRANCH,PHASE,SUBSTATE) triple was replaced by one NODE_PATH
+sequencer, but not the forcing function. What broke or became unmaintainable that
+justified the rewrite? Is deep nesting a supported goal or an accident of generality?
+
+*Your answer:*
+(deferred — not yet decided)
+
+=== Q3.9.StateInGit.Rationale: Why git-as-database?
+Category: design-rationale
+
+Why durable state on a git branch (CAS) over a real datastore? What trade-off
+(latency, retry contention, the 256-file/leg limits) was consciously accepted?
+
+*Your answer:*
+We want everything to be on the version control.
+
+=== Q3.9.FirewallDisabled.PughMatrix: Alternatives to disabling the egress firewall?
+Category: design-rationale
+
+Code confirms the firewall is disabled for the custom LLM endpoint. Which
+alternatives (allowlisted proxy, self-hosted gateway, vendor default) were actually
+considered, and what is the acceptance criterion for restoring the firewall in
+production?
+
+*Your answer:*
+This is only a POC for now.
+
+=== Q3.9.ModelPin.Rationale: Why claude-sonnet-4-6, and when to re-pin?
+Category: design-rationale
+
+Every agent is pinned to `claude-sonnet-4-6`. Why this model, and what would trigger
+a re-pin (cost, capability, availability)?
+
+*Your answer:*
+This is only a POC for now.
+
+=== Q4.4.target: What is the usability/author-experience target?
+Category: quality-goals
+
+Author tooling exists (lint + visualize), but no target such as "a new protocol
+authorable in < 1 day" or an onboarding-time goal is encoded.
+
+*Your answer:*
+Agents can be onboarded easily with the available docs.
+
+=== Q4.6.target: What is the security target / threat model?
+Category: quality-goals
+
+Mechanisms are visible but the bar is not: is the disabled firewall acceptable for
+production, what compliance scope applies, and is bearer-token-only sufficient for
+the API?
+
+*Your answer:*
+This is only a POC for now.
+
+=== Q4.9: Which quality characteristic has priority?
+Category: quality-goals
+
+Reliability, Security, and Maintainability are all heavily exercised, but their
+ranking (and where Performance sits) is not encoded. Required to fill the Pugh
+matrices in the Q3.9 ADRs.
+
+*Your answer:*
+Reliability.
+
+=== Q5.1.TrackedDebtLocation: Where is technical debt formally tracked?
+Category: future-direction
+
+Debt is narrated in STATUS.md/BACKLOG.md but there is no in-code TODO/FIXME index or
+issue-tracker pointer. Where is debt formally recorded and prioritized?
+
+*Your answer:*
+This is only a POC for now.
+
+=== Q5.4.VendorTrust: What is the vetting/rotation policy for external trust anchors?
+Category: stakeholder-context
+
+The custom Anthropic endpoint and the gh-aw extension are unaudited trust anchors in
+code. What is the vetting and secret-rotation policy for the ANTHROPIC_* secrets and
+the endpoint host?
+
+*Your answer:*
+This is only a POC for now.
+
+=== Q5.5.ThroughputTarget: What are the scaling targets?
+Category: quality-goals
+
+No target for concurrent instances, per-repo throughput, or CAS-contention limits is
+encoded. Are the current caps (32 legs, depth 5, 500-run history) conservative or
+binding?
+
+*Your answer:*
+This is only a POC for now.
+
+== For Developer
+
+=== Q5.1.TrackedDebtLocation: Where is technical debt formally tracked?
+Category: future-direction
+
+(Also routed to Architect.) Debt is narrated in STATUS.md/BACKLOG.md but there is no
+in-code TODO/FIXME index or issue-tracker pointer. Where is debt formally recorded?
+
+*Your answer:*
+This is only a POC for now.
+
+== For Domain Expert
+
+=== Q1.4: Why was this built — what problem does it solve?
+Category: business-context
+
+(Also routed to Product Owner.) What is the originating pain this engine addresses,
+in domain terms?
+
+*Your answer:*
+To make sure agentic workflows follow specific pathways.
+
+=== Q2.2.UC.RunCodeReview.Postconditions: What does a completed review obligate?
+Category: business-context
+
+(Also routed to Product Owner.) In domain terms, what state is a PR in after a review
+concludes — is the verdict binding on the author or on merge?
+
+*Your answer:*
+(deferred — not yet decided)
+
+== For Operations
+
+=== Q3.9.FirewallDisabled.PughMatrix: Alternatives to disabling the egress firewall?
+Category: design-rationale
+
+(Also routed to Architect.) From an ops standpoint, what would it take to run agents
+behind an allowlisted egress path in production?
+
+*Your answer:*
+This is only a POC for now.
+
+=== Q4.6.target: What is the security target / threat model?
+Category: quality-goals
+
+(Also routed to Architect.) What compliance/threat posture must this meet in
+production, and is the current auth model sufficient?
+
+*Your answer:*
+This is only a POC for now.
+
+=== Q5.3.SLO: What are the operational SLOs?
+Category: quality-goals
+
+No SLO/alerting/on-call posture is encoded. What are the acceptable engine-run
+latency, gate-response SLA, and API availability targets?
+
+*Your answer:*
+This is only a POC for now.
+
+=== Q5.4.VendorTrust: What is the vetting/rotation policy for external trust anchors?
+Category: stakeholder-context
+
+(Also routed to Architect.) What is the secret-rotation and host-vetting policy for
+the ANTHROPIC_* secrets and the custom endpoint?
+
+*Your answer:*
+This is only a POC for now.
+
+=== Q5.5.ThroughputTarget: What are the scaling targets?
+Category: quality-goals
+
+(Also routed to Architect.) What concurrent-instance / throughput levels must ops
+support, and are the current caps binding?
+
+*Your answer:*
+This is only a POC for now.

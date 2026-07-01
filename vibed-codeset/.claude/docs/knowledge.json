@@ -1,0 +1,2041 @@
+{
+  "repo": {
+    "one_liner": "A read-only FastAPI visibility service (`api/`) that projects live status, stats, evidence, and human-gate state of an agentic-protocol engine's runs by reading `protocol.json` and on-disk `agentic-state` files over the GitHub REST API — without ever importing the engine.",
+    "architecture": "The service is a thin read-through projection over git-hosted state. `main.py` is the ASGI entrypoint: at import it reads `os.environ` into an immutable `Settings` (`config.py`), constructs a `GitHubClient` (`github_client.py`), and hands both to the `create_app` factory (`app.py`), which returns the FastAPI app. Every HTTP request flows: route handler → `GitHubClient` fetches raw text/tree listings from the `agentic-state` branch and protocols ref → `state_reader.py` (pure, no I/O, no engine import) parses those blobs into response dicts → Pydantic envelopes in `models.py` document the JSON shapes returned to clients. `github_client.py` wraps `httpx.Client` and normalizes upstream failures into typed exceptions (`NotFound`, `RateLimited`, `UpstreamError`) that `app.py`'s exception handlers map to 404/429/502.",
+    "architecture_cont": "State on disk is per-instance: an `_instance.yaml` cursor plus one `<node>.yaml` per node, with `*.evidence.json` / `*.answers.json` sidecars. `state_reader.status_projection` walks these files, groups nodes into phases (agent / fanout / gate kinds), derives per-node status from `state` plus `gates.state`, and stamps an overall status from the instance's `phase_label`. Instance identity is dual-keyed: a bare integer resolves to a `pr-<N>` instance; any other string (`ref-main`, `ui-<uuid>`) is used verbatim — so ref/UI-triggered protocols coexist with PR-keyed ones.",
+    "key_files": [
+      {
+        "path": "api/main.py",
+        "role": "ASGI entrypoint — wires Settings → GitHubClient → create_app at import time"
+      },
+      {
+        "path": "api/app.py",
+        "role": "FastAPI factory: routes, bearer-auth dependency, protocol-name validation, exception→HTTP mapping"
+      },
+      {
+        "path": "api/state_reader.py",
+        "role": "Pure projection layer — parses protocol.json + instance state files into status/stats/evidence/gate dicts"
+      },
+      {
+        "path": "api/github_client.py",
+        "role": "Synchronous httpx-based GitHub REST client; raises typed NotFound/RateLimited/UpstreamError"
+      },
+      {
+        "path": "api/config.py",
+        "role": "Frozen Settings dataclass with from_env factory — single source of runtime config"
+      },
+      {
+        "path": "api/models.py",
+        "role": "Pydantic response envelopes (ProtocolList, InstanceList, GatesResponse, etc.)"
+      },
+      {
+        "path": "api/__init__.py",
+        "role": "Empty package marker for the api/ service"
+      }
+    ],
+    "key_behaviors": [
+      "The API is strictly read-only and never imports the engine — it consumes `agentic-state` files as a data contract.",
+      "Instance addressing is dual-keyed: a bare integer path segment maps to `pr-<N>`; any other string (`ref-main`, `ui-<uuid>`) is the instance dir name verbatim.",
+      "Node status folds `state` and `gates.state`: an answered/approved gate reports `done`, an open gate reports `running`; overall status is classified from the instance's `phase_label` (✅→completed, ❌→failed, ⛔→blocked).",
+      "A fanout phase's status is failed if any leg failed, done only if all legs done, else running.",
+      "Upstream GitHub failures are normalized to typed exceptions mapped to HTTP 404/429 (with Retry-After)/502; a global NotFound handler catches blob 404s mid-assembly.",
+      "All data endpoints require a Bearer token equal to `settings.api_bearer_token`; `/healthz` is unauthenticated and returns ok/degraded."
+    ],
+    "commands": [
+      {
+        "purpose": "test",
+        "command": "uv run pytest tests/ -q",
+        "note": "repo is a uv project; auto-syncs dev deps from uv.lock. Note: summarized tests target the engine, not api/ specifically"
+      },
+      {
+        "purpose": "test",
+        "command": "pytest api/ -q",
+        "note": "if api/ ships its own tests; unverified from summaries — confirm a tests dir exists first"
+      },
+      {
+        "purpose": "run",
+        "command": "uvicorn api.main:app --reload",
+        "note": "main.py exposes the ASGI app; see api/README.md for required env vars"
+      }
+    ],
+    "conventions": [
+      "state_reader.py must stay pure: no I/O, no engine import, no GitHub calls — all fetching happens in github_client.py and is passed in as text/dicts.",
+      "Never interpolate a query-sourced protocol name into a GitHub path without `_PROTOCOL_RE` validation (single path segment; blocks `/` and `..` traversal).",
+      "Settings is frozen and built only via `Settings.from_env`; do not read os.environ elsewhere.",
+      "Route handlers raise the typed GitHub exceptions and let app.py's registered handlers map them to HTTP codes — don't hand-roll status codes for upstream errors.",
+      "New response shapes get a Pydantic envelope in models.py; keep additive fields backward-compatible (e.g. `instance` added alongside existing `pr`)."
+    ],
+    "gotchas": [
+      "`_pr_of` returns None for non-`pr-` instances — every response carrying `pr` must tolerate null for ref/ui-keyed runs.",
+      "A gate node's top-level `state` never leaves the gate id (e.g. `answering`) — you must read `gates.state`, not `state`, or an answered gate reports as forever-running (this was a real bug fix).",
+      "A terminal merge/`done` node (e.g. recover-mental-model's `combine`) writes no own node file; `phase` points at it but the true signal is `phase_label` on `_instance.yaml` — status_projection surfaces it on `head` so a finished run isn't reported as stuck.",
+      "`_instance.yaml` and `*.__join.yaml` are bookkeeping, not node files — `_is_node_file` filters them; adding new sidecar suffixes requires updating those ignore lists.",
+      "The engine records no timestamps in state, so `action_minutes_approx` is derived only from GitHub workflow-run wall-clock (updated_at − run_started_at) and is explicitly approximate.",
+      "`/stats` and `/gates` iterate `pr-<N>` instances only (via `_pr_numbers`); ref/ui-keyed instances are invisible to those aggregate endpoints."
+    ],
+    "name": "."
+  },
+  "files": {
+    "api/main.py": {
+      "path": "api/main.py",
+      "description": "This is the ASGI entrypoint for the FastAPI visibility service. It wires together the three collaborators at import time: it reads process environment into a `Settings` object via `Settings.from_env(os.environ)`, constructs a `GitHubClient` from those settings, and passes both into `create_app` to produce the module-level `app` object that uvicorn imports and serves. All real logic lives in `api.config`, `api.app`, and `api.github_client` — this file only performs composition-root assembly.\n\nThe non-obvious contract a future editor must respect: the `app` object is built once at module import (not inside a factory function or lifespan hook), so any environment variables must be present when this module is imported, and the dependency wiring (settings → client → app) happens eagerly and in that order. The `GitHubClient` is injected into `create_app` via the `client=` keyword, meaning `create_app` accepts an already-constructed client rather than building its own — this seam exists so tests can substitute a fake client. Per the repo's architecture, this service reads engine state as a read-only data contract and must never import the engine.",
+      "edit_checklist": {
+        "tests_to_run": [],
+        "data_constants": [
+          "app: must remain a module-level name that uvicorn can import (e.g. api.main:app)",
+          "settings: constructed once from os.environ at import time — keep it the single source passed to both GitHubClient and create_app"
+        ],
+        "warning": "Assembly runs at import time, so a missing/invalid env var raises during import and breaks uvicorn startup rather than surfacing as a request-time error."
+      },
+      "historical_insights": [
+        {
+          "category": "Config",
+          "title": "Added uvicorn entrypoint",
+          "problem": "The API had no ASGI entrypoint / documented way to run it under uvicorn.",
+          "root_cause": "Service composition (settings, client, app) needed a single import target for the server.",
+          "solution": "Introduced this module wiring Settings.from_env → GitHubClient → create_app into a module-level `app`, plus run docs.",
+          "commits": [
+            "c5af60f"
+          ],
+          "constructs": [
+            "app",
+            "settings"
+          ]
+        }
+      ],
+      "key_constructs": [],
+      "tests": {},
+      "related_files": [],
+      "semantic_overview": {
+        "tags": [
+          "fastapi",
+          "asgi",
+          "entrypoint",
+          "dependency-injection",
+          "config",
+          "visibility-service"
+        ],
+        "entities": [
+          "Settings",
+          "GitHubClient",
+          "FastAPI app",
+          "environment variables"
+        ],
+        "capabilities": [
+          "Load settings from process environment",
+          "Construct the GitHub client from settings",
+          "Assemble the FastAPI app via create_app with an injected client",
+          "Expose a module-level app for uvicorn to serve"
+        ]
+      },
+      "pitfalls": [
+        {
+          "description": "Adding heavy or network work directly in this module body",
+          "consequence": "It runs at import time on every uvicorn worker startup and can hang or crash before serving",
+          "prevention": "Keep this file to pure wiring; put runtime/lifespan work inside create_app or FastAPI lifespan hooks"
+        },
+        {
+          "description": "Letting create_app construct its own GitHubClient instead of accepting the injected client=",
+          "consequence": "Breaks the test seam that substitutes a fake client and the single-Settings wiring",
+          "prevention": "Preserve the client= injection point; pass one Settings instance to both collaborators"
+        },
+        {
+          "description": "Importing the engine or reading state through anything but the client",
+          "consequence": "Violates the read-only data-contract boundary between the API and the engine",
+          "prevention": "Only depend on api.config, api.app, api.github_client here"
+        }
+      ],
+      "reading_guide": {
+        "start": "app — the module-level assembly line that shows the whole wiring",
+        "key": [
+          "settings: it is the shared input to both collaborators",
+          "app: it is the object uvicorn serves"
+        ],
+        "skip": ""
+      }
+    },
+    "api/config.py": {
+      "path": "api/config.py",
+      "description": "Defines the immutable `Settings` dataclass and its `from_env` factory — the single source of runtime configuration for the read-only FastAPI visibility service (`api/`). It parses environment variables into a frozen dataclass: three required vars (`API_BEARER_TOKEN`, `GITHUB_TOKEN`, `GITHUB_REPO`) and several optional ones with defaults (`STATE_BRANCH`='agentic-state', `PROTOCOLS_REF`='main', `GITHUB_API_URL`='https://api.github.com'). The `ENGINE_WORKFLOWS` var is a comma-separated list parsed into `engine_workflows` (empty/whitespace segments dropped).\n\nNon-obvious contracts a future editor must respect: the class is `frozen=True`, so instances are immutable — callers rely on being able to pass `Settings` around safely and compare/hash it. `from_env` validates all missing required vars at once and raises a single `ValueError` listing every missing key (test `test_from_env_reports_all_missing_required` asserts this all-at-once behavior, not fail-fast). Defaults for `STATE_BRANCH`/`PROTOCOLS_REF` align with the engine's conventions (the `agentic-state` branch and `main` protocols ref described in CLAUDE.md), so changing them silently breaks state/protocol resolution. `ENGINE_WORKFLOWS` empty string must yield `[]`, and an empty-workflows list is a meaningful signal downstream (test `test_list_workflow_runs_empty_workflows_uses_repo_runs_endpoint`).",
+      "edit_checklist": {
+        "tests_to_run": [
+          "pytest -q tests/api/test_app_routes.py",
+          "pytest -q tests/api/test_github_client.py",
+          "pytest -q tests/api/test_health.py"
+        ],
+        "data_constants": [
+          "required tuple ('API_BEARER_TOKEN','GITHUB_TOKEN','GITHUB_REPO'): these three must stay required; adding/removing changes the ValueError contract",
+          "STATE_BRANCH default 'agentic-state': must match the engine's state branch name",
+          "PROTOCOLS_REF default 'main': must match where protocols are read from",
+          "GITHUB_API_URL default 'https://api.github.com': GitHub REST base URL",
+          "ENGINE_WORKFLOWS parsing: comma-split, strip each, drop empties → list; empty input must yield []"
+        ],
+        "warning": "Adding a field without giving it a default (or an env fallback) will break every existing `Settings(...)` call site and `from_env` construction."
+      },
+      "historical_insights": [
+        {
+          "category": "Config",
+          "title": "Initial FastAPI package scaffold",
+          "problem": "No configuration surface existed for the visibility API.",
+          "root_cause": "New `api/` package being stood up (config + /healthz).",
+          "solution": "Introduced the frozen `Settings` dataclass and `from_env` factory alongside the package scaffold and health endpoint.",
+          "commits": [
+            "596b9cb"
+          ],
+          "constructs": [
+            "Settings",
+            "from_env"
+          ]
+        }
+      ],
+      "key_constructs": [
+        {
+          "name": "Settings",
+          "kind": "class",
+          "lineno": 6,
+          "signature": "class Settings",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                17
+              ]
+            },
+            {
+              "file": "api/github_client.py",
+              "lines": [
+                14
+              ]
+            },
+            {
+              "file": "api/main.py",
+              "lines": [
+                7
+              ]
+            },
+            {
+              "file": "tests/api/test_app_routes.py",
+              "lines": [
+                8
+              ]
+            },
+            {
+              "file": "tests/api/test_github_client.py",
+              "lines": [
+                5
+              ]
+            },
+            {
+              "file": "tests/api/test_health.py",
+              "lines": [
+                5,
+                20
+              ]
+            }
+          ],
+          "rationale": "The frozen config record consumed across 6 files; its field set is the API's configuration contract, so field changes ripple widely."
+        },
+        {
+          "name": "from_env",
+          "kind": "method",
+          "lineno": 16,
+          "signature": "from_env(cls, env: Mapping[str, str])",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/main.py",
+              "lines": [
+                7
+              ]
+            },
+            {
+              "file": "tests/api/test_health.py",
+              "lines": [
+                20
+              ]
+            }
+          ],
+          "rationale": "The only sanctioned constructor from the environment; encodes the required-vars validation and default policy that tests pin."
+        }
+      ],
+      "tests": {
+        "files": [
+          "tests/api/test_app_routes.py",
+          "tests/api/test_github_client.py",
+          "tests/api/test_health.py"
+        ],
+        "functions": [
+          "test_bare_403_without_ratelimit_header_is_upstream_error",
+          "test_from_env_reports_all_missing_required",
+          "test_gates_open_lists_pr62_approval",
+          "test_gates_traversal_protocol_is_400",
+          "test_gates_unknown_protocol_is_404",
+          "test_get_text_404_raises_notfound",
+          "test_global_stats_has_minutes",
+          "test_healthz_is_open_and_ok",
+          "test_healthz_open_no_auth",
+          "test_instance_evidence_requires_auth",
+          "test_instance_evidence_returns_node_keyed_bodies",
+          "test_instance_evidence_unknown_instance_is_404",
+          "test_instance_list",
+          "test_instance_status",
+          "test_list_dir_returns_entry_names",
+          "test_list_protocols",
+          "test_list_tree_filters_by_prefix",
+          "test_list_workflow_runs_empty_workflows_uses_repo_runs_endpoint",
+          "test_list_workflow_runs_maps_fields_and_stops_on_short_page",
+          "test_notfound_from_blob_fetch_maps_to_404",
+          "test_protocol_detail_404_for_unknown",
+          "test_protocol_detail_invalid_name_is_400",
+          "test_protocols_requires_auth",
+          "test_rate_limit_raises_with_retry_after",
+          "test_wrong_bearer_token_is_401"
+        ]
+      },
+      "related_files": [],
+      "semantic_overview": {
+        "tags": [
+          "config",
+          "environment",
+          "fastapi",
+          "dataclass",
+          "validation"
+        ],
+        "entities": [
+          "Settings",
+          "environment variables",
+          "GitHub token/repo",
+          "state branch",
+          "engine workflows"
+        ],
+        "capabilities": [
+          "Parse environment variables into an immutable Settings object",
+          "Validate all required env vars and report missing ones together",
+          "Apply defaults for optional config (state branch, protocols ref, API URL)",
+          "Split ENGINE_WORKFLOWS into a cleaned list"
+        ]
+      },
+      "pitfalls": [
+        {
+          "description": "Making `from_env` fail on the first missing required var instead of collecting all",
+          "consequence": "Breaks `test_from_env_reports_all_missing_required`, which expects every missing key reported at once",
+          "prevention": "Keep the list-comprehension `missing` accumulation and single ValueError listing all keys"
+        },
+        {
+          "description": "Using `env[...]` for optional vars or forgetting the default",
+          "consequence": "KeyError when the optional var is unset, or a wrong branch/ref used downstream",
+          "prevention": "Use `env.get(key, default)` for optional vars and keep defaults aligned with engine conventions"
+        },
+        {
+          "description": "Treating whitespace-only ENGINE_WORKFLOWS entries as real workflow names",
+          "consequence": "Empty strings leak into engine_workflows, changing which GitHub runs endpoint is queried",
+          "prevention": "Preserve the `if w.strip()` filter and the top-level `.strip()` before split"
+        },
+        {
+          "description": "Removing `frozen=True`",
+          "consequence": "Settings becomes mutable/unhashable-differently; callers relying on immutability lose that guarantee",
+          "prevention": "Keep the dataclass frozen"
+        }
+      ],
+      "reading_guide": {
+        "start": "from_env",
+        "key": [
+          "from_env: encodes required-var validation, defaults, and ENGINE_WORKFLOWS parsing",
+          "Settings: the frozen field list that is the config contract"
+        ],
+        "skip": ""
+      }
+    },
+    "api/models.py": {
+      "path": "api/models.py",
+      "description": "This file defines the Pydantic response envelope models for the read-only FastAPI visibility service (`api/`). It documents and validates the top-level JSON shapes returned to clients: `ProtocolList`, `InstanceList`, `GatesResponse`, and `GlobalStats`. Per the module docstring and the broader architecture, `api/` reads engine state as a data contract and never imports the engine — so these models are the boundary schema between raw state (produced as plain dicts by `state_reader`) and HTTP clients. The three list/collection envelopes deliberately wrap loosely-typed payloads (`list[dict[str, Any]]`) rather than fully modeling nested items, keeping the API tolerant of the underlying state file's evolving shape; only the outer envelope is enforced.\n\nThe non-obvious contract a future editor must respect is that `GlobalStats` is a flat, explicitly-enumerated aggregate: it splits instance counts across four disjoint process-axis buckets (`instances_running`, `instances_completed`, `instances_failed`, `instances_blocked`) plus a `_total`, and carries an approximate compute-cost pair (`action_minutes_approx` + its companion `action_minutes_note` caveat string). The `_approx`/`_note` pairing signals the number is an estimate, not a measured value — the note must travel with the number. Field names here are the wire contract; renaming any key silently breaks clients even though the models have zero in-repo references (they're consumed by external HTTP clients and populated by `state_reader`, not called from Python code).",
+      "edit_checklist": {
+        "tests_to_run": [],
+        "data_constants": [
+          "GlobalStats buckets: keep instances_running/completed/failed/blocked disjoint and summing to instances_total",
+          "action_minutes_approx + action_minutes_note: keep the note field whenever the approx number is present — it is the estimate caveat",
+          "InstanceList.instances: typed as list[int] (PR numbers / instance ids) — keep numeric unless the instance-key scheme changes",
+          "Envelope field names (protocols/instances/gates/by_protocol): these are the wire keys — renames break clients"
+        ],
+        "warning": "These are the API's wire contract; renaming or retyping a field silently breaks external clients since there are no in-repo references to catch it."
+      },
+      "historical_insights": [
+        {
+          "category": "API",
+          "title": "Initial API response models introduced",
+          "problem": "The visibility service needed documented, validated top-level response envelopes over the loosely-typed dicts produced by state_reader.",
+          "root_cause": "State is read as a data contract (engine never imported), so raw dicts needed a typed HTTP boundary.",
+          "solution": "Added the models module alongside auth, routes, and error mapping.",
+          "commits": [
+            "4777883"
+          ],
+          "constructs": [
+            "ProtocolList",
+            "InstanceList",
+            "GatesResponse",
+            "GlobalStats"
+          ]
+        }
+      ],
+      "key_constructs": [
+        {
+          "name": "ProtocolList",
+          "kind": "class",
+          "lineno": 7,
+          "signature": "class ProtocolList",
+          "docstring": "",
+          "callers": [],
+          "rationale": "Wraps the list of known protocols returned to clients; keep the `protocols` key stable."
+        },
+        {
+          "name": "InstanceList",
+          "kind": "class",
+          "lineno": 10,
+          "signature": "class InstanceList",
+          "docstring": "",
+          "callers": [],
+          "rationale": "Pairs a protocol id with its numeric instance ids; `instances` typed list[int] reflects PR-number/instance keys."
+        },
+        {
+          "name": "GatesResponse",
+          "kind": "class",
+          "lineno": 14,
+          "signature": "class GatesResponse",
+          "docstring": "",
+          "callers": [],
+          "rationale": "Envelope for open human-gate entries; items stay dict[str,Any] to tolerate gate-shape evolution."
+        },
+        {
+          "name": "GlobalStats",
+          "kind": "class",
+          "lineno": 17,
+          "signature": "class GlobalStats",
+          "docstring": "",
+          "callers": [],
+          "rationale": "Flat aggregate of run counts + approximate action-minutes; buckets must stay disjoint and the note must accompany the approx number."
+        }
+      ],
+      "tests": {},
+      "related_files": [],
+      "semantic_overview": {
+        "tags": [
+          "api",
+          "pydantic",
+          "response-models",
+          "visibility",
+          "state-contract"
+        ],
+        "entities": [
+          "protocol",
+          "instance",
+          "gate",
+          "GlobalStats",
+          "state_reader"
+        ],
+        "capabilities": [
+          "Define top-level HTTP response envelopes",
+          "Validate outer response shape while leaving item dicts loosely typed",
+          "Expose aggregate run statistics across process-axis buckets",
+          "Document the API-to-client data contract"
+        ]
+      },
+      "pitfalls": [
+        {
+          "description": "Renaming a field or tightening a type on any model",
+          "consequence": "External HTTP clients break silently — there are no Python references or mapped tests to fail",
+          "prevention": "Treat field names/types as a versioned wire contract; coordinate with api consumers and add/adjust tests"
+        },
+        {
+          "description": "Adding an instance-count bucket to GlobalStats without updating the aggregation source",
+          "consequence": "instances_total no longer equals the sum of buckets, giving clients inconsistent stats",
+          "prevention": "Keep the four buckets disjoint and ensure state_reader populates them to sum to instances_total"
+        },
+        {
+          "description": "Dropping action_minutes_note or decoupling it from action_minutes_approx",
+          "consequence": "Clients present an approximate compute figure as if it were measured",
+          "prevention": "Always emit the note string together with the approx value"
+        }
+      ],
+      "reading_guide": {
+        "start": "GlobalStats — the richest, most contract-laden model",
+        "key": [
+          "GlobalStats: enumerates the disjoint instance buckets + approx/note cost pair that clients depend on",
+          "InstanceList: shows the protocol+numeric-instances pairing convention"
+        ],
+        "skip": "The three simple list envelopes (ProtocolList/GatesResponse) are structurally trivial on a first pass"
+      }
+    },
+    "api/github_client.py": {
+      "path": "api/github_client.py",
+      "description": "A synchronous GitHub REST client used by the read-only visibility API (`api/`) to fetch protocol state, evidence, and workflow-run metadata from the `agentic-state` branch without ever importing the engine. It wraps `httpx.Client` with a shared `_headers`/`_base` helper and a single `_check` method that normalizes GitHub HTTP responses into a typed exception hierarchy (`GitHubError` → `NotFound`/`UpstreamError`/`RateLimited`). It exposes tree/blob/dir listing (`list_tree`, `get_text`, `list_dir`) plus paginated workflow-run collection (`list_workflow_runs`).\n\nNon-obvious contracts a future editor must respect: (1) `_check` treats a 403/429 as `RateLimited` ONLY when `X-RateLimit-Remaining == \"0\"` — a bare 403 falls through to `UpstreamError` (asserted by `test_bare_403_without_ratelimit_header_is_upstream_error`); (2) 404 is checked before the generic `>=400` branch so it maps to `NotFound` (test_get_text_404_raises_notfound); (3) `get_json = get_text` is a deliberate alias — both fetch raw content via the `application/vnd.github.raw+json` Accept header and return `.text`, so JSON parsing is the caller's job; (4) `list_tree` reads the whole tree recursively (`recursive=1`) then filters by `prefix` in-process; (5) `list_workflow_runs` pages 1–5 at `per_page=100`, stops early on a short page, maps each run down to exactly `run_started_at`/`updated_at`/`name`, and falls back to the repo-wide `/actions/runs` endpoint when `workflows` is empty (`workflows or [None]`).",
+      "edit_checklist": {
+        "tests_to_run": [
+          "pytest -q tests/api/test_app_routes.py",
+          "pytest -q tests/api/test_github_client.py"
+        ],
+        "data_constants": [
+          "X-GitHub-Api-Version '2022-11-28': keep the pinned API version header",
+          "_check rate-limit guard: only 403/429 WITH X-RateLimit-Remaining=='0' becomes RateLimited; preserve 404-before-generic-4xx ordering",
+          "Accept headers: default 'application/vnd.github+json'; get_text uses 'application/vnd.github.raw+json' to return raw .text",
+          "list_workflow_runs pagination: per_page=100, pages range(1,6) (max 5), break on batch<100, workflows or [None] fallback",
+          "list_workflow_runs field projection: emit only run_started_at, updated_at, name",
+          "get_json = get_text alias: both return raw text, not parsed JSON"
+        ],
+        "warning": "Changing the 404/rate-limit branch ordering or the X-RateLimit-Remaining guard in `_check` silently remaps exceptions and breaks the API route tests that depend on the exact type."
+      },
+      "historical_insights": [
+        {
+          "category": "API",
+          "title": "Directory enumeration added for protocol listing",
+          "problem": "The API needed to enumerate protocols but the client could only fetch trees and blobs.",
+          "root_cause": "Initial client (dae15ae) shipped only list_tree/get_text; protocol enumeration requires listing sub-directories.",
+          "solution": "Added list_dir, returning sorted names of `type == 'dir'` entries from the contents endpoint.",
+          "commits": [
+            "ad14b7d"
+          ],
+          "constructs": [
+            "list_dir"
+          ]
+        },
+        {
+          "category": "API",
+          "title": "Initial typed-error GitHub client",
+          "problem": "API code needed structured handling of GitHub 404/403/429/5xx responses.",
+          "root_cause": "New file; no client existed.",
+          "solution": "Introduced GitHubClient with the GitHubError hierarchy and the _check normalizer.",
+          "commits": [
+            "dae15ae"
+          ],
+          "constructs": [
+            "GitHubClient",
+            "GitHubError",
+            "NotFound",
+            "UpstreamError",
+            "RateLimited",
+            "_check"
+          ]
+        }
+      ],
+      "key_constructs": [
+        {
+          "name": "GitHubError",
+          "kind": "class",
+          "lineno": 5,
+          "signature": "class GitHubError",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/github_client.py",
+              "lines": [
+                6,
+                7,
+                8
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "NotFound",
+          "kind": "class",
+          "lineno": 6,
+          "signature": "class NotFound",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                38,
+                63,
+                64,
+                96
+              ]
+            },
+            {
+              "file": "api/github_client.py",
+              "lines": [
+                27
+              ]
+            },
+            {
+              "file": "tests/api/test_app_routes.py",
+              "lines": [
+                25,
+                30,
+                123
+              ]
+            },
+            {
+              "file": "tests/api/test_github_client.py",
+              "lines": [
+                26
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "UpstreamError",
+          "kind": "class",
+          "lineno": 7,
+          "signature": "class UpstreamError",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                74,
+                75
+              ]
+            },
+            {
+              "file": "api/github_client.py",
+              "lines": [
+                31
+              ]
+            },
+            {
+              "file": "tests/api/test_github_client.py",
+              "lines": [
+                46
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "RateLimited",
+          "kind": "class",
+          "lineno": 8,
+          "signature": "class RateLimited",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                69,
+                70
+              ]
+            },
+            {
+              "file": "api/github_client.py",
+              "lines": [
+                29
+              ]
+            },
+            {
+              "file": "tests/api/test_github_client.py",
+              "lines": [
+                35
+              ]
+            }
+          ],
+          "rationale": "Only raised on 403/429 with remaining==0; carries retry_after from the Retry-After header."
+        },
+        {
+          "name": "GitHubClient",
+          "kind": "class",
+          "lineno": 13,
+          "signature": "class GitHubClient",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/main.py",
+              "lines": [
+                8
+              ]
+            },
+            {
+              "file": "tests/api/test_github_client.py",
+              "lines": [
+                17,
+                25,
+                34,
+                45,
+                59,
+                74,
+                86
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_headers",
+          "kind": "method",
+          "lineno": 18,
+          "signature": "_headers(self, accept='application/vnd.github+json')",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/github_client.py",
+              "lines": [
+                36,
+                44,
+                52,
+                61
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_base",
+          "kind": "method",
+          "lineno": 22,
+          "signature": "_base(self)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/github_client.py",
+              "lines": [
+                35,
+                43,
+                51,
+                58,
+                59
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_check",
+          "kind": "method",
+          "lineno": 25,
+          "signature": "_check(self, r: httpx.Response)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/github_client.py",
+              "lines": [
+                36,
+                44,
+                52,
+                61
+              ]
+            }
+          ],
+          "rationale": "Central response normalizer whose branch order and X-RateLimit-Remaining guard define the entire error contract callers and route tests rely on."
+        },
+        {
+          "name": "list_tree",
+          "kind": "method",
+          "lineno": 34,
+          "signature": "list_tree(self, prefix: str)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                49,
+                57
+              ]
+            },
+            {
+              "file": "tests/api/test_github_client.py",
+              "lines": [
+                18
+              ]
+            }
+          ],
+          "rationale": "Fetches the full recursive tree once then filters blobs by prefix in-process."
+        },
+        {
+          "name": "get_text",
+          "kind": "method",
+          "lineno": 42,
+          "signature": "get_text(self, path: str, ref: str)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                37,
+                50,
+                95,
+                140
+              ]
+            },
+            {
+              "file": "api/github_client.py",
+              "lines": [
+                48
+              ]
+            },
+            {
+              "file": "tests/api/test_app_routes.py",
+              "lines": [
+                122
+              ]
+            },
+            {
+              "file": "tests/api/test_github_client.py",
+              "lines": [
+                27,
+                36,
+                47
+              ]
+            }
+          ],
+          "rationale": "Most-referenced fetch (9 refs, 4 files); returns raw .text via the raw+json Accept header and is aliased as get_json."
+        },
+        {
+          "name": "list_dir",
+          "kind": "method",
+          "lineno": 50,
+          "signature": "list_dir(self, path: str, ref: str)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                83,
+                91,
+                132,
+                164
+              ]
+            },
+            {
+              "file": "tests/api/test_github_client.py",
+              "lines": [
+                87
+              ]
+            }
+          ],
+          "rationale": "Returns sorted directory names for protocol enumeration."
+        },
+        {
+          "name": "list_workflow_runs",
+          "kind": "method",
+          "lineno": 55,
+          "signature": "list_workflow_runs(self, workflows: list[str])",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                145
+              ]
+            },
+            {
+              "file": "tests/api/test_github_client.py",
+              "lines": [
+                60,
+                75
+              ]
+            }
+          ],
+          "rationale": "Bounded (5-page) paginated collector that projects runs to three fields and falls back to the repo runs endpoint when no workflows given."
+        }
+      ],
+      "tests": {
+        "files": [
+          "tests/api/test_app_routes.py",
+          "tests/api/test_github_client.py"
+        ],
+        "functions": [
+          "test_bare_403_without_ratelimit_header_is_upstream_error",
+          "test_gates_open_lists_pr62_approval",
+          "test_gates_traversal_protocol_is_400",
+          "test_gates_unknown_protocol_is_404",
+          "test_get_text_404_raises_notfound",
+          "test_global_stats_has_minutes",
+          "test_healthz_open_no_auth",
+          "test_instance_evidence_requires_auth",
+          "test_instance_evidence_returns_node_keyed_bodies",
+          "test_instance_evidence_unknown_instance_is_404",
+          "test_instance_list",
+          "test_instance_status",
+          "test_list_dir_returns_entry_names",
+          "test_list_protocols",
+          "test_list_tree_filters_by_prefix",
+          "test_list_workflow_runs_empty_workflows_uses_repo_runs_endpoint",
+          "test_list_workflow_runs_maps_fields_and_stops_on_short_page",
+          "test_notfound_from_blob_fetch_maps_to_404",
+          "test_protocol_detail_404_for_unknown",
+          "test_protocol_detail_invalid_name_is_400",
+          "test_protocols_requires_auth",
+          "test_rate_limit_raises_with_retry_after",
+          "test_wrong_bearer_token_is_401"
+        ]
+      },
+      "related_files": [
+        {
+          "file": "tests/api/test_github_client.py",
+          "shared_commits": 2,
+          "relation": "Primary co-change (2 shared commits); pins exception mapping, pagination, and field projection behavior.",
+          "check": "That branch-ordering, the rate-limit header guard, per_page/page bounds, and the three projected run fields still match the assertions."
+        }
+      ],
+      "semantic_overview": {
+        "tags": [
+          "github-api",
+          "http-client",
+          "error-mapping",
+          "rate-limiting",
+          "pagination"
+        ],
+        "entities": [
+          "agentic-state branch",
+          "git tree/blobs",
+          "PR evidence",
+          "workflow runs",
+          "protocols"
+        ],
+        "capabilities": [
+          "Fetch and prefix-filter the state branch git tree",
+          "Retrieve raw file/blob text at a ref",
+          "List protocol sub-directories under a path",
+          "Collect and normalize paginated workflow runs",
+          "Map GitHub HTTP responses to typed exceptions"
+        ]
+      },
+      "pitfalls": [
+        {
+          "description": "Reordering `_check` so the generic `status_code >= 400` branch runs before the 404 or rate-limit checks.",
+          "consequence": "404s and rate-limits get swallowed as generic UpstreamError; NotFound/RateLimited tests fail and callers lose the ability to distinguish missing state from a real upstream failure.",
+          "prevention": "Keep 404 first, then the guarded 403/429, then the generic >=400 fallthrough."
+        },
+        {
+          "description": "Assuming get_text/get_json returns parsed JSON.",
+          "consequence": "Callers get a raw string; `.get(...)` or subscripting fails at runtime.",
+          "prevention": "Remember get_json is just an alias returning .text — parse with json.loads in the caller."
+        },
+        {
+          "description": "Passing an empty `workflows` list expecting no requests.",
+          "consequence": "`workflows or [None]` falls back to the repo-wide /actions/runs endpoint and still makes calls (see test_list_workflow_runs_empty_workflows_uses_repo_runs_endpoint).",
+          "prevention": "Treat empty list as the intentional repo-wide fetch, not a no-op."
+        }
+      ],
+      "reading_guide": {
+        "start": "_check — it defines the error contract every other method flows through",
+        "key": [
+          "_check: response-to-exception mapping and branch ordering",
+          "get_text: raw-text fetch pattern and get_json alias",
+          "list_workflow_runs: pagination bounds and field projection"
+        ],
+        "skip": "_headers/_base boilerplate on a first pass"
+      }
+    },
+    "api/__init__.py": {
+      "path": "api/__init__.py",
+      "description": "This is the package-init module for the `api/` FastAPI visibility service. Its source is currently empty — a placeholder that marks `api/` as a Python package. The only substantive history is the scaffolding commit that stood up the FastAPI package, its config, and a `/healthz` endpoint; that work landed the package boundary but did not put importable code into this file itself.\n\nThe non-obvious contract a future editor must respect: per the project's core separation, the API service reads engine state as a *data contract* and must NEVER import the engine (`.github/agent-factory/engine/`). Any package-level code added here (e.g. version, exported symbols, app factory re-exports) must stay on the read-only, state-as-data side of that boundary. The test suite treats `api/__init__.py` as the anchor for the state-reader projection tests (status/stats/catalog/aggregate), so keeping the package importable and side-effect-free at import time is what those tests silently depend on.",
+      "edit_checklist": {
+        "tests_to_run": [
+          "pytest -q tests/api/test_state_reader_aggregate.py",
+          "pytest -q tests/api/test_state_reader_catalog.py",
+          "pytest -q tests/api/test_state_reader_stats.py",
+          "pytest -q tests/api/test_state_reader_status.py"
+        ],
+        "data_constants": [],
+        "warning": "Keep this package free of any engine import — the API must consume state only as a data contract."
+      },
+      "historical_insights": [
+        {
+          "category": "Config",
+          "title": "Initial FastAPI package scaffold",
+          "problem": "No API package existed to expose engine run state.",
+          "root_cause": "New read-only visibility service needed a Python package boundary, config, and a liveness endpoint.",
+          "solution": "Scaffolded the FastAPI package with config and a /healthz endpoint; this file was created as the package init.",
+          "commits": [
+            "596b9cb"
+          ],
+          "constructs": []
+        }
+      ],
+      "key_constructs": [],
+      "tests": {
+        "files": [
+          "tests/api/test_state_reader_aggregate.py",
+          "tests/api/test_state_reader_catalog.py",
+          "tests/api/test_state_reader_stats.py",
+          "tests/api/test_state_reader_status.py"
+        ],
+        "functions": [
+          "test_classify_instance_reads_phase_label_from_instance_yaml",
+          "test_classify_label_none_is_running",
+          "test_classify_label_variants",
+          "test_evidence_projection_skips_malformed_json",
+          "test_evidence_projection_splits_evidence_and_answers",
+          "test_gate_view_open_answer_gate",
+          "test_gate_view_open_approval_gate",
+          "test_instance_stats_code_review_pr62",
+          "test_list_protocols_summarizes_name_version_triggers",
+          "test_node_status_gate_aware",
+          "test_pr_of_helper",
+          "test_protocol_detail_exposes_state_graph",
+          "test_status_projection_agent_leaf_carries_run_id",
+          "test_status_projection_answered_gate_is_done",
+          "test_status_projection_code_review_pr62",
+          "test_status_projection_excludes_injected_sidecar_filenames",
+          "test_status_projection_head_carries_run_identity",
+          "test_status_projection_ignores_sidecars_and_join_markers",
+          "test_status_projection_mid_combine_stays_running",
+          "test_status_projection_ref_instance_has_null_pr",
+          "test_status_projection_terminal_merge_head_reports_done",
+          "test_sum_run_minutes_wallclock"
+        ]
+      },
+      "related_files": [],
+      "semantic_overview": {
+        "tags": [
+          "fastapi",
+          "package-init",
+          "visibility-api",
+          "read-only",
+          "scaffold"
+        ],
+        "entities": [
+          "api package",
+          "FastAPI service",
+          "engine state (data contract)",
+          "/healthz endpoint"
+        ],
+        "capabilities": [
+          "Marks api/ as a Python package",
+          "Anchors the read-only visibility service package",
+          "Keeps API decoupled from the engine"
+        ]
+      },
+      "pitfalls": [
+        {
+          "description": "Adding import-time side effects or heavy imports (esp. importing the engine) into this init module.",
+          "consequence": "Breaks the API's read-only data-contract boundary and can fail/slow the state-reader test modules that import the package.",
+          "prevention": "Keep `__init__.py` minimal; put logic in submodules and never import from `.github/agent-factory/engine/`."
+        }
+      ],
+      "reading_guide": {
+        "start": "The file is empty — read api/README.md and the CLAUDE.md 'api/' description for the package's role.",
+        "key": [],
+        "skip": "This file itself; the substance lives in api/ submodules and tests/api/."
+      }
+    },
+    "api/app.py": {
+      "path": "api/app.py",
+      "description": "This module builds the FastAPI application for the read-only Protocol Visibility API via the `create_app` factory. It exposes endpoints to list protocols, list PR instances, and project per-instance status/stats/evidence/gates over state files it fetches through an injected GitHub client (never importing the engine — state is read as a data contract). All read logic is delegated to `state_reader`; this file is routing, auth, input validation, instance-id resolution, and error mapping. Exception handlers map the client's `NotFound`/`RateLimited`/`UpstreamError` to 404/429 (honoring `Retry-After`)/502, so a `NotFound` escaping mid-assembly still yields 404 globally.\n\nNon-obvious contracts a future editor must respect: (1) protocol names are query/path-sourced and MUST be validated with `_PROTOCOL_RE` (via `_validate_protocol`) before interpolation into any GitHub API path — this blocks path traversal (`..`, `/`); `_proto_json` and `_instance_files` both enforce it. (2) `_resolve_instance` treats a bare-digit ident as `pr-<N>` (back-compat) and any other string (e.g. `ref-main`, `ui-<uuid>`) verbatim — instance dirs are never bare digits, keeping this unambiguous. (3) `require_auth` guards every route except `/healthz`, which is deliberately open and returns `{status: ok|degraded}` never raising. (4) The client is injected and read per-request via `cl(request)` (from `request.app.state.client`) so tests can swap a fake; `_instance_files` requires `_instance.yaml` to exist or it 404s.",
+      "edit_checklist": {
+        "tests_to_run": [
+          "pytest -q tests/api/test_app_routes.py",
+          "pytest -q tests/api/test_health.py",
+          "pytest -q tests/test_recover_mental_model.py"
+        ],
+        "data_constants": [
+          "PROTO_DIR: must stay '.github/agent-factory/protocols' — used to list/fetch protocol.json against protocols_ref",
+          "_PROTOCOL_RE: keep '^[A-Za-z0-9][A-Za-z0-9._-]*$' anchored (no '/' or '..') — it is the path-traversal guard",
+          "MINUTES_NOTE: the disclaimer string returned as action_minutes_note in /stats"
+        ],
+        "warning": "Any new endpoint that interpolates a protocol/instance name into a client path must call _validate_protocol first, or you reopen path traversal."
+      },
+      "historical_insights": [
+        {
+          "category": "Security",
+          "title": "Path traversal via query-sourced protocol name",
+          "problem": "The ?protocol= param (and path segments) could contain '/' or '..' and traverse out of the protocols/state dirs when interpolated into GitHub API paths.",
+          "root_cause": "Query-sourced names were used unvalidated in client path interpolation.",
+          "solution": "Added _PROTOCOL_RE validation (^[A-Za-z0-9][A-Za-z0-9._-]*$) enforced in _proto_json and _instance_files, returning 400 on mismatch.",
+          "commits": [
+            "a9e0adc"
+          ],
+          "constructs": [
+            "_PROTOCOL_RE",
+            "create_app"
+          ]
+        },
+        {
+          "category": "API",
+          "title": "Non-PR ref-targeted instances (UI workflow_dispatch)",
+          "problem": "The MM recovery protocol needed a non-PR entry point keyed by ref/UI id, but routes assumed a bare PR number.",
+          "root_cause": "Instance addressing was originally PR-only (pr-<N>).",
+          "solution": "_resolve_instance maps bare digits to pr-<N> and passes other idents (ref-main, ui-<uuid>) verbatim; evidence route adds additive `instance` id alongside nullable `pr`.",
+          "commits": [
+            "afee530"
+          ],
+          "constructs": [
+            "create_app"
+          ]
+        },
+        {
+          "category": "API",
+          "title": "Bulk node-keyed evidence endpoint",
+          "problem": "Needed a single endpoint returning all node evidence + answers for an instance.",
+          "root_cause": "New product requirement.",
+          "solution": "Added /instances/{ident}/evidence delegating to state_reader.evidence_projection, returning protocol/pr/instance plus the projection.",
+          "commits": [
+            "f71e53b"
+          ],
+          "constructs": [
+            "create_app"
+          ]
+        }
+      ],
+      "key_constructs": [
+        {
+          "name": "PROTO_DIR",
+          "kind": "constant",
+          "lineno": 9,
+          "signature": "",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                37,
+                83,
+                91,
+                95,
+                132,
+                164
+              ]
+            },
+            {
+              "file": "tests/api/test_app_routes.py",
+              "lines": [
+                14
+              ]
+            },
+            {
+              "file": "tests/test_recover_mental_model.py",
+              "lines": [
+                19,
+                20,
+                21,
+                22
+              ]
+            }
+          ],
+          "rationale": "Base repo path for all protocol.json lookups against protocols_ref; changing it moves every protocol fetch."
+        },
+        {
+          "name": "MINUTES_NOTE",
+          "kind": "constant",
+          "lineno": 10,
+          "signature": "",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                155
+              ]
+            }
+          ],
+          "rationale": "The approximation disclaimer returned in /stats action_minutes_note."
+        },
+        {
+          "name": "_PROTOCOL_RE",
+          "kind": "constant",
+          "lineno": 15,
+          "signature": "",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                31
+              ]
+            }
+          ],
+          "rationale": "The single regex enforcing that protocol names are one safe path segment — the traversal guard."
+        },
+        {
+          "name": "create_app",
+          "kind": "function",
+          "lineno": 17,
+          "signature": "create_app(settings: Settings, client=None)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/main.py",
+              "lines": [
+                8
+              ]
+            },
+            {
+              "file": "tests/api/test_app_routes.py",
+              "lines": [
+                42,
+                124
+              ]
+            },
+            {
+              "file": "tests/api/test_health.py",
+              "lines": [
+                12
+              ]
+            }
+          ],
+          "rationale": "The app factory holding all routes, auth, validation, instance resolution, and exception handlers; the sole public entry."
+        }
+      ],
+      "tests": {
+        "files": [
+          "tests/api/test_app_routes.py",
+          "tests/api/test_health.py",
+          "tests/test_recover_mental_model.py"
+        ],
+        "functions": [
+          "test_codeset_artifacts_fail_missing",
+          "test_codeset_artifacts_pass",
+          "test_from_env_reports_all_missing_required",
+          "test_full_pipeline",
+          "test_gates_open_lists_pr62_approval",
+          "test_gates_traversal_protocol_is_400",
+          "test_gates_unknown_protocol_is_404",
+          "test_global_stats_has_minutes",
+          "test_healthz_is_open_and_ok",
+          "test_healthz_open_no_auth",
+          "test_instance_evidence_requires_auth",
+          "test_instance_evidence_returns_node_keyed_bodies",
+          "test_instance_evidence_unknown_instance_is_404",
+          "test_instance_list",
+          "test_instance_status",
+          "test_legion_artifacts_fail_missing_file",
+          "test_legion_artifacts_fail_no_run_id",
+          "test_legion_artifacts_pass",
+          "test_list_protocols",
+          "test_notfound_from_blob_fetch_maps_to_404",
+          "test_protocol_detail_404_for_unknown",
+          "test_protocol_detail_invalid_name_is_400",
+          "test_protocols_requires_auth",
+          "test_push_mental_model_hook",
+          "test_push_mental_model_hook_no_trees_is_neutral"
+        ]
+      },
+      "related_files": [
+        {
+          "file": "tests/api/test_app_routes.py",
+          "shared_commits": 3,
+          "relation": "Co-changes with this file (3 shared commits); exercises routing, auth, validation, and error mapping.",
+          "check": "Update/verify tests for traversal->400, unknown protocol->404, gates, instance status/evidence, and NotFound->404 mapping."
+        }
+      ],
+      "semantic_overview": {
+        "tags": [
+          "fastapi",
+          "visibility-api",
+          "read-only",
+          "security",
+          "state-projection"
+        ],
+        "entities": [
+          "protocol",
+          "instance (pr-N / ref-* / ui-*)",
+          "gate",
+          "evidence",
+          "state file",
+          "GitHub client"
+        ],
+        "capabilities": [
+          "Build the FastAPI app and inject a GitHub client",
+          "Authenticate requests with a bearer token (except /healthz)",
+          "Validate protocol names against path traversal",
+          "Resolve PR-number vs ref/UI instance ids",
+          "Map client errors to 404/429/502 and project status/stats/evidence/gates"
+        ]
+      },
+      "pitfalls": [
+        {
+          "description": "Adding a route that fetches a protocol/instance without calling _validate_protocol (directly or via _proto_json/_instance_files).",
+          "consequence": "Reintroduces path-traversal on query/path-sourced names.",
+          "prevention": "Route all name-based fetches through _proto_json / _instance_files, or call _validate_protocol explicitly."
+        },
+        {
+          "description": "Assuming ident is always a PR number and formatting it as pr-<ident>.",
+          "consequence": "Breaks ref-/UI-keyed instances (ref-main, ui-<uuid>).",
+          "prevention": "Always resolve via _resolve_instance and preserve nullable pr / additive instance in responses."
+        },
+        {
+          "description": "Making /healthz require auth or letting it raise.",
+          "consequence": "Health probes fail; endpoint is contractually open and must return ok/degraded only.",
+          "prevention": "Keep healthz out of require_auth and keep its broad try/except returning degraded."
+        },
+        {
+          "description": "Importing or depending on the engine to read state.",
+          "consequence": "Violates the read-only data-contract boundary between API and engine.",
+          "prevention": "Read state only through the client + state_reader projections."
+        }
+      ],
+      "reading_guide": {
+        "start": "create_app — everything (routes, auth, validation, error mapping) is defined inside it.",
+        "key": [
+          "_validate_protocol/_PROTOCOL_RE: the security boundary every fetch depends on",
+          "_resolve_instance: how pr-N vs ref-/ui- instances are addressed",
+          "_instance_files: assembles per-instance state and 404s without _instance.yaml",
+          "exception handlers (_nf/_rl/_up): the NotFound->404 / RateLimited->429 / UpstreamError->502 contract"
+        ],
+        "skip": "The individual state_reader delegations (status_projection, instance_stats, evidence_projection) — logic lives in state_reader, not here."
+      }
+    },
+    "api/state_reader.py": {
+      "path": "api/state_reader.py",
+      "description": "state_reader.py is the pure read-only projection layer for the FastAPI visibility service (`api/`). It parses protocol.json blobs and on-disk `agentic-state` instance files (`_instance.yaml` + per-node `.yaml` + `.evidence.json`/`.answers.json` sidecars) into JSON views: a protocol catalog (`list_protocols`/`protocol_detail`), a live run status tree (`status_projection`), per-instance stats (`instance_stats`), evidence/answers split (`evidence_projection`), gate views (`gate_view`), and action-minute totals (`sum_run_minutes`). It reads the engine's state as a data contract and never imports the engine, so it must track the engine's file/YAML conventions by hand rather than by shared code.\n\nThe load-bearing non-obvious contracts: (1) instance keys are `pr-<N>` OR ref-/ui-keyed, so `_pr_of` returns None for non-PR runs and every projection tolerates a null pr. (2) A gate node's top-level `state` stays frozen at the gate id (e.g. `answering`) for its whole life; real progress lives in `gates.state` (open→answered/approved/rejected), so `_node_status` MUST read `gates.state` first or answered gates read 'running' forever. (3) A terminal `merge`/`combine` node writes no own file and leaves `_instance.yaml` `phase` pointing at it, signaling done only via `phase_label: \"✅ done\"` — so status must fall back to `classify_label(phase_label)` for a head with no node file. (4) Node files are distinguished from sidecars/bookkeeping via `_is_node_file` (excludes `_instance.yaml`, `.__join.yaml`, and non-`.yaml`), and process status (done/failed/running) is kept orthogonal to verdict.",
+      "edit_checklist": {
+        "tests_to_run": [
+          "pytest -q tests/api/test_state_reader_aggregate.py",
+          "pytest -q tests/api/test_state_reader_catalog.py",
+          "pytest -q tests/api/test_state_reader_stats.py",
+          "pytest -q tests/api/test_state_reader_status.py"
+        ],
+        "data_constants": [
+          "STATE_FILE_SUFFIX '.yaml': every node-file gate and stem strip depends on it; keep all suffix arithmetic consistent",
+          "EVIDENCE_SUFFIX/ANSWERS_SUFFIX '.evidence.json'/'.answers.json': evidence_projection splits sidecars by these; must match engine's sidecar naming",
+          "_IGNORE_FILES ('_instance.yaml',) and _IGNORE_SUFFIXES ('.__join.yaml',): the only non-node .yaml exclusions — add any new bookkeeping file here or it pollutes phases/stats",
+          "_node_status gate vocabulary: answered/approved→done, rejected/failed→failed, else running — keep in sync with engine gates.state values",
+          "classify_label markers: '✅'/'done'→completed, '❌'/'failed'→failed, '⛔'/'blocked'→blocked, else running — must match phase_label emoji the engine stamps"
+        ],
+        "warning": "Reading a gate node's top-level `state` instead of `gates.state` reintroduces the answered-gate-forever-running bug (39a1293)."
+      },
+      "historical_insights": [
+        {
+          "category": "API",
+          "title": "Answered/approved gates reported as forever-running",
+          "problem": "The visibility API showed the interactive protocol's socratic answering gate (and code-review's approval gate after /approve) as running even after the run completed.",
+          "root_cause": "A gate node's top-level `state` stays the gate id (e.g. 'answering') for its whole life; progress lives in `gates.state`. `_node_status` only inspected top-level `state`, so an answered gate always read 'running'.",
+          "solution": "Made `_node_status` gate-aware: gates.state answered/approved→done, rejected/failed→failed, else running.",
+          "commits": [
+            "39a1293"
+          ],
+          "constructs": [
+            "_node_status"
+          ]
+        },
+        {
+          "category": "API",
+          "title": "Terminal merge/combine run reported as stuck",
+          "problem": "A completed merge node (recover-mental-model's `combine`) made a finished run look stuck at `combine` with no head status/kind.",
+          "root_cause": "The merge node writes no own state file and the engine leaves `_instance.yaml` `phase` pointing at it, signaling completion only via `phase_label: '✅ done'`; status_projection matched `phase` against on-disk node files so the head came back statusless.",
+          "solution": "Added top-level instance `status` via `classify_label(phase_label)` and, when the head has no node file but reached terminal, surfaced done/failed on the head.",
+          "commits": [
+            "7751ce1"
+          ],
+          "constructs": [
+            "status_projection",
+            "classify_label"
+          ]
+        },
+        {
+          "category": "API",
+          "title": "Head could not distinguish stale vs fresh terminal done",
+          "problem": "The head was {phase, kind, status} with no run identity, so a stale terminal `done` was indistinguishable from a fresh one.",
+          "root_cause": "Run identity (head_sha, run_id, attempt) existed in state but was not surfaced.",
+          "solution": "Surface head.head_sha always, head.run_id/attempt for single agent heads, and run_id on every agent leaf via `_leaf_view`/`_run_id_of`.",
+          "commits": [
+            "64f02f1"
+          ],
+          "constructs": [
+            "status_projection",
+            "_leaf_view",
+            "_run_id_of"
+          ]
+        },
+        {
+          "category": "Security",
+          "title": "Path-traversal via ?protocol= and leaf-branch flattening",
+          "problem": "Query-sourced protocol id could enable path traversal; fanout leaf branches were flattened to just id+workflow.",
+          "root_cause": "Protocol id unvalidated (validation added in callers _proto_json/_instance_files, not this file); `_state_summary` `keep` list lacked 'workflow' for leaf branches.",
+          "solution": "Added 'workflow' to `_state_summary` keep so leaf branches retain workflow/max_iterations/checks; protocol-id regex validation added upstream.",
+          "commits": [
+            "a9e0adc"
+          ],
+          "constructs": [
+            "_state_summary"
+          ]
+        },
+        {
+          "category": "Parsing",
+          "title": "Sidecars/join markers miscounted as node files",
+          "problem": "Non-node .yaml/JSON files risked being counted as phases; dead code and unused import lingered.",
+          "root_cause": "Sidecar exclusion was incomplete / based on dead constants.",
+          "solution": "Introduced `_is_node_file` using STATE_FILE_SUFFIX + _IGNORE_FILES + _IGNORE_SUFFIXES; strengthened tests injecting real sidecar/join filenames.",
+          "commits": [
+            "9b6c7d4",
+            "6298035"
+          ],
+          "constructs": [
+            "_is_node_file",
+            "_IGNORE_FILES",
+            "_IGNORE_SUFFIXES"
+          ]
+        },
+        {
+          "category": "Config",
+          "title": "Faked absent optional catalog fields",
+          "problem": "Catalog emitted version=\"\" and max_depth:None instead of omitting missing optional fields.",
+          "root_cause": "Defaults were faked rather than omitted.",
+          "solution": "Only include version/max_depth when present in the protocol.",
+          "commits": [
+            "0c213a6"
+          ],
+          "constructs": [
+            "list_protocols",
+            "protocol_detail"
+          ]
+        }
+      ],
+      "key_constructs": [
+        {
+          "name": "_pr_of",
+          "kind": "function",
+          "lineno": 7,
+          "signature": "_pr_of(instance)",
+          "docstring": "PR number for a `pr-<N>` instance, else None (ref-/ui-keyed runs have no PR).",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                126
+              ]
+            },
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                197,
+                229
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_aggregate.py",
+              "lines": [
+                16,
+                17,
+                18
+              ]
+            }
+          ],
+          "rationale": "Guards the PR-optional invariant so ref-/ui-keyed runs project a null pr instead of failing."
+        },
+        {
+          "name": "_trigger_summary",
+          "kind": "function",
+          "lineno": 13,
+          "signature": "_trigger_summary(proto: dict)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                26,
+                52
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "list_protocols",
+          "kind": "function",
+          "lineno": 19,
+          "signature": "list_protocols(protocol_jsons: list[str])",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                98
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_catalog.py",
+              "lines": [
+                9
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_state_summary",
+          "kind": "function",
+          "lineno": 30,
+          "signature": "_state_summary(s: dict)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                40,
+                42,
+                53
+              ]
+            }
+          ],
+          "rationale": "Recursively summarizes protocol node graph; keep list must include 'workflow' so leaf branches aren't flattened."
+        },
+        {
+          "name": "protocol_detail",
+          "kind": "function",
+          "lineno": 45,
+          "signature": "protocol_detail(protocol_json: str)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                102
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_catalog.py",
+              "lines": [
+                19
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "STATE_FILE_SUFFIX",
+          "kind": "constant",
+          "lineno": 57,
+          "signature": "",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                83,
+                109,
+                220,
+                267
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "EVIDENCE_SUFFIX",
+          "kind": "constant",
+          "lineno": 58,
+          "signature": "",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                64,
+                65
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "ANSWERS_SUFFIX",
+          "kind": "constant",
+          "lineno": 59,
+          "signature": "",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                66,
+                67
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "evidence_projection",
+          "kind": "function",
+          "lineno": 61,
+          "signature": "evidence_projection(instance_files: dict[str, str])",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                124
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_status.py",
+              "lines": [
+                91,
+                100
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_IGNORE_FILES",
+          "kind": "constant",
+          "lineno": 79,
+          "signature": "",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                85
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_IGNORE_SUFFIXES",
+          "kind": "constant",
+          "lineno": 80,
+          "signature": "",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                85
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_is_node_file",
+          "kind": "function",
+          "lineno": 82,
+          "signature": "_is_node_file(name: str)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                138,
+                217,
+                259
+              ]
+            }
+          ],
+          "rationale": "The gate separating real node state files from sidecars/join markers/_instance.yaml; every phase/stat loop relies on it."
+        },
+        {
+          "name": "_node_status",
+          "kind": "function",
+          "lineno": 89,
+          "signature": "_node_status(node: dict)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                130,
+                165,
+                205
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_aggregate.py",
+              "lines": [
+                23
+              ]
+            }
+          ],
+          "rationale": "Single source of truth for a node's process status; gate-aware (gates.state) before top-level state — regressions here break every gated protocol's reported status."
+        },
+        {
+          "name": "_phase_and_branch",
+          "kind": "function",
+          "lineno": 108,
+          "signature": "_phase_and_branch(filename: str)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                140
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_checks_of",
+          "kind": "function",
+          "lineno": 113,
+          "signature": "_checks_of(node: dict)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                131
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_iterations_of",
+          "kind": "function",
+          "lineno": 119,
+          "signature": "_iterations_of(node: dict)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                130,
+                221
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_run_id_of",
+          "kind": "function",
+          "lineno": 123,
+          "signature": "_run_id_of(node: dict)",
+          "docstring": "The run that produced the node's latest attempt (history[-1].agent_run_id),\nor None for a node with no agent run yet (e.g. a gate).",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                131
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_leaf_view",
+          "kind": "function",
+          "lineno": 129,
+          "signature": "_leaf_view(node: dict)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                157,
+                168
+              ]
+            }
+          ],
+          "rationale": "Uniform agent-leaf shape (status/iterations/run_id/checks) reused for agent phases and fanout branches."
+        },
+        {
+          "name": "status_projection",
+          "kind": "function",
+          "lineno": 133,
+          "signature": "status_projection(instance_files: dict[str, str])",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                114
+              ]
+            },
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                224
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_aggregate.py",
+              "lines": [
+                9,
+                42
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_status.py",
+              "lines": [
+                5,
+                24,
+                35,
+                48,
+                58,
+                65,
+                77
+              ]
+            }
+          ],
+          "rationale": "The central view (11 refs, 4 files) building phases + head; must handle single/fanout/gate kinds and fileless terminal heads."
+        },
+        {
+          "name": "_fanout_status",
+          "kind": "function",
+          "lineno": 204,
+          "signature": "_fanout_status(nodes)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                156
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "instance_stats",
+          "kind": "function",
+          "lineno": 212,
+          "signature": "instance_stats(instance_files: dict[str, str])",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                119
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_aggregate.py",
+              "lines": [
+                11
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_stats.py",
+              "lines": [
+                5
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "classify_label",
+          "kind": "function",
+          "lineno": 241,
+          "signature": "classify_label(phase_label: str)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                181,
+                254
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_aggregate.py",
+              "lines": [
+                49,
+                50,
+                51,
+                52,
+                57
+              ]
+            }
+          ],
+          "rationale": "Maps engine phase_label emoji/words to the completed/failed/blocked/running vocabulary used across instance and head status."
+        },
+        {
+          "name": "classify_instance",
+          "kind": "function",
+          "lineno": 252,
+          "signature": "classify_instance(instance_yaml_text: str)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                141
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_aggregate.py",
+              "lines": [
+                63,
+                66
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "gate_view",
+          "kind": "function",
+          "lineno": 257,
+          "signature": "gate_view(instance_files: dict[str, str])",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                168
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_aggregate.py",
+              "lines": [
+                70,
+                76
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "_parse_iso",
+          "kind": "function",
+          "lineno": 275,
+          "signature": "_parse_iso(s)",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/state_reader.py",
+              "lines": [
+                287,
+                288
+              ]
+            }
+          ],
+          "rationale": ""
+        },
+        {
+          "name": "sum_run_minutes",
+          "kind": "function",
+          "lineno": 284,
+          "signature": "sum_run_minutes(runs: list[dict])",
+          "docstring": "",
+          "callers": [
+            {
+              "file": "api/app.py",
+              "lines": [
+                154
+              ]
+            },
+            {
+              "file": "tests/api/test_state_reader_aggregate.py",
+              "lines": [
+                89
+              ]
+            }
+          ],
+          "rationale": "Aggregates GitHub run durations via _parse_iso; tolerant of missing/invalid timestamps."
+        }
+      ],
+      "tests": {
+        "files": [
+          "tests/api/test_state_reader_aggregate.py",
+          "tests/api/test_state_reader_catalog.py",
+          "tests/api/test_state_reader_stats.py",
+          "tests/api/test_state_reader_status.py"
+        ],
+        "functions": [
+          "test_classify_instance_reads_phase_label_from_instance_yaml",
+          "test_classify_label_none_is_running",
+          "test_classify_label_variants",
+          "test_evidence_projection_skips_malformed_json",
+          "test_evidence_projection_splits_evidence_and_answers",
+          "test_gate_view_open_answer_gate",
+          "test_gate_view_open_approval_gate",
+          "test_instance_stats_code_review_pr62",
+          "test_list_protocols_summarizes_name_version_triggers",
+          "test_node_status_gate_aware",
+          "test_pr_of_helper",
+          "test_protocol_detail_exposes_state_graph",
+          "test_status_projection_agent_leaf_carries_run_id",
+          "test_status_projection_answered_gate_is_done",
+          "test_status_projection_code_review_pr62",
+          "test_status_projection_excludes_injected_sidecar_filenames",
+          "test_status_projection_head_carries_run_identity",
+          "test_status_projection_ignores_sidecars_and_join_markers",
+          "test_status_projection_mid_combine_stays_running",
+          "test_status_projection_ref_instance_has_null_pr",
+          "test_status_projection_terminal_merge_head_reports_done",
+          "test_sum_run_minutes_wallclock"
+        ]
+      },
+      "related_files": [
+        {
+          "file": "tests/api/test_state_reader_status.py",
+          "shared_commits": 5,
+          "relation": "Primary status/gate/head-identity coverage; co-changes on nearly every status fix (5 shared commits)",
+          "check": "Update assertions for gate-aware status, null-pr, fileless terminal heads, and run identity when changing _node_status/status_projection"
+        },
+        {
+          "file": "api/README.md",
+          "shared_commits": 3,
+          "relation": "Documents the projection contract and caveats (e.g. deep-nested head.kind/status)",
+          "check": "Keep documented status vocabulary and head caveats in sync with classify_label / status_projection behavior"
+        },
+        {
+          "file": "tests/api/test_state_reader_catalog.py",
+          "shared_commits": 3,
+          "relation": "Covers list_protocols/protocol_detail omission of absent optional fields",
+          "check": "Verify version/max_depth omission and sort order if you change catalog builders"
+        },
+        {
+          "file": "tests/api/test_state_reader_aggregate.py",
+          "shared_commits": 2,
+          "relation": "Exercises instance_stats/sum_run_minutes aggregation",
+          "check": "Confirm phase counting and iteration totals still match after status/node-file changes"
+        }
+      ],
+      "semantic_overview": {
+        "tags": [
+          "visibility-api",
+          "state-projection",
+          "gates",
+          "fanout",
+          "read-only"
+        ],
+        "entities": [
+          "protocol.json",
+          "_instance.yaml",
+          "node state file",
+          "gate (gates.state)",
+          "fanout branch",
+          "evidence/answers sidecar",
+          "phase_label"
+        ],
+        "capabilities": [
+          "project engine state files into a status tree with head run identity",
+          "classify instance/phase status from phase_label and gates.state",
+          "split instance sidecars into evidence and answers maps",
+          "summarize protocol catalog and per-node state graph",
+          "compute per-instance stats and action-minute totals"
+        ]
+      },
+      "pitfalls": [
+        {
+          "description": "Reading node completion from top-level `state` for gate nodes",
+          "consequence": "Answered/approved gates report 'running' forever (regression of 39a1293)",
+          "prevention": "Always consult `gates.state` first in `_node_status`; keep the answered/approved/rejected mapping intact"
+        },
+        {
+          "description": "Assuming every instance has a PR number",
+          "consequence": "ref-/ui-keyed recover-mental-model runs crash or mislabel; test_status_projection_ref_instance_has_null_pr fails",
+          "prevention": "Route all PR extraction through `_pr_of`, which returns None for non-`pr-<N>` keys"
+        },
+        {
+          "description": "Building head status only from on-disk node files",
+          "consequence": "Terminal merge/combine heads (no own file) look statusless/stuck (regression of 7751ce1)",
+          "prevention": "Fall back to `classify_label(phase_label)` and surface done/failed on a fileless head that reached terminal"
+        },
+        {
+          "description": "Adding a new bookkeeping .yaml without excluding it",
+          "consequence": "It gets counted as a phase/node in status and stats",
+          "prevention": "Add it to _IGNORE_FILES or _IGNORE_SUFFIXES so `_is_node_file` filters it"
+        }
+      ],
+      "reading_guide": {
+        "start": "status_projection — the assembly point that ties instance file, nodes, gates, fanout, and head together",
+        "key": [
+          "_node_status: encodes the gate-vs-top-level-state contract every status view depends on",
+          "_is_node_file: defines what counts as a node file vs sidecar/bookkeeping",
+          "classify_label: the terminal-status fallback for fileless heads",
+          "_pr_of: the PR-optional invariant for ref-/ui-keyed runs"
+        ],
+        "skip": "sum_run_minutes / _parse_iso (independent action-minute helpers) on a first pass"
+      }
+    }
+  },
+  "meta": {
+    "source": ".",
+    "files_analyzed": 7,
+    "total_source_files": 7,
+    "commits_mined": 521
+  }
+}

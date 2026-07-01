@@ -1,0 +1,7 @@
+Mental-model recovery methods (one directory each)
+source commit: ref-main
+
+legion-map         : claude -p /legion:map  (9thLevelSoftware/legion)
+vibed-codeset      : python -m codeset .   (codeset-vibing)
+ubiquitous-language: /domain-modeling  (mattpocock/skills)
+socratic           : /socratic-code-theory-recovery  (LLM-Coding/Semantic-Anchors)

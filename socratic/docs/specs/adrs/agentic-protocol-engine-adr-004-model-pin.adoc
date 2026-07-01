@@ -1,0 +1,47 @@
+= ADR-004: Pin every agent to claude-sonnet-4-6
+:doctype: article
+
+// Nygard-format ADR synthesized from the Q3.9.ModelPin leaves.
+
+== Status
+
+Accepted (implemented) [*-agent.md engine.model, CLAUDE.md, docs/STATUS.md:338-367].
+
+== Context
+
+Every dispatched gh-aw agent runs against a single, fixed LLM. Pinning a model makes
+agent behavior reproducible across runs. Why this specific model, and what would
+trigger a re-pin (cost, capability, or availability), is deferred: this is only a POC
+for now (team answer).
+
+== Decision
+
+Pin every agent to `claude-sonnet-4-6` via `engine.model` in each agent definition
+[*-agent.md engine.model, CLAUDE.md].
+
+== Consequences
+
+* Reproducible, uniform agent behavior across all protocols and legs [CLAUDE.md].
+* A single point of change: re-pinning updates every agent at once.
+* No documented re-pin trigger or evaluation policy, because this is only a POC for
+  now (team answer) — model drift/deprecation handling is an open gap.
+
+== Pugh Matrix
+
+Baseline: no pin (per-run/default model selection). Priority quality goal:
+Reliability (team answer).
+
+[cols="2,1,1",options="header"]
+|===
+| Quality goal | No pin / default selection (baseline) | Pin to claude-sonnet-4-6 (chosen)
+| Reliability (reproducibility) | -1 | +1
+| Maintainability | 0 | +1
+| Performance / cost predictability | 0 | +1
+| Future-proofing (model drift) | 0 | -1
+| *Total* | *-1* | *+2*
+|===
+
+Pinning wins on Reliability (reproducible behavior), Maintainability (one place to
+change), and cost predictability, at the expense of Future-proofing — a pinned model
+can be deprecated or superseded. The re-pin trigger that would manage that risk is
+deferred because this is only a POC for now (team answer).

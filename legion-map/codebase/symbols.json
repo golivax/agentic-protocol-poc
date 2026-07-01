@@ -1,0 +1,89 @@
+{
+  "metadata": {
+    "map_schema_version": "2.0",
+    "generated_at": "2026-07-01T18:02:12Z",
+    "analyzed_commit": "276d7e4fbf1a19943851fe24d76d2debc1f36d0d",
+    "source_file_count": 357,
+    "source_fingerprint": "3d7aceade88eeb9f",
+    "source_fingerprint_kind": "hash",
+    "scope": "project-root"
+  },
+  "entry_points": [
+    {"name": "app", "path": "api/main.py", "kind": "asgi-app", "summary": "ASGI app built from create_app(Settings.from_env(...)); served by uvicorn.", "related_chunks": ["map:api-main:001"]},
+    {"name": "create_app", "path": "api/app.py", "kind": "app-factory", "summary": "FastAPI app factory with 9 GET routes + bearer auth.", "related_chunks": ["map:api-app:001"]},
+    {"name": "next.py", "path": ".github/agent-factory/engine/next.py", "kind": "cli", "summary": "Pure planner CLI: (state, protocol, command) -> action JSON.", "related_chunks": ["map:engine-next:001"]},
+    {"name": "advance.py", "path": ".github/agent-factory/engine/advance.py", "kind": "cli", "summary": "Sole state writer CLI: verdicts -> mutate/publish/CAS-push/re-dispatch.", "related_chunks": ["map:engine-advance:001"]},
+    {"name": "run-checks.py", "path": ".github/agent-factory/engine/run-checks.py", "kind": "cli", "summary": "Language-agnostic check runner over the Check ABI.", "related_chunks": ["map:engine-runchecks:001"]},
+    {"name": "lib.py", "path": ".github/agent-factory/engine/lib.py", "kind": "cli+module", "summary": "Engine shared library + thin CLI (python3 lib.py <subcommand>).", "related_chunks": ["map:engine-lib:001"]},
+    {"name": "protocol-lint.py", "path": ".github/agent-factory/engine/protocol-lint.py", "kind": "cli", "summary": "Validate + ASCII-visualize a protocol.json.", "related_chunks": ["map:engine-lint:001"]},
+    {"name": "install.sh", "path": "dist/install.sh", "kind": "script", "summary": "Installer entry: drop engine + chosen protocols into a repo.", "related_chunks": ["map:dist-install:001"]}
+  ],
+  "routes": [
+    {"name": "GET /healthz", "path": "api/app.py", "kind": "route", "summary": "Health probe (no auth).", "related_chunks": ["map:api-app:001"]},
+    {"name": "GET /protocols", "path": "api/app.py", "kind": "route", "summary": "List protocols (auth).", "related_chunks": ["map:api-app:001"]},
+    {"name": "GET /protocols/{protocol}", "path": "api/app.py", "kind": "route", "summary": "Protocol detail.", "related_chunks": ["map:api-app:001"]},
+    {"name": "GET /protocols/{protocol}/instances", "path": "api/app.py", "kind": "route", "summary": "List instances.", "related_chunks": ["map:api-app:001"]},
+    {"name": "GET /protocols/{protocol}/instances/{ident}/status", "path": "api/app.py", "kind": "route", "summary": "Instance status.", "related_chunks": ["map:api-app:001"]},
+    {"name": "GET /protocols/{protocol}/instances/{ident}/stats", "path": "api/app.py", "kind": "route", "summary": "Instance stats (approx action minutes).", "related_chunks": ["map:api-app:001"]},
+    {"name": "GET /protocols/{protocol}/instances/{ident}/evidence", "path": "api/app.py", "kind": "route", "summary": "Instance evidence.", "related_chunks": ["map:api-app:001"]},
+    {"name": "GET /stats", "path": "api/app.py", "kind": "route", "summary": "Global stats across protocols.", "related_chunks": ["map:api-app:001"]},
+    {"name": "GET /gates", "path": "api/app.py", "kind": "route", "summary": "Open human gates.", "related_chunks": ["map:api-app:001"]}
+  ],
+  "apis": [
+    {"name": "GitHubClient", "path": "api/github_client.py", "kind": "class", "summary": "httpx GitHub REST client with error taxonomy (NotFound/RateLimited/UpstreamError).", "related_chunks": ["map:api-github-client:001"]},
+    {"name": "state_reader", "path": "api/state_reader.py", "kind": "module", "summary": "Reads engine state as a data contract into status/stats/gates envelopes; never imports the engine.", "related_chunks": ["map:api-state-reader:001"]}
+  ],
+  "modules": [
+    {"name": "lib", "path": ".github/agent-factory/engine/lib.py", "kind": "module", "summary": "cas_push, route, validate_protocol, open_gate, do_answer, decide, resolve_executable, match_run_by_cid, set_check_run.", "related_chunks": ["map:engine-lib:001"]},
+    {"name": "next", "path": ".github/agent-factory/engine/next.py", "kind": "module", "summary": "Pure planner; enter_root + recursive sequencing on NODE_PATH.", "related_chunks": ["map:engine-next:001"]},
+    {"name": "advance", "path": ".github/agent-factory/engine/advance.py", "kind": "module", "summary": "Sole state writer; decide() fold; publish/dispatch.", "related_chunks": ["map:engine-advance:001"]},
+    {"name": "paths", "path": ".github/agent-factory/engine/paths.py", "kind": "module", "summary": "Pure NODE_PATH tree navigation and state-file addressing.", "related_chunks": ["map:engine-paths:001"]},
+    {"name": "join", "path": ".github/agent-factory/engine/join.py", "kind": "module", "summary": "Recursive fan-out AND-barrier; bubbles nested joins.", "related_chunks": ["map:engine-join:001"]},
+    {"name": "run-checks", "path": ".github/agent-factory/engine/run-checks.py", "kind": "module", "summary": "Data-driven check resolution + execution; forwards CHECK_PARAMS.", "related_chunks": ["map:engine-runchecks:001"]},
+    {"name": "resolve", "path": "dist/resolve.py", "kind": "module", "summary": "Pure resolution of every agent workflow a protocol references at any depth.", "related_chunks": ["map:dist-resolve:001"]},
+    {"name": "receipt", "path": "dist/receipt.py", "kind": "module", "summary": "Install receipt write/diff/drift/version-compat via content hashes.", "related_chunks": ["map:dist-receipt:001"]},
+    {"name": "config", "path": "api/config.py", "kind": "module", "summary": "Frozen Settings dataclass; Settings.from_env with required-var validation.", "related_chunks": ["map:api-config:001"]},
+    {"name": "models", "path": "api/models.py", "kind": "module", "summary": "Pydantic response envelopes: ProtocolList, InstanceList, GatesResponse, GlobalStats.", "related_chunks": ["map:api-models:001"]}
+  ],
+  "tests": [
+    {"name": "test_engine", "path": "tests/test_engine.py", "kind": "test", "summary": "Planner + advance writer + lib CAS; single-agent + fanout regression using fixtures.", "related_chunks": ["map:tests-suite:001"]},
+    {"name": "test_decide", "path": "tests/test_decide.py", "kind": "test", "summary": "The decide() fold over verdict severities.", "related_chunks": ["map:tests-suite:001"]},
+    {"name": "test_runchecks", "path": "tests/test_runchecks.py", "kind": "test", "summary": "Check resolution/robustness (572 lines).", "related_chunks": ["map:tests-suite:001"]},
+    {"name": "test_dynamic_fanout", "path": "tests/test_dynamic_fanout.py", "kind": "test", "summary": "Runtime-expanded fan-out (1080 lines, high churn).", "related_chunks": ["map:tests-suite:001"]},
+    {"name": "test_deep_fanout_e2e", "path": "tests/test_deep_fanout_e2e.py", "kind": "test", "summary": "Depth-4 nested fan-out end-to-end.", "related_chunks": ["map:tests-suite:001"]},
+    {"name": "test_recursive_sequencer", "path": "tests/test_recursive_sequencer.py", "kind": "test", "summary": "Recursive sequencer across shapes.", "related_chunks": ["map:tests-suite:001"]},
+    {"name": "conftest", "path": "tests/conftest.py", "kind": "fixture", "summary": "Bare-git fake agentic-state origin, ENGINE_LOCAL=1, run_engine/run_check/read_state_yaml helpers.", "related_chunks": ["map:tests-suite:001"]}
+  ],
+  "config": [
+    {"name": "pyproject.toml", "path": "pyproject.toml", "kind": "config", "summary": "uv project manifest; runtime + dev deps; requires-python >=3.10.", "related_chunks": ["map:pyproject:001"]},
+    {"name": "protocol.schema.json", "path": ".github/agent-factory/engine/protocol.schema.json", "kind": "config", "summary": "JSON Schema backing the protocol.json DSL.", "related_chunks": ["map:engine-schema:001"]},
+    {"name": "agentic-orchestrator.yml", "path": ".github/workflows/agentic-orchestrator.yml", "kind": "config", "summary": "Router workflow (union on:, route job, calls reusable engine).", "related_chunks": ["map:wf-orchestrator:001"]},
+    {"name": "agentic-engine.yml", "path": ".github/workflows/agentic-engine.yml", "kind": "config", "summary": "Reusable engine workflow (4 trust zones).", "related_chunks": ["map:wf-engine:001"]},
+    {"name": "VERSION", "path": ".github/agent-factory/VERSION", "kind": "config", "summary": "Vendored engine version (0.1.0).", "related_chunks": []}
+  ],
+  "dependencies": [
+    {"name": "fastapi", "path": "pyproject.toml", "kind": "runtime", "summary": "API web framework (api/ only).", "related_chunks": ["map:pyproject:001"]},
+    {"name": "httpx", "path": "pyproject.toml", "kind": "runtime", "summary": "HTTP client for the GitHub client.", "related_chunks": ["map:pyproject:001"]},
+    {"name": "PyYAML", "path": "pyproject.toml", "kind": "runtime", "summary": "YAML parsing for engine state + api state reader (only hard engine runtime dep).", "related_chunks": ["map:pyproject:001"]},
+    {"name": "uvicorn", "path": "pyproject.toml", "kind": "runtime", "summary": "ASGI server for the api/ service.", "related_chunks": ["map:pyproject:001"]},
+    {"name": "pytest", "path": "pyproject.toml", "kind": "dev", "summary": "Test runner (63 modules).", "related_chunks": ["map:pyproject:001"]},
+    {"name": "respx", "path": "pyproject.toml", "kind": "dev", "summary": "httpx request mocking in tests.", "related_chunks": ["map:pyproject:001"]},
+    {"name": "jsonschema", "path": "pyproject.toml", "kind": "dev", "summary": "Structural protocol validation (linter's structural layer; optional at runtime).", "related_chunks": ["map:pyproject:001"]}
+  ],
+  "ownership": [
+    {"name": "engine", "path": ".github/agent-factory/engine/", "kind": "area", "summary": "Generic protocol-agnostic state machine. No protocol-specific logic.", "related_chunks": ["map:engine-lib:001", "map:engine-next:001", "map:engine-advance:001"]},
+    {"name": "protocols", "path": ".github/agent-factory/protocols/", "kind": "area", "summary": "Six shipped protocols; each self-contained (states, evidence schemas, checks, publish hooks).", "related_chunks": ["map:proto-codereview:001", "map:proto-recover-mm:001"]},
+    {"name": "workflows", "path": ".github/workflows/", "kind": "area", "summary": "Router, reusable engine (trust zones), gh-aw agent locks, join evaluator, lint.", "related_chunks": ["map:wf-orchestrator:001", "map:wf-engine:001", "map:wf-agents:001"]},
+    {"name": "api", "path": "api/", "kind": "area", "summary": "Read-only FastAPI visibility service over engine state.", "related_chunks": ["map:api-app:001"]},
+    {"name": "dist", "path": "dist/", "kind": "area", "summary": "Distribution installer (resolve + receipt + install.sh).", "related_chunks": ["map:dist-resolve:001", "map:dist-receipt:001"]},
+    {"name": "tests", "path": "tests/", "kind": "area", "summary": "63 pytest modules + fixtures; capability/regression/e2e coverage.", "related_chunks": ["map:tests-suite:001"]},
+    {"name": "docs", "path": "docs/", "kind": "area", "summary": "Design rationale, DSL reference, authoring hub, status/deviations.", "related_chunks": ["map:docs-howitworks:001", "map:docs-status:001"]}
+  ],
+  "risk_areas": [
+    {"name": "engine/lib.py", "path": ".github/agent-factory/engine/lib.py", "kind": "hotspot", "summary": "1703 lines; #1 git hotspot (70 changes/90d); many responsibilities.", "related_chunks": ["map:engine-lib:001"]},
+    {"name": "engine/next.py", "path": ".github/agent-factory/engine/next.py", "kind": "hotspot", "summary": "794 lines; #2 hotspot (50/90d); the pure planner.", "related_chunks": ["map:engine-next:001"]},
+    {"name": "engine/advance.py", "path": ".github/agent-factory/engine/advance.py", "kind": "hotspot", "summary": "720 lines; SOLE state writer; corruption risk.", "related_chunks": ["map:engine-advance:001"]},
+    {"name": "egress-firewall-disabled", "path": ".github/workflows/", "kind": "security", "summary": "gh-aw agents run strict:false + sandbox.agent:false (deliberate); biggest security weakening.", "related_chunks": ["map:wf-agents:001"]},
+    {"name": "shell-injection-surface", "path": ".github/workflows/agentic-engine.yml", "kind": "security", "summary": "Agent-derived strings must be passed via env:, never interpolated into run: blocks.", "related_chunks": ["map:wf-engine:001"]}
+  ]
+}

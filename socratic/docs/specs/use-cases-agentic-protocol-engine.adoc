@@ -1,0 +1,271 @@
+= Specification — Agentic Protocol Engine
+:doctype: book
+:toc: left
+:sectnums:
+
+// Synthesized by Socratic Code-Theory Recovery, Phase 2, from the Q2 branch of
+// QUESTION_TREE-agentic-protocol-engine.adoc plus team answers.
+// Code-derived claims cite [file:line]. Team facts are marked (team answer);
+// deferred items remain explicit gaps.
+
+== Actors
+
+[cols="1,3",options="header"]
+|===
+| Actor | Role
+| Human reviewer / approver | Issues slash commands and answers human gates [CLAUDE.md, agentic-engine.yml:524].
+| UI / automation caller | Triggers ref-keyed runs via `workflow_dispatch` [agentic-orchestrator.yml:14-21].
+| Dispatched gh-aw agent | A sandboxed, read-only actor that emits evidence [agentic-engine.yml:356].
+| The engine itself | The plan → dispatch → checks → advance jobs [agentic-engine.yml:35, :356, :434, :524].
+| API consumer | A bearer-token client of the visibility API [api/app.py:25-28].
+|===
+
+== Persona Use Cases (Cockburn, User-Goal level)
+
+=== UC-1: Run a code review on a PR
+
+Primary Actor:: Human reviewer / requester.
+Trigger:: A reviewer comments `/review` on a PR; the orchestrator's read-only
+`route` job matches it against every protocol's `triggers` and selects
+`code-review` [code-review/protocol.json:6-7, agentic-orchestrator.yml:51-84,
+lib.py:507].
+Stakeholders & Interests::
+* Reviewer — wants a trustworthy, evidence-backed verdict rather than prose.
+* PR author — wants actionable, anchored findings.
+* Engine — wants every step to proceed through the predefined pathway (team
+  answer).
+Preconditions::
+* The workflows and agent locks are present on the default branch `main`
+  [CLAUDE.md].
+* The `agentic-state` branch and required secrets exist [CLAUDE.md].
+Main Success Scenario::
+. `preflight` runs as an agent gate [code-review/protocol.json:16].
+. `review` fans out to the `grumpy` + `security` legs, each an
+  iterate-with-feedback loop [code-review/protocol.json:38].
+. `join` applies an AND-barrier across the legs [code-review/protocol.json:71].
+. `approval` is a human gate [code-review/protocol.json:77].
+. The instance reaches `done` [code-review/protocol.json:81].
+Extensions::
+* *A failing `iterate` check* — each review leg re-runs up to `max_iterations`
+  (3); a failed check increments the iteration and re-dispatches the agent with
+  feedback until checks pass or the budget is exhausted → `failed`
+  [code-review/protocol.json:45, :58, advance.py:648-677, lib.py:918-946].
+* *A `block` check* — blocks the conclusion without iterating; an `advisory`
+  check is recorded only [lib.py:918-946].
+Postconditions::
+The process axis (`done`/`failed`) and the verdict axis
+(APPROVE/CHANGES_REQUESTED) are orthogonal in code [CLAUDE.md]. What a completed
+review *obligates* — whether the PR author must act on CHANGES_REQUESTED, and
+whether APPROVE is advisory or merge-blocking — is deferred and not yet decided
+(team answer). This must be resolved before the verdict's business meaning can be
+specified.
+Business Rules::
+* State advances only by fast-forward compare-and-swap; `agentic-state` is never
+  force-pushed [lib.py:663-683, CLAUDE.md].
+* The engine (state PAT) and the agent (read-only + LLM creds) never share a job or
+  credential; the checks job re-fetches `gh pr diff` itself
+  [CLAUDE.md, agentic-engine.yml:42-46, :442-445].
+
+=== UC-2: Recover a codebase's mental model
+
+Primary Actor:: UI / automation caller.
+Trigger:: A `workflow_dispatch` against a ref (not a PR); the instance key is
+ref-/UI-keyed (`ref-<ref>`/`ui-<id>`), not `pr-<N>`
+[recover-mental-model/protocol.json:6, agentic-orchestrator.yml:21].
+Main Success Scenario::
+. Four parallel methods run: legion ∥ codeset ∥ ubiquitous-language ∥ the socratic
+  sub-pipeline [recover-mental-model/protocol.json:9, :14, :21, :28, :35].
+. `join` synchronizes the four legs [recover-mental-model/protocol.json:71].
+. `combine` merges the outputs and pushes them to an orphan `_mental_model` branch
+  [recover-mental-model/protocol.json:74].
+Extensions::
+* *Socratic sub-pipeline* — a three-step sequence: phase1 (build Question Tree) →
+  answering (auto-answer OPEN leaves) → phase2 (synthesize docs)
+  [recover-mental-model/protocol.json:38, :46, :55].
+Postconditions:: All four recovery outputs are published to the orphan
+`_mental_model` branch. Fully automated, no human input.
+
+=== UC-3: Human-answered mental-model recovery (interactive)
+
+Primary Actor:: Human answerer (Domain Expert / team).
+Trigger:: Identical to UC-2 but the UI passes
+`protocol=recover-mental-model-interactive`.
+Main Success Scenario / Extensions::
+Identical to UC-2 except the socratic `answering` step is a human gate on an issue
+channel: the engine posts an issue with the OPEN questions + a machine marker; a
+human answers `/answer <id>: <value>`; `mm-interactive-resume.yml` drives the
+`answer` command and resumes phase2 once every question is answered
+[recover-mental-model-interactive/protocol.json:51-56, lib.py:588,
+mm-interactive-resume.yml].
+
+=== UC-4: Autonomous feature implementation
+
+Primary Actor:: UI / automation caller (issue-triggered).
+Trigger:: `/impl-feature-auto` on an issue [impl-feature-auto/protocol.json:6-7].
+Main Success Scenario::
+. `design` produces a spec + ledger + plan (checks + `on_blocked:halt`)
+  [impl-feature-auto/protocol.json:11].
+. `implement` does TDD and opens a PR [impl-feature-auto/protocol.json:28].
+. The instance reaches `done` [impl-feature-auto/protocol.json:40].
+
+=== UC-5: Exercise the recursive engine (deep-review stub)
+
+A depth-4 nested fanout/sub-pipeline tree with stub agents, demonstrating the
+recursive engine end-to-end: preflight fanout → quick + deep(triage → analyze
+fanout(sec ∥ perf) → join-analyze → report) → join-preflight
+[deep-review-stub/protocol.json:6, :12].
+
+== System Use Cases (per interface)
+
+=== SUC-1: Slash-command routing (orchestrator router)
+
+Input & validation:: The router unions all static triggers (`issue_comment`,
+`repository_dispatch:protocol-continue`, `workflow_dispatch`)
+[agentic-orchestrator.yml:9-31].
+Processing:: A read-only `route` job calls `lib.route` to scan every protocol's
+`triggers`, then invokes the reusable engine with the resolved protocol + command
+[agentic-orchestrator.yml:51-84, lib.py:507-552].
+Output:: The reusable engine is dispatched for the matched protocol path.
+
+=== SUC-2: The four-zone engine
+
+The reusable engine is one `workflow_call` with four jobs
+[agentic-engine.yml:13, :35, :356, :434, :524]:
+
+[cols="1,2,2",options="header"]
+|===
+| Zone | Job | Holds
+| 1. Engine-pre | `plan` (next.py) | state-branch PAT
+| 2. Agent | `dispatch` → gh-aw workflow | read-only repo token + LLM creds
+| 3. Checks | `checks` (run-checks.py) | nothing (read-only default token)
+| 4. Engine-post | `advance` (advance.py) | state PAT + publish token
+|===
+
+=== SUC-3: Deterministic-check contract (ABI)
+
+Input:: Invoked `<check> <evidence.json> <diff.txt> <changed-files.txt>`; node
+config read from `CHECK_PARAMS` [run-checks.py:2-10, :97-99].
+Output & status:: Prints one JSON `{check,pass,feedback}` to stdout and always
+exits 0; the runner stamps each entry's `on_fail` (iterate|advisory|block)
+[run-checks.py:154-177, CLAUDE.md].
+
+=== SUC-4: Publish-hook contract (ABI)
+
+Input:: Invoked `<hook> <evidence.json> <instance-key>` with env (ENGINE_LOCAL,
+GITHUB_REPOSITORY, PUBLISH_TOKEN, PR)
+[CLAUDE.md, code-review/publish/publish-verdict.py:1-29].
+Output:: Prints `{conclusion,summary}`; runs *trusted* in zone 4 (not sandboxed).
+
+=== SUC-5: Visibility REST surface
+
+Ten endpoints: `/healthz` (unauthenticated liveness); everything else requires a
+bearer token — protocol catalog/detail, instance list/status/stats/evidence,
+global stats, and open gates [api/app.py:78, :88, :100, :104, :111, :116, :121,
+:129, :158, :25-28].
+
+Error mapping:: Upstream GitHub errors map to typed exceptions surfaced by
+exception handlers: 404→NotFound, 429→RateLimited (honoring Retry-After), other
+≥400→UpstreamError [api/app.py:63-76, api/github_client.py:25-32].
+
+=== SUC-6: Installer command surface
+
+The installer offers `list`, `install`, and `update`; install runs a preflight
+(git/gh/auth/gh-aw/push access), fetches files, adds agents, configures endpoints,
+ensures state branch + secrets, and writes a receipt [dist/install.sh:55, :337-359,
+:360-394, :93-104].
+
+== Supplementary Specifications
+
+=== Entity Model
+
+* *Per-node state YAML* — each node writes exactly one YAML file keyed by its
+  NODE_PATH: single phase → `<protocol>/<instance>/<phase>.yaml`; fanout legs →
+  `review.grumpy.yaml` / `review.security.yaml`; sidecars `.evidence.json` /
+  `.answers.json` [lib.py:56-65, :68-84, paths.py:30-52].
+* *Root + nested cursors* — the root cursor is `_instance.yaml` (a `phase` key);
+  nested sequence cursors live in `<seq>.yaml`; a nested fanout's barrier marker is
+  `<fanout>.__join.yaml` [lib.py:87-94, CLAUDE.md].
+* *Code-review evidence rubric* — a finding carries verbatim `existing_code` + a
+  `side` (LEFT/RIGHT) + `line` (+ optional `start_line`) anchor; a `none-found`
+  verdict must carry an `examined` list (negative attestation)
+  [grumpy.evidence.schema.json:5, :18-20, :22-34, :36-43].
+* *Preflight evidence* — a list of self-reported check results plus an `examined`
+  attestation [preflight.evidence.schema.json:7-20, :21].
+* *Design ledger (impl-feature-auto)* — an array of decision records with id
+  pattern `^L[0-9]+$`, category/confidence enums, blast-radius + reversibility
+  sub-objects, and a risk-sorted `read_these_first` index
+  [design.evidence.schema.json:13-48, :51-54].
+* *Install receipt* — `.github/agent-factory/.install.json` records
+  source/ref/engine_version + per-file SHA256 hashes for drift detection
+  [dist/receipt.py:22-29, :14-19, :38-40, :43-49, dist/manifest.json:4].
+
+=== State Machine
+
+One workflow run is one transition [CLAUDE.md]. A node's iterate loop: on a failing
+`iterate` check, advance increments the iteration counter and re-dispatches
+`protocol-continue` on the same NODE_PATH until checks pass or the per-node
+`max_iterations` (default 3) is exhausted → `failed` [advance.py:648-677,
+advance.py:478, lib.py:918-946]. Fanout branches run as matrix legs passing per-leg
+run-ids/verdicts via path-keyed artifacts; the join is a separately-dispatched,
+per-path-serialized AND-barrier by policy (all/any/quorum) [next.py:60-87,
+protocol-join.yml:13-15, join.py:18-140, lib.py:890-915].
+
+=== Interface Contracts
+
+The check ABI (SUC-3) and publish-hook ABI (SUC-4) are the two stable contracts;
+both are language-agnostic via a fixed argv/stdout shape [run-checks.py:2-10,
+CLAUDE.md].
+
+=== Validation & Acceptance Rules
+
+Acceptance is deterministic: schema-valid (evidence conforms), rubric-coverage
+(complete verdict matrix), traces-exist-in-diff (each finding anchors to a real
+diff line), plus preflight's spec/plan-present [code-review/checks/rubric-coverage.py:1-79,
+code-review/checks/traces-exist-in-diff.py, code-review/checks/schema-valid.py:1-56,
+code-review/protocol.json:22-30, :47-51, :60-62]. The executable regression
+contract is a pytest suite (~582 test functions) run via `uv run pytest tests/ -q`
+[tests/, tests/conftest.py:20-93].
+
+*Release acceptance* (team answer): the engine is not coupled to the protocols; a
+change into the internals of the engine warrants a version bump. Any further
+release policy (min_gh_aw_version bumps, promoting a stub protocol to production)
+beyond this rule is not defined.
+
+=== Cross-cutting Business Rules
+
+* State advances only by fast-forward CAS; never force-pushed. The sole exception
+  is the combine hook's orphan `_mental_model` branch [lib.py:663-683, CLAUDE.md,
+  push-mental-model.py].
+* Engine and agent never share a job or credential [CLAUDE.md,
+  agentic-engine.yml:42-46, :442-445].
+* Agent-derived strings (feedback, verdicts, filenames) are passed to shell via
+  `env:`, never interpolated into `run:` blocks [agentic-orchestrator.yml:76-84,
+  agentic-engine.yml:78-79, CLAUDE.md].
+* Events are wake-ups: a trigger only tells the engine to look; everything
+  load-bearing is re-derived from the state file [CLAUDE.md, next.py:6-12].
+
+== Gherkin Acceptance Criteria
+
+[source,gherkin]
+----
+Feature: Deterministic iterate-with-feedback on a review leg
+
+  Scenario: A failing iterate check re-dispatches the agent with feedback
+    Given a review leg with max_iterations 3
+    When a check with on_fail "iterate" fails
+    Then the engine increments the iteration counter
+    And re-dispatches protocol-continue on the same NODE_PATH with feedback
+
+  Scenario: Iteration budget exhausted
+    Given a review leg that has reached max_iterations
+    When its iterate check still fails
+    Then the leg's process state becomes "failed"
+
+Feature: State advances only by fast-forward CAS
+
+  Scenario: Concurrent transition loses the race
+    Given two transitions writing the same node file
+    When the second push is not a fast-forward
+    Then it rebases and retries up to 5 times
+    And agentic-state is never force-pushed
+----

@@ -1,0 +1,208 @@
+= Architecture (arc42) — Agentic Protocol Engine
+:doctype: book
+:toc: left
+:sectnums:
+
+// Synthesized by Socratic Code-Theory Recovery, Phase 2, from the Q3 branch of
+// QUESTION_TREE-agentic-protocol-engine.adoc plus team answers.
+// Code-derived claims cite [file:line]. Team facts are marked (team answer);
+// deferred items remain explicit gaps.
+
+== Introduction and Goals
+
+The goal is to drive gh-aw agents through porch-style protocols reliably — declare a
+protocol as data, demand structured evidence, verify it deterministically, and keep
+engine/agent credentials separate [README.md:1-6, README.md:42-49,
+README.md:64-66]. In business terms the driving purpose is to make sure agentic
+workflows follow specific pathways and proceed with their predefined steps (team
+answer).
+
+The top three quality goals exercised in code are Reliability, Security, and
+Maintainability; the priority ranking places *Reliability* first (team answer). See
+chapter 10 for the quality scenarios and the ranking.
+
+== Architecture Constraints
+
+=== Technical constraints
+
+The runtime engine needs only Python 3.10+ + PyYAML; the API adds
+fastapi/httpx/uvicorn; gh-aw ≥ 0.77.0 is required; the agent model is pinned to
+`claude-sonnet-4-6`; checks may be any language (extension-agnostic ABI)
+[pyproject.toml:6, pyproject.toml:7-15, CLAUDE.md, dist/manifest.json:5,
+*-agent.md engine.model].
+
+=== Organizational / process constraints
+
+Workflows + agent locks must live on the default branch `main`; `*-agent.md` is
+source and `*-agent.lock.yml` the committed compiled artifact (recompiled with
+`gh aw compile`); lock files are marked generated + `merge=ours`
+[CLAUDE.md, .gitattributes:1]. The engine is not coupled to the protocols, and a
+change into the internals of the engine warrants a version bump (team answer).
+
+=== Conventional constraints
+
+Engine vs. protocol strict separation; state files named
+`<protocol>/<instance>/<dot-path>.yaml`; ledger ids `^L[0-9]+$`; agent `run-name`
+embeds `cid:[<cid>]` for correlation [CLAUDE.md, lib.py:68-76,
+design.evidence.schema.json:21, *-agent.md run-name].
+
+== Context and Scope
+
+External context: GitHub (events + Actions runs + git branches, the state store), a
+custom Anthropic LLM endpoint (agent inference), and API consumers. Nothing else
+crosses the boundary [agentic-orchestrator.yml:9-31, api/github_client.py:34-69,
+*-agent.md engine.env, recover-mental-model/publish/push-mental-model.py].
+
+== Solution Strategy
+
+One recursive engine interprets a data-declared protocol tree over a single
+NODE_PATH coordinate; durable state lives in git; four credential-isolated trust
+zones separate the engine from the agent; evidence schemas + deterministic checks
+form the agent contract [CLAUDE.md, README.md:121-125, next.py:249, paths.py:30,
+advance.py:2-10].
+
+== Building Block View
+
+[cols="1,3",options="header"]
+|===
+| Block | Responsibility
+| engine/lib.py | Shared library + CLI: state checkout/CAS, routing, gate open/close, check-run emission, correlation-id resolution, the decide() fold, protocol validation [lib.py:507, :588, :663, :716-752, :872, :918, :1315, :1621-1650].
+| engine/next.py | Pure planner: `(state, protocol, command) → action JSON`; commands start/reset (enter_root), continue, answer/override/resolve-gate [next.py:90, :249, :271, :338, :542, :702-724].
+| engine/advance.py | Sole writer of non-initial state: reads verdicts, folds via decide(), persists evidence, runs the publish hook, CAS-pushes, re-dispatches or fires the join [advance.py:396, :476-488, :530-646, :648-677, :679-716].
+| engine/paths.py | NODE_PATH addressing: resolves the node at any depth, ordered successor, enclosing fanout, static depth [paths.py:30, :109, :131, :176].
+| engine/run-checks.py | Check runner: resolves a node's checks, forwards node-scoped params, runs them in any language, collects verdicts with `on_fail` stamped [run-checks.py:33, :48-96, :97-99, :103-177].
+| engine/join.py | Recursive AND-barrier: evaluates fanout barriers by policy (all/any/quorum), advancing the cursor and bubbling nested joins [join.py:18-140, lib.py:890-915, join.py:177-290].
+| engine/protocol-lint.py + protocol.schema.json | Authoring guardrails: structural (JSON Schema) + semantic linting with a tree/block visualizer; degrades to semantic-only when `jsonschema` absent [protocol-lint.py:82-115, protocol.schema.json:27-30, lib.py:1187-1312].
+| workflows | The GitHub Actions layer: union router, reusable 4-zone engine, serialized join evaluator, interactive-resume worker, and ~18 gh-aw agent lock files [agentic-orchestrator.yml:51, agentic-engine.yml:35/356/434/524, protocol-join.yml:4-6, mm-interactive-resume.yml].
+| api/ | Read-only FastAPI visibility service reading the state branch YAML as a data contract; never imports the engine [api/app.py:18, api/state_reader.py:133-202, :212-238, api/github_client.py:34-69, api/config.py:16-31].
+| dist/ | Installer: bash installer + pure-Python agent resolver + receipt (hash/drift/compat) + manifest [dist/install.sh:337-394, dist/resolve.py:13-35, dist/receipt.py:22-64, dist/manifest.json:2-11].
+|===
+
+== Runtime View
+
+* *One iteration* — plan computes the action, dispatch runs the sandboxed agent,
+  checks verify the evidence + re-fetched diff, advance folds verdicts and writes
+  state [agentic-engine.yml:35, :356, :434, :524, CLAUDE.md].
+* *Iterate-with-feedback loop* — on a failing `iterate` check, advance increments
+  the iteration counter and re-dispatches `protocol-continue` on the same NODE_PATH
+  until checks pass or `max_iterations` (default 3) is exhausted → `failed`
+  [advance.py:648-677, lib.py:918-946, advance.py:478].
+* *Fanout, matrix legs, and join* — fanout branches run as matrix legs passing
+  per-leg run-ids/verdicts via path-keyed artifacts; the join is a
+  separately-dispatched, per-path-serialized AND-barrier [next.py:60-87, CLAUDE.md,
+  protocol-join.yml:13-15, join.py:18-140].
+* *Human gate open/answer/resume* — a gate seeds a state file + check-run + status
+  comment; approval gates resolve via `/approve|/request-changes|/reject`; data
+  gates accumulate `/answer` lines until coverage is met, then resume
+  [lib.py:588-642, next.py:338-464, next.py:542-696, mm-interactive-resume.yml:19-62].
+
+== Deployment View
+
+The engine runs as GitHub Actions workflows in a target repo (state on the
+`agentic-state` branch, secrets ANTHROPIC_*/POC_DISPATCH_TOKEN); the API is a
+separately-hosted uvicorn service; the installer wires all of this into a repo
+[agentic-orchestrator.yml:9-31, api/main.py:7-8, CLAUDE.md, dist/install.sh:254-310].
+The API is configured entirely by env vars with sensible defaults (API_BEARER_TOKEN,
+GITHUB_TOKEN, GITHUB_REPO required; STATE_BRANCH default "agentic-state",
+PROTOCOLS_REF default "main"); it talks to the GitHub REST API with a 15-second
+client timeout [api/config.py:24-30, api/github_client.py:16].
+
+== Crosscutting Concepts
+
+* *Evidence-as-contract + negative attestation* — every agent output is an evidence
+  artifact; "none-found" is legal only with an `examined` trace proving the agent
+  read the code [grumpy.evidence.schema.json:36-43, leg.evidence.schema.json:4-11,
+  CLAUDE.md].
+* *Correlation-id run resolution* — the engine matches the exact run it launched by
+  a correlation id embedded in the agent's `run-name`, solving concurrent-dispatch
+  identification [lib.py:872-887, agentic-engine.yml:384-386, :417].
+* *Compare-and-swap concurrency control* — state writes serialize via
+  fast-forward-only push with bounded rebase retries; each node writes only its own
+  file so CAS has no cross-node contention [lib.py:663-683, tests/test_cas.py].
+* *Status-comment / check-run projection* — human-visible progress is an
+  idempotently-upserted PR status comment plus per-node check runs
+  [lib.py:949-989, :716-752, advance.py:346-360].
+
+== Architecture Decisions
+
+The significant decisions are recorded as ADRs (Nygard format with Pugh matrices) in
+`docs/specs/adrs/`:
+
+* `agentic-protocol-engine-adr-001-recursive-unification.adoc` — one recursive
+  NODE_PATH sequencer replaces the (BRANCH,PHASE,SUBSTATE) triple [CLAUDE.md,
+  docs/superpowers/specs/2026-06-23-stage4-recursive-engine-unification-design.md,
+  paths.py:30].
+* `agentic-protocol-engine-adr-002-state-in-git.adoc` — durable state is a YAML
+  file on a git branch advanced by CAS [lib.py:645-683, README.md:69-70].
+* `agentic-protocol-engine-adr-003-firewall-disabled.adoc` — disable the gh-aw
+  egress firewall so the custom Anthropic endpoint is reachable [*-agent.md:6, :8,
+  CLAUDE.md, docs/STATUS.md:338-367].
+* `agentic-protocol-engine-adr-004-model-pin.adoc` — pin every agent to
+  `claude-sonnet-4-6` [*-agent.md engine.model, CLAUDE.md, docs/STATUS.md:338-367].
+
+The design *rationale* behind the recursive rewrite is deferred and not yet decided
+(team answer); the other three rationales are captured in the ADRs.
+
+== Quality Requirements
+
+Priority ranking: *Reliability first* (team answer), ahead of Security and
+Maintainability, which are also heavily exercised. Performance's rank relative to
+these is not specified beyond being lower-priority than the top three (team answer
+names only Reliability as the priority).
+
+[cols="1,3",options="header"]
+|===
+| Quality goal | Measurable scenario (code-derived)
+| Reliability (priority) | Fast-forward-only CAS never force-pushes and retries 5 times; advance tolerates a missing state file (recovers from lost init); joins are idempotent; bounded iteration yields a deterministic `failed`; events carry no state [lib.py:663-683, advance.py:2-10, join.py, tests/test_recursive_join.py, CLAUDE.md].
+| Security | Credential-isolated trust zones; agent read-only + never holds the state PAT; no-shell-injection via env; strict expander env allowlist; bearer-token API auth [CLAUDE.md, agentic-engine.yml:442-445, agentic-orchestrator.yml:76-84, lib.py:229-236, api/app.py:25-28]. Deliberate weakening: the disabled egress firewall (ADR-003).
+| Maintainability | Strict engine/protocol separation (a new protocol does not touch engine/); lib is importable + a CLI; ~582 tests; a dense design-decision record [CLAUDE.md, lib.py:1-3, docs/superpowers/].
+| Functional Suitability | Large pytest suite (~582 functions) with per-protocol e2e oracle, protocol validation, per-node deterministic checks [tests/, tests/test_unified_codereview_e2e.py, lib.py:1315].
+| Performance Efficiency | Fanout capped at 32 legs; dynamic-expand skips binaries/vendor and diffs > 1500 lines; API client 15s timeout + 500-run pagination cap; agent timeouts 10–60 min; bounded CAS backoff [dyn-fanout-stub/protocol.json:9, api/github_client.py:16, :55-69, *-agent.md timeout_minutes, lib.py:681].
+| Compatibility | Language-agnostic check/publish ABI; semver engine/gh-aw compatibility gate on install/update [run-checks.py:2-10, dist/receipt.py:52-64, dist/manifest.json:5].
+| Usability | Lint-and-visualize tool with actionable errors; upserted PR status comment; visibility API [protocol-lint.py:82-115, lib.py:949-989, api/app.py:78]. Target: agents can be onboarded easily with the available docs (team answer).
+| Portability | Installer drops the engine+protocols into any GitHub repo; runtime has near-zero dependencies [dist/install.sh:337-394, CLAUDE.md].
+|===
+
+Deferred quality targets (all currently "this is only a POC for now", team answer):
+the security threat-model bar, the operational SLOs, the scaling/throughput
+targets. These must be resolved before any production readiness claim.
+
+== Risks and Technical Debt
+
+The team maintains an explicit, extensive risk/debt ledger in STATUS.md — declared
+simplifications, the disabled firewall, the model pin, and capabilities not
+exercised by the PoC [docs/STATUS.md:313-336, :538-551, :338-367].
+
+* *Technical debt* — tracked narratively in STATUS.md/BACKLOG.md; the "poc" name is
+  acknowledged legacy [docs/STATUS.md:313-336, README.md, CLAUDE.md]. There is no
+  in-code TODO/FIXME index or issue-tracker pointer; formal debt tracking is
+  currently out of scope because this is only a POC for now (team answer).
+* *Security risks* — the dominant, self-declared risk is the disabled egress
+  firewall for agents; the checks-execute-agent-code path and the real firewall are
+  explicitly not exercised by the PoC [*-agent.md:8, CLAUDE.md,
+  docs/STATUS.md:338-367, :538-551].
+* *Operational risks* — token misconfiguration (dispatch PAT vs default token; the
+  `--body -` footgun), workflows leaking onto PR branches, and the API's
+  billed-minute figure being a wall-clock approximation only [CLAUDE.md,
+  api/state_reader.py:284-291]. Operational SLOs are not defined because this is
+  only a POC for now (team answer).
+* *Dependency / supply-chain risks* — GitHub Actions pinned by SHA, Python deps
+  locked via uv.lock, and a semver compatibility gate on install/update; the
+  external LLM endpoint + gh-aw extension are trusted third parties
+  [.github/aw/actions-lock.json:3-21, pyproject.toml:7-24, dist/receipt.py:52-64,
+  dist/manifest.json:5]. A vetting/rotation policy for the ANTHROPIC_* secrets and
+  endpoint host is not defined because this is only a POC for now (team answer).
+* *Scaling / performance risks* — known ceilings: fanout legs capped (32 default,
+  256 hard), static depth capped at 5, API run history capped at 500, matrix
+  leg-input size handling deferred [dyn-fanout-stub/protocol.json:9,
+  lib.py:1287-1290, :1170, api/github_client.py:55-69, docs/STATUS.md:116-162].
+  Whether these caps are conservative or binding is not decided because this is only
+  a POC for now (team answer).
+
+== Glossary
+
+The domain vocabulary (protocol, node, NODE_PATH, fanout leg, join barrier, gate,
+evidence, check, publish hook, trust zone, instance key, CAS) is defined in CLAUDE.md
+and the DSL reference [CLAUDE.md, docs/PROTOCOL-DSL.md]. A code-only
+ubiquitous-language glossary is itself a protocol output (ubiquitous-language leg →
+CONTEXT.md), not committed here.

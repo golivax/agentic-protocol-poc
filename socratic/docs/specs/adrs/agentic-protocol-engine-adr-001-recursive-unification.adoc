@@ -1,0 +1,63 @@
+= ADR-001: One recursive NODE_PATH sequencer replaces the (BRANCH,PHASE,SUBSTATE) triple
+:doctype: article
+
+// Nygard-format ADR synthesized from the Q3.9.RecursiveUnification leaves.
+// Code-derived claims cite [file:line]; team facts marked (team answer);
+// deferred items left as explicit gaps.
+
+== Status
+
+Accepted (implemented) [CLAUDE.md, paths.py:30].
+
+== Context
+
+The engine must interpret every protocol shape — single-agent, fan-out,
+multi-phase, sub-pipeline, and arbitrarily-nested trees — with one code path
+[CLAUDE.md]. The pre-unification engine used a fixed `(BRANCH, PHASE, SUBSTATE)`
+triple, which was deleted in Stage 4a [CLAUDE.md,
+docs/superpowers/specs/2026-06-23-stage4-recursive-engine-unification-design.md].
+
+The *forcing function* — what broke or became unmaintainable under the triple model,
+and whether nested depth beyond current usage is a supported goal or an accident of
+generality — is deferred and not yet decided (team answer). This rationale gap must
+be resolved before deep-nesting depth is treated as a supported product capability.
+
+== Decision
+
+Replace the fixed `(BRANCH,PHASE,SUBSTATE)` triple with one recursive sequencer over
+a variable-length NODE_PATH coordinate — a single code path for every protocol shape
+[CLAUDE.md, paths.py:30]. State paths, the planner, the writer, and the join all key
+off NODE_PATH [paths.py:30, next.py:249, advance.py:396, join.py:18-140].
+
+== Consequences
+
+* One recursive code path serves all shapes; there is no separate single-agent /
+  multi-phase / fan-out path [CLAUDE.md].
+* Each node writes only its own file, so CAS has no cross-node write contention
+  [lib.py:663-683].
+* A static depth cap (`max_depth`, default 5) bounds the tree and
+  `lib.validate_protocol` rejects malformed protocols [paths.py:176, lib.py:1315].
+* Because the driving rationale is deferred, whether depth beyond current usage is
+  intentionally supported remains an open risk.
+
+== Pugh Matrix
+
+Baseline: the pre-unification `(BRANCH,PHASE,SUBSTATE)` triple. Priority quality
+goal: Reliability (team answer).
+
+[cols="2,1,1",options="header"]
+|===
+| Quality goal | (BRANCH,PHASE,SUBSTATE) triple (baseline) | Recursive NODE_PATH sequencer (chosen)
+| Reliability (priority) | 0 | +1
+| Maintainability | 0 | +1
+| Functional Suitability (shape coverage) | 0 | +1
+| Performance | 0 | 0
+| Security | 0 | 0
+| *Total* | *0* | *+3*
+|===
+
+Scores reflect that the recursive sequencer collapses divergent code paths into one
+(Maintainability, Functional Suitability) and removes shape-specific state handling
+(Reliability), at no measured performance or security cost. Absolute magnitudes are
+indicative, not measured — the deferred forcing-function rationale (team answer)
+means the baseline's specific failure modes are not enumerated.
