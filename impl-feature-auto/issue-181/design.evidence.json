@@ -1,0 +1,96 @@
+{
+  "spec_path": "docs/superpowers/specs/2026-07-01-is-terminal-state-design.md",
+  "plan_path": "docs/superpowers/plans/2026-07-01-is-terminal-state.md",
+  "summary": "Spec and plan for adding is_terminal_state(state) to lib.py: a pure predicate returning True for done/failed/blocked, False for any other input including None and non-strings without raising. One additive function insertion after PHASE_LABEL_DEFAULTS; one new focused test file covering all 7 acceptance criteria. No call-site refactoring.",
+  "run_id": "28490627906",
+  "ledger": [
+    {
+      "id": "L1",
+      "category": "ASSUMPTION",
+      "what": "`is_terminal_state` does not already exist in any engine file",
+      "why": "Would create a duplicate or name collision if it already existed somewhere in the engine",
+      "what_i_did": "Grepped the entire repo for `is_terminal_state` — zero matches confirmed; function is net-new",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Confirms the change is purely additive; no existing symbol is shadowed or overloaded"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "A purely additive new function can be deleted in a single-line revert with no downstream impact"
+      },
+      "revisit_if": "A future branch adds the function under a different name before this merges, creating a collision",
+      "verified": true
+    },
+    {
+      "id": "L2",
+      "category": "DECISION",
+      "what": "Place function after `PHASE_LABEL_DEFAULTS` in lib.py",
+      "why": "Natural grouping: PHASE_LABEL_DEFAULTS already enumerates the exact three terminal keys; placing the helper directly after creates a self-documenting cluster",
+      "what_i_did": "Verified lines 583-593 of lib.py — PHASE_LABEL_DEFAULTS defines exactly 'done', 'failed', 'blocked' as keys; confirmed the blank line at 593 provides a clean insertion slot before _humanize_state_id at 595",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Placement is a style decision with zero runtime effect; no callers are affected regardless of where in the module the function appears"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Moving a module-level function to a different position is a trivial one-step refactor at any future point"
+      },
+      "revisit_if": "Code review suggests a different location (e.g., near advance.py's state-transition logic or at module top)"
+    },
+    {
+      "id": "L3",
+      "category": "DECISION",
+      "what": "Use `isinstance(state, str) and state in {\"done\",\"failed\",\"blocked\"}`",
+      "why": "Handles None and non-string input without exception (isinstance guard short-circuits), O(1) set membership, no imports, pure function",
+      "what_i_did": "Verified that a bare `state in {\"done\",\"failed\",\"blocked\"}` raises no exception for None or int in Python 3 (the `in` operator on a set never raises for hashable inputs); however the isinstance guard is still the clearest expression of the contract and avoids any future surprise if unhashable types are passed",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Internal implementation detail of a single-line function; no caller is affected by the choice of isinstance vs try/except"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "The body is one line; rewriting it is a trivial edit"
+      },
+      "revisit_if": "Performance profiling shows this is a hot path (not plausible for a string membership check, but listed for completeness)"
+    },
+    {
+      "id": "L4",
+      "category": "DECISION",
+      "what": "New test file `tests/test_lib_terminal_state.py` (not appended to `test_engine.py`)",
+      "why": "`test_engine.py` covers CAS/path-CLI concerns; focused per-topic test files are the repo's established pattern (test_decide.py, test_phase_labels.py, test_correlation.py, etc.)",
+      "what_i_did": "Reviewed the 55+ test module list in target/tests/; every file has a single-topic name; test_engine.py's module docstring explicitly says it covers 'GENERIC, protocol-agnostic lib surface' for CAS and path-CLI only",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "New file only; no existing tests are modified or deleted; the suite gains 7 tests with no risk of breaking existing ones"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "The file can be deleted or merged into test_engine.py without consequence; all tests are self-contained"
+      },
+      "revisit_if": "Reviewer prefers all lib.py helper tests consolidated into test_engine.py"
+    },
+    {
+      "id": "L5",
+      "category": "ASSUMPTION",
+      "what": "`\"blocked\"` is a proper terminal state, not only a label alias",
+      "why": "The issue lists 'blocked' as one of the three terminal states; must verify it is treated as an end-state in the engine, not merely a display key",
+      "what_i_did": "Verified: (1) PHASE_LABEL_DEFAULTS includes 'blocked' alongside 'done'/'failed'; (2) advance.py's on_blocked=halt branch calls ensure_phase_label with 'blocked' as the terminal key; (3) test_phase_labels.py test_ensure_phase_label_terminal_key exercises the 'done' terminal path, confirming the pattern; (4) 'blocked' is the conclusion written when a gate's on_blocked fires — confirmed terminal in the engine's lifecycle",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Definition matches existing usage across PHASE_LABEL_DEFAULTS and advance.py; no semantic change is introduced"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "If the set of terminal states changes, the function body is a one-line edit to the set literal"
+      },
+      "revisit_if": "The engine adds a fourth terminal state or renames 'blocked'",
+      "verified": true
+    }
+  ],
+  "read_these_first": ["L1", "L2", "L3", "L4", "L5"]
+}

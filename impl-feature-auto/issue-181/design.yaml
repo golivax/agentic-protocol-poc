@@ -1,6 +1,6 @@
 protocol: impl-feature-auto
 instance: issue-181
-state: design
+state: done
 iteration: 2
 gates: {}
 head_sha: 9e6846226c1fb43e198b514892f714991ea44386
@@ -14,3 +14,12 @@ history:
     spec-present: fail
     plan-present: fail
   feedback: ledger missing or empty; ledger missing or empty; ledger missing or empty
+- iteration: 2
+  agent_run_id: '28490627906'
+  checks:
+    ledger-wellformed: pass
+    ledger-consistent: pass
+    read-these-first-consistent: pass
+    spec-present: pass
+    plan-present: pass
+  feedback: ''
