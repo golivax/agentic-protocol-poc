@@ -805,3 +805,34 @@ def test_dynamic_nested_walks_to_done(engine_env, tmp_path):
         assert ry(final / f"{L}.yaml")["state"] == "done"
         assert ry(final / f"{L}.comments.__join.yaml")["joined"] is True
         assert not ry(final / f"{L}.comments.__join.yaml").get("failed")
+
+
+def test_run_merge_hook_missing_manifest_fails_loud(tmp_path):
+    lib = _load_lib()
+    import json
+    pid, inst = "dyn-fanout-flat", "pr-1"
+    d = str(tmp_path)
+    proto = str(ROOT / "tests/fixtures/dyn-fanout-flat/protocol.json")
+    with open(proto) as f:
+        merge_state = next(s for s in json.load(f)["states"] if s.get("kind") == "merge")
+    # No manifest written at all → must fail loud, not silently reduce zero legs.
+    try:
+        lib.run_merge_hook(d, pid, inst, proto, merge_state)
+        assert False, "expected ValueError on missing manifest"
+    except ValueError as e:
+        assert "from_fanout" in str(e) and "manifest" in str(e)
+
+
+def test_run_merge_hook_zero_item_manifest_is_ok(tmp_path):
+    """A manifest that EXISTS with count 0 is a legit vacuous reduce, not an error."""
+    lib = _load_lib()
+    import json
+    pid, inst = "dyn-fanout-flat", "pr-1"
+    d = str(tmp_path)
+    lib.write_manifest(d, pid, inst, ["review"], {"count": 0, "legs": []})
+    proto = str(ROOT / "tests/fixtures/dyn-fanout-flat/protocol.json")
+    with open(proto) as f:
+        merge_state = next(s for s in json.load(f)["states"] if s.get("kind") == "merge")
+    result = lib.run_merge_hook(d, pid, inst, proto, merge_state)
+    assert result["conclusion"] == "success"  # reduce hook runs over 0 legs, returns its verdict
+    assert "reduced 0/0 legs" in result["summary"]

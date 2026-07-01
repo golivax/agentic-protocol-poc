@@ -41,7 +41,6 @@ def _nested_join(dir_, instance, proto_path, pid):
     branches = lib.resolve_leg_ids(dir_, pid, instance, fanout_path, fanout_node)
 
     all_terminal = True
-    all_done = True
     for b in branches:
         # A flat fanout child's terminal IS its leg file; a sub-pipeline child's
         # terminal is its branch-cursor file. state_path routes either tree path
@@ -57,7 +56,7 @@ def _nested_join(dir_, instance, proto_path, pid):
         if st == "done":
             pass
         elif st == "failed":
-            all_done = False
+            pass
         else:
             all_terminal = False
 
@@ -199,7 +198,6 @@ def main():
     phase_for_path = cursor_phase if (multiphase and cursor_phase) else None
 
     all_terminal = True
-    all_done = True
     for b in branches:
         # NOTE: a sub-pipeline branch's terminal state lives in its CURSOR file
         # (review.<b>.yaml), written by advance.py only when the LAST sub-state is
@@ -216,7 +214,7 @@ def main():
         if st == "done":
             pass
         elif st == "failed":
-            all_done = False
+            pass
         else:
             all_terminal = False
 

@@ -129,6 +129,17 @@ What is / isn't covered here:
   and the authenticated state remote along with everything else in that job's
   env. Scoping the expander to a minimal read-only token is deferred to the
   milestone-2 live-Actions wiring above.
+- **Known cosmetic gap: the PR status comment does not render dynamic legs.**
+  `lib.render_fanout_status_body` iterates only `state.get("branches", [])` —
+  a *static* fanout's declared branch list — so a dynamic (`expand`-driven)
+  fanout's manifest legs render zero leg sections in the human-readable status
+  comment, even though the check-run gating and join logic correctly use the
+  manifest via `resolve_leg_ids`. This is a live-Actions-only cosmetic gap (no
+  `ENGINE_LOCAL` test exercises the rendered comment body for a dynamic
+  fanout). The protocol-lint tree renderer has the same static-`branches[]`-only
+  blind spot for a dynamic fanout's tree shape. A milestone-2 author should make
+  both the status-comment renderer and the protocol-lint tree renderer
+  dynamic-leg-aware (e.g. by reading the manifest when `expand` is present).
 
 ## Nested sub-workflow branches + data-carrying gate (engine — in progress, 2026-06-22)
 

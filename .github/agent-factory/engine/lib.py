@@ -1483,6 +1483,12 @@ def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
             fo_id = inp["from_fanout"]
             fo_node = state_by_id(proto, fo_id)
             fo_tree_path = [fo_id]  # top fanout; nested merges pass full path (milestone 2)
+            if not os.path.isfile(manifest_file(dir_, pid, instance, fo_tree_path)):
+                raise ValueError(
+                    f"merge from_fanout='{inp['from_fanout']}': no manifest at "
+                    f"{'.'.join(fo_tree_path)} — the fanout has not materialized, or it is a "
+                    f"nested fanout (nested from_fanout is not supported yet)"
+                )
             rows = collect_fanout_evidence(dir_, pid, instance, fo_tree_path, fo_node)
             inputs_dir = os.path.join(workdir, "inputs")
             os.makedirs(inputs_dir, exist_ok=True)
