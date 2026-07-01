@@ -188,3 +188,21 @@ def test_schema_and_runtime_agree_on_fractional_quorum():
          "each": {"workflow": "w"}, "next": "j"},
         {"id": "j", "kind": "join", "of": "f", "policy": "quorum:33.3%"}]}
     jsonschema.Draft7Validator(schema).validate(proto)   # must not raise
+
+
+def test_dynamic_fanout_start_seeds_manifest_and_legs(engine_env, tmp_path):
+    import os, json
+    from conftest import run_engine, read_state_yaml
+    proto = str(ROOT / "tests/fixtures/dyn-fanout-flat/protocol.json")
+    out, err, rc = run_engine("next.py", str(tmp_path), "pr-1", proto, "start", env=engine_env)
+    assert rc == 0, err
+    d = str(tmp_path / "dyn-fanout-flat" / "pr-1")
+    man = read_state_yaml(d + "/review.__manifest.yaml")
+    assert man["count"] == 2
+    ids = [leg["id"] for leg in man["legs"]]
+    for lid in ids:
+        assert os.path.isfile(d + f"/{lid}.yaml")            # one leg state file per item
+        assert os.path.isfile(d + f"/{lid}.file.item.json")  # item staged for inputs/<as>.json
+    action = json.loads(out.strip().splitlines()[-1])
+    assert action["action"] == "run-fanout"
+    assert {leg_dict["path"].split(".")[-1] for leg_dict in action["legs"]} == set(ids)

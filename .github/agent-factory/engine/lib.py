@@ -1393,6 +1393,16 @@ def materialize_inputs(resolved, target_dir):
     return manifest
 
 
+def stage_item(dir_, pid, instance, file_path, as_, item):
+    """Persist a dynamic leg's item beside its state file as
+    <...>.<as>.item.json, so the dispatch/materialize step can surface it as
+    inputs/<as>.json for the leg's agent. Keyed by the leg's file-naming path."""
+    dst = output_artifact_path(dir_, pid, instance, path=file_path, kind=f"{as_}.item")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst, "w") as f:
+        json.dump(item, f)
+
+
 def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
     """Resolve+materialize a merge state's inputs and run its trusted reduce hook.
     Returns {conclusion, summary}; neutral fallback on any resolution/exec error."""
