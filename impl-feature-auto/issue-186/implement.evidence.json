@@ -1,0 +1,1 @@
+{"summary":"Added lib.is_terminal_state(state) to lib.py (returns True for done/failed/blocked, False otherwise); 7 unit tests in tests/test_lib_is_terminal_state.py; full suite 598 passed","pr_branch":"impl-feature-auto/issue-186","run_id":"28491590217"}
