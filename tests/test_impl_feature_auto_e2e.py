@@ -8,10 +8,11 @@ no real checks execute. Proves the production protocol's process axis:
   Walk 2 (terminal failure): design exhausts max_iterations (3) on an
           iterate-severity check → design state=failed → implement is NEVER
           dispatched/seeded.
-  Walk 3 (block semantics, OBSERVED): a lone `block`-severity failure on design
-          (spec-present) does NOT halt the pipeline in this engine — see the
-          docstring on test_design_block_does_not_halt for the why + the gap it
-          documents.
+  Walk 3 (block → halt, Task 14): a lone `block`-severity failure on design
+          (spec-present) HALTS the pipeline — design state=failed, _instance.yaml
+          gains a `halted` marker, and implement is NEVER seeded/dispatched. This
+          is the protocol's headline guarantee (no spec/plan ⇒ no PR), enforced
+          by the design node's `conclude: conclude-design` + `on_blocked: halt`.
 
 State-file layout OBSERVED from the engine (a multi-node root sequence):
   impl-feature-auto/issue-5/_instance.yaml   — root cursor (phase key)
@@ -155,9 +156,10 @@ def test_design_pass_then_implement_then_done(engine_env, tmp_path):
 def test_design_iterate_exhaust_fails_implement_never_runs(engine_env, tmp_path):
     """The genuine 'a design failure stops the pipeline before implement' proof.
 
-    The brief framed this as a `block` failure, but in this engine a block-severity
-    failure does NOT drive the process axis (see test_design_block_does_not_halt).
-    The faithful terminal-failure path is an iterate-severity check exhausting
+    This is the iterate-severity terminal path — a distinct scenario from the
+    block → halt path (see test_design_block_halts_implement_never_runs). A
+    block-severity failure now halts via the conclude hook + on_blocked; here an
+    iterate-severity check exhausting
     max_iterations (design.max_iterations = 3): advance #1/#2 re-dispatch the SAME
     design node (path=design); advance #3 exhausts → design state=failed and NO
     dispatch into implement; implement.yaml is never seeded.
@@ -203,27 +205,26 @@ def test_design_iterate_exhaust_fails_implement_never_runs(engine_env, tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# Walk 3: block semantics on a node without on_blocked — OBSERVED behavior
+# Walk 3: block → halt (Task 14) — no spec/plan ⇒ no PR, by construction
 # ---------------------------------------------------------------------------
 
-def test_design_block_does_not_halt(engine_env, tmp_path):
-    """OBSERVED block semantics (documents a protocol-authoring gap, not a test bug).
+def test_design_block_halts_implement_never_runs(engine_env, tmp_path):
+    """The protocol's headline guarantee, enforced: a lone `block`-severity failure
+    on design (spec-present) HALTS the pipeline before implement.
 
-    The design node marks spec-present / plan-present as `on_fail: block`. In this
-    engine `lib.decide()` treats a block-severity failure as NON-iterating but it
-    does NOT fail the process axis: with no iterate-severity failure present, the
-    fold returns process='done' and a `blocking=True` flag. That flag only halts
-    the pipeline when the node declares a `conclude` hook returning blocked + an
-    `on_blocked: "halt"` field (see advance.py run_conclude_hook / the on_blocked
-    check). The impl-feature-auto design node declares NEITHER, so a lone block
-    failure leaves design state=done and the engine DISPATCHES protocol-continue
-    into implement — i.e. the block is currently toothless.
+    Task 14 wired the design node with `conclude: conclude-design` + `on_blocked:
+    halt`. `lib.decide()` folds the block-severity spec-present failure into a
+    `blocking=True` flag (with no iterate failure, the process axis is otherwise
+    clear). advance.py's depth-1 agent-phase tail runs conclude-design, which reads
+    BLOCKING=1 → returns blocked=true; combined with on_blocked==halt this drives
+    the GATE-BLOCKED arm.
 
-    This test asserts the engine's ACTUAL behavior (engine is the source of truth;
-    not modified to fit the test). The mismatch with the design intent — a missing
-    spec/plan should stop the run before implement — is a protocol gap surfaced in
-    the Task-13 report (consider adding a conclude hook + on_blocked:halt to the
-    design node).
+    OBSERVED engine output on the halt (source of truth, not modified to fit):
+      - design.yaml   state == "failed"
+      - _instance.yaml gains `halted: {phase: design, reason: blocked, sha: ...}`
+        (and keeps phase == "design"; it is NOT advanced to implement)
+      - NO protocol-continue dispatch (no `client_payload[path]=implement` on stderr)
+      - implement.yaml is never seeded
     """
     base = dict(engine_env)
     base["PR_HEAD_SHA"] = "sha1"
@@ -232,7 +233,7 @@ def test_design_block_does_not_halt(engine_env, tmp_path):
     r = _run(NEXT, tmp_path / "s", INST, PROTO, "start", "sha1", env=base)
     assert r.returncode == 0, r.stderr
 
-    # Only spec-present (block) fails; the iterate checks pass → process axis = done.
+    # Only spec-present (block) fails; the iterate checks pass.
     results = [
         {"check": "ledger-wellformed", "pass": True, "feedback": "", "on_fail": "iterate"},
         {"check": "ledger-consistent", "pass": True, "feedback": "", "on_fail": "iterate"},
@@ -244,15 +245,23 @@ def test_design_block_does_not_halt(engine_env, tmp_path):
     r2 = _run(ADVANCE, tmp_path / "a", INST, PROTO, v, ev, env=base, NODE_PATH="design")
     assert r2.returncode == 0, r2.stderr
 
-    # OBSERVED: block does not halt — design done + dispatch into implement.
-    assert "client_payload[path]=implement" in r2.stderr, \
-        f"block does not halt in this engine; expected dispatch into implement: {r2.stderr}"
+    # LOAD-BEARING: block halts — no dispatch into implement.
+    assert "event_type=protocol-continue" not in r2.stderr, \
+        f"a blocked design must NOT dispatch into implement: {r2.stderr}"
+    assert "client_payload[path]=implement" not in r2.stderr, r2.stderr
 
     fdir = _reclone(engine_env, tmp_path, "block")
     design = _yaml(fdir / "design.yaml")
-    assert design["state"] == "done", \
-        f"block-severity failure does not fail the process axis: {design}"
+    assert design["state"] == "failed", \
+        f"a block-severity failure must fail the design node: {design}"
     assert design["history"][-1]["checks"]["spec-present"] == "fail", design
-    # The block advance itself only dispatches the continue; implement.yaml is
-    # seeded by the follow-up `next.py continue` (not exercised here).
-    assert not (fdir / "implement.yaml").is_file()
+
+    # _instance.yaml records the halt and is NOT advanced past design.
+    inst = _yaml(fdir / "_instance.yaml")
+    assert inst.get("halted", {}).get("phase") == "design", inst
+    assert inst["halted"]["reason"] == "blocked", inst
+    assert inst["phase"] == "design", inst
+
+    # implement is never seeded.
+    assert not (fdir / "implement.yaml").is_file(), \
+        "implement must NOT be seeded when design is blocked"

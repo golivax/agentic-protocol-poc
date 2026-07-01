@@ -21,6 +21,8 @@
         { "run": "spec-present",                 "on_fail": "block" },
         { "run": "plan-present",                 "on_fail": "block" }
       ],
+      "conclude": "conclude-design",
+      "on_blocked": "halt",
       "next": "implement"
     },
     {
