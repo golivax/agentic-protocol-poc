@@ -75,12 +75,16 @@ steps:
       # Install the engines (fail-open).
       ( cd "$SEC" && npm install --no-audit --no-fund --silent ) || true
       python3.11 -m pip install --quiet "git+https://github.com/metareflection/guardians@main" z3-solver pydantic pyyaml || true
-      # Run: Cedar over the transcript; plan → AST → Guardians; fuse → engine-report.json.
+      # Run: Cedar over the transcript; plan → AST → Guardians; transcript → AST → Guardians; fuse.
       CHANGED=$(jq -c '[.files[].path] // []' "$A/pr.json" 2>/dev/null || echo '[]')
       node "$SEC/run-cedar.js" "$SEC/policy/cedar/default" "$CUSTOM_CEDAR" "$A/transcripts" "$CHANGED" > "$A/cedar.json" 2>/dev/null || echo '{"status":"n/a","flags":[]}' > "$A/cedar.json"
+      # Guardians over the PLAN (declared intent).
       node "$SEC/plan-extract.js" "$A/plan.txt" > "$A/gx-workflow.json" 2>/dev/null || echo '{"steps":[]}' > "$A/gx-workflow.json"
       python3.11 "$SEC/verify_driver.py" "$A/gx-workflow.json" "$SEC/policy/guardians/default.policy.yaml" ${CUSTOM_GUARD:+"$CUSTOM_GUARD"} > "$A/guardians.json" 2>/dev/null || echo '{"ok":true,"violations":[],"warnings":[]}' > "$A/guardians.json"
-      node "$SEC/emit-engine-report.js" "$A/cedar.json" "$A/guardians.json" > "$A/engine-report.json" 2>/dev/null || echo '{"violations":[],"summary":{}}' > "$A/engine-report.json"
+      # Guardians over the TRANSCRIPT (what the agent actually did — real tool calls → same taint AST).
+      node "$SEC/transcript-extract.js" "$A/transcripts" > "$A/gx-transcript.json" 2>/dev/null || echo '{"steps":[]}' > "$A/gx-transcript.json"
+      python3.11 "$SEC/verify_driver.py" "$A/gx-transcript.json" "$SEC/policy/guardians/default.policy.yaml" ${CUSTOM_GUARD:+"$CUSTOM_GUARD"} > "$A/guardians-transcript.json" 2>/dev/null || echo '{"ok":true,"violations":[],"warnings":[]}' > "$A/guardians-transcript.json"
+      node "$SEC/emit-engine-report.js" "$A/cedar.json" "$A/guardians.json" "$A/guardians-transcript.json" > "$A/engine-report.json" 2>/dev/null || echo '{"violations":[],"summary":{}}' > "$A/engine-report.json"
       echo "engine-report:"; cat "$A/engine-report.json" 2>/dev/null || true
   - name: Materialize task context
     env:
@@ -114,9 +118,12 @@ their outputs are on disk.
 
 ## Inputs (already fetched for you)
 
-- `/tmp/gh-aw/agent/engine-report.json` — fused Cedar + Guardians report.
+- `/tmp/gh-aw/agent/engine-report.json` — fused Cedar + Guardians report. Guardians findings carry a
+  `source`: `plan` (declared intent) or `transcript` (what the agent actually did; `name` suffixed
+  `@transcript`).
 - `/tmp/gh-aw/agent/cedar.json` — raw Cedar output.
-- `/tmp/gh-aw/agent/guardians.json` — raw Guardians output.
+- `/tmp/gh-aw/agent/guardians.json` — raw Guardians output over the PLAN.
+- `/tmp/gh-aw/agent/guardians-transcript.json` — raw Guardians output over the TRANSCRIPT.
 - `/tmp/gh-aw/agent/pr.json` — PR metadata.
 - `/tmp/gh-aw/task-context.json` — `pr`, `cid`, `iteration`, `feedback`.
 
