@@ -188,11 +188,23 @@ above); `each`'s own `inputs[]` (if any) resolve exactly as a branch's do today.
   → always exit 0 (nonzero = a runner error, not "no items")
 ```
 
-It runs **trusted in zone 1** (the `plan` job, before `next.py` — as its own
-step, so `next.py` stays a pure planner). It re-derives the item list itself
-(e.g. re-fetching the diff) and **never trusts agent data** — the same posture
-as a check re-fetching `gh pr diff`. It needs only a read token; it is not
-handed the state PAT beyond what `plan` already holds, nor the publish token.
+It runs **trusted in zone 1** — as a subprocess `lib.run_expander` spawns from
+*inside* `next.py`'s sequencer, during the `plan` job, not as a separate step
+that runs before `next.py`. In the dynamic-fanout case `next.py` is therefore
+not a pure planner: this one I/O call is a deliberate, narrow exception. It
+re-derives the item list itself (e.g. re-fetching the diff) and **never
+trusts agent data** — the same posture as a check re-fetching `gh pr diff`.
+
+> **Known gap, not yet a guarantee:** `run_expander` forwards the `plan`
+> job's **full** environment to the expander subprocess (`env =
+> dict(os.environ)`, no scrubbing) — on live GitHub Actions that job env
+> carries the dispatch/publish PAT (`GH_TOKEN`/`PUBLISH_TOKEN`, both
+> `POC_DISPATCH_TOKEN`) and the authenticated `STATE_REMOTE`. The expander is
+> **not** credential-scoped to a read-only token today. Restricting it to a
+> minimal read-only token is a **milestone-2 hardening** (design spec §14) —
+> it only bites once live wiring puts real tokens in the job env; offline /
+> `ENGINE_LOCAL` runs have no such secrets to leak.
+
 The engine — not the hook — reads `id_from` out of each item to key it and
 writes the manifest. It is **fail-loud**: an unresolved/non-executable hook, a
 nonzero exit, non-JSON stdout, or a missing/non-array `items` halts the run
@@ -221,8 +233,11 @@ Whatever the policy, the join **still waits for every leg to reach a terminal
 state** (`done` or `failed`) before evaluating — `policy` only changes the
 success/fail verdict once everyone's finished, it never lets the barrier fire
 early. **Zero legs** (a vacuous fanout — the expander returned `[]`): `all` is
-vacuously satisfied and the run advances to `join.next`; `any`/`quorum` are
-**not** satisfied (they sink an empty set). `policy` is optional and applies to
+vacuously satisfied and the run advances to `join.next` — and so is a
+**percentage** `quorum:P%` (`ceil(0 * P / 100) == 0`, and `0 >= 0`), the same
+vacuous pass as `all`. `any` and an **integer-count** `quorum:N` (`N >= 1`) are
+**not** satisfied on zero legs — they sink an empty set (`0 >= 1` is false for
+`any`; `0 >= N` is false for `quorum:N`). `policy` is optional and applies to
 **any** join, static or dynamic — a static fanout's join can set `policy: any`
 too.
 
@@ -242,6 +257,10 @@ disagree on cardinality, and it collects from **persisted per-leg state**, not
 job outputs — resilient to the GitHub Actions matrix-outputs-clobber problem the
 same way per-leg artifacts already are. A merge input is exactly one of `from`
 **xor** `from_fanout` (schema-enforced) — never both.
+
+> **Offline scope:** `from_fanout` currently resolves the **top-level** fanout
+> only (the reduce reads the fixed path `[<fanout-id>]`); reducing over a
+> **nested** fanout (one inside an `each` sub-pipeline) is milestone 2.
 
 ## `gate` node
 

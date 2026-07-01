@@ -120,6 +120,15 @@ What is / isn't covered here:
   agent runs over a dynamic fanout. A dynamic-fanout protocol is not turn-key on
   live Actions yet — treat this milestone as the engine capability + its offline
   proof, not a shippable protocol.
+- **Known deviation from the design spec:** the design's expander
+  credential-isolation (the expander holding only a read token, never the
+  publish/state token — design spec §14) is **not enforced** in the current
+  implementation. `lib.run_expander` forwards the `plan` job's full
+  environment (`env = dict(os.environ)`, no scrubbing) to the expander
+  subprocess, so on live GitHub Actions it inherits the dispatch/publish PAT
+  and the authenticated state remote along with everything else in that job's
+  env. Scoping the expander to a minimal read-only token is deferred to the
+  milestone-2 live-Actions wiring above.
 
 ## Nested sub-workflow branches + data-carrying gate (engine — in progress, 2026-06-22)
 
