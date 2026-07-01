@@ -55,8 +55,11 @@ steps:
       CTX=.github/agent-factory/protocols/code-review/scripts/context
       A=/tmp/gh-aw/agent
       HEAD_SHA=$(jq -r '.headRefOid // ""' "$A/pr.json" 2>/dev/null || echo "")
-      # Captured agent transcript (.conversations/*.jsonl) via the protocol's own locator → Cedar input.
-      node "$CTX/locate.js" "$A/pr.json" "$A/transcripts" || true
+      # Captured agent transcript(s) via the protocol's own locator → Cedar input. Read from the
+      # dedicated `conversations` branch at <owner>/<repo>/pr-<N>/*.jsonl (not the PR's own tree).
+      PRNUM=$(jq -r '.number // empty' "$A/pr.json" 2>/dev/null || echo "")
+      CONVERSATIONS_REF=conversations CONVERSATIONS_DIR="$REPO/pr-$PRNUM" \
+        node "$CTX/locate.js" "$A/pr.json" "$A/transcripts" || true
       # Plan text: derive the plan path from changed files, fetch at head → Guardians input.
       PLAN_PATH=$(jq -r '[.files[].path] | map(select(test("(?i)(docs/.*plans?/|^plans?/|PLAN\\.md$)"))) | .[0] // ""' "$A/pr.json" 2>/dev/null || echo "")
       if [ -n "$PLAN_PATH" ]; then gh api "repos/$REPO/contents/$PLAN_PATH?ref=$HEAD_SHA" --jq '.content' 2>/dev/null | base64 -d > "$A/plan.txt" || true; fi
