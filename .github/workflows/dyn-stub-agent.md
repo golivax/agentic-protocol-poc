@@ -18,6 +18,13 @@ permissions:
 tools:
   cli-proxy: true
   edit: true
+safe-outputs:
+  # The stub agent's only output is the evidence.json artifact (post-steps),
+  # NOT a gh-aw safe-output — so gh-aw's default conclusion job files a spurious
+  # "No Safe Outputs Generated" issue per leg. noop.report-as-issue:false suppresses it.
+  noop:
+    report-as-issue: false
+  threat-detection: false
 pre-agent-steps:
   - name: Materialize task context
     env:
