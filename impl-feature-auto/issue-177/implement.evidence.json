@@ -1,0 +1,1 @@
+{"summary":"Added lib.is_terminal_state() helper with _TERMINAL_STATES frozenset and 9 pytest unit tests; PR opened from impl-feature-auto/issue-177","pr_branch":"impl-feature-auto/issue-177","run_id":"28491338437"}
