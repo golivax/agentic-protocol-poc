@@ -138,27 +138,34 @@ def resolve_leg_ids(dir_, pid, instance, tree_path, fanout_node):
     return [b["id"] for b in (fanout_node.get("branches", []) if fanout_node else [])]
 
 
-def collect_fanout_evidence(dir_, pid, instance, tree_path, fanout_node):
+def collect_fanout_evidence(dir_, pid, instance, tree_path, fanout_node, proto=None):
     """Assemble the reduce input for a `merge` with from_fanout: one row per leg
     in the manifest, carrying its terminal state + persisted evidence (or None).
     Reads from the state branch, never job outputs — resilient to matrix clobber.
 
-    Milestone scope: tree_path is the TOP fanout's single-element path
-    (['<id>']); leg files are resolved flat (branch=leg-id, no phase prefix),
-    matching the single-phase file layout. Nested from_fanout / multi-phase
-    phase-prefixed legs are milestone 2."""
+    `tree_path` is the fanout's TREE path (e.g. ['review'] for the top fanout, or
+    ['review', '<fileleg>', 'findings'] for a nested findings fanout). When `proto`
+    is given, each leg is resolved by its FULL tree path (tree_path + [lid]) via
+    state_path — nested-aware. When `proto` is None (back-compat), legs are
+    resolved FLAT (branch=leg-id, no path prefix), matching the historical
+    single-phase file layout used before nested from_fanout support."""
     man = read_manifest(dir_, pid, instance, tree_path)
     rows = []
     for leg in man.get("legs", []):
         lid = leg["id"]
-        sf = state_file(dir_, pid, instance, lid)          # single-phase leg file
+        if proto is not None:
+            leg_fp = state_path(proto, list(tree_path) + [lid])
+            sf = state_file(dir_, pid, instance, path=leg_fp)
+            evid_path = output_artifact_path(dir_, pid, instance, path=leg_fp)
+        else:
+            sf = state_file(dir_, pid, instance, lid)          # single-phase leg file
+            evid_path = output_artifact_path(dir_, pid, instance, branch=lid, kind="evidence")
         state = ""
         if os.path.isfile(sf):
             try:
                 state = load_yaml(sf).get("state", "") or ""
             except Exception:
                 state = ""
-        evid_path = output_artifact_path(dir_, pid, instance, branch=lid, kind="evidence")
         evidence = None
         if os.path.isfile(evid_path):
             try:
@@ -1642,7 +1649,7 @@ def run_merge_hook(dir_, pid, instance, proto_path, merge_state, consuming_path=
                     f"merge from_fanout='{fo_id}': no manifest at {'.'.join(fo_tree_path)} "
                     f"(fanout not materialized or misnamed)"
                 )
-            rows = collect_fanout_evidence(dir_, pid, instance, fo_tree_path, fo_node)
+            rows = collect_fanout_evidence(dir_, pid, instance, fo_tree_path, fo_node, proto=proto)
             inputs_dir = os.path.join(workdir, "inputs")
             os.makedirs(inputs_dir, exist_ok=True)
             with open(os.path.join(inputs_dir, f"{inp['as']}.json"), "w") as f:

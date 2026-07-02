@@ -1161,8 +1161,13 @@ def test_nested_from_fanout_reduces_over_nested_legs(tmp_path):
         with open(ev, "w") as f:
             json.dump({"fid": fid, "keep": keep}, f)
     fo_node = paths.node_at_path(proto_data, findings_path)
-    rows = lib.collect_fanout_evidence(d, pid, inst, findings_path, fo_node)
+    rows = lib.collect_fanout_evidence(d, pid, inst, findings_path, fo_node, proto=proto_data)
     assert {r["leg_id"] for r in rows} == {"f1", "f2"}   # NESTED legs, not a top fanout
+    # Resolved from the REAL nested files (not a flat/empty lookup): state is
+    # "done" and evidence CONTENT round-trips per leg.
+    by_id = {r["leg_id"]: r for r in rows}
+    assert by_id["f1"]["state"] == "done" and by_id["f1"]["evidence"]["keep"] is True
+    assert by_id["f2"]["state"] == "done" and by_id["f2"]["evidence"]["keep"] is False
 
 
 def test_run_merge_hook_nested_from_fanout_resolves(tmp_path):
@@ -1243,7 +1248,16 @@ def test_ocr_nested_walk_reduces_and_merges(engine_env, tmp_path):
         assert "client_payload[path]=" not in rr.stderr   # enclosing review is TOP-level
         drd = reclone(f"rd-{L}")
         assert ry(drd / f"{L}.yaml")["state"] == "done"    # file leg cursor terminal
-        assert (drd / f"{L}.reduce.evidence.json").is_file()   # reduce leg evidence
+        reduce_ev_path = drd / f"{L}.reduce.evidence.json"
+        assert reduce_ev_path.is_file()   # reduce leg evidence
+        # The per-file reduce hook (reduce-file.py) counts findings legs whose
+        # terminal STATE it read as "done", via collect_fanout_evidence resolving
+        # the NESTED findings legs by their real tree path (review.<L>.findings.<fid>).
+        # Before the collector was made nested-aware, the flat lookup found no
+        # state files here and this would read "reduced 0/2 findings".
+        with open(reduce_ev_path) as f:
+            reduce_result = json.load(f)
+        assert reduce_result["summary"] == f"reduced {len(flids)}/{len(flids)} findings"
 
     # 2. top `review` join → policy `any`, both file legs done → advance to `merge`.
     rtj = run(JOIN, tmp_path / "tj", "pr-1", OCR_NESTED_PROTO)
