@@ -224,6 +224,11 @@
               "minimum": 1,
               "maximum": 256,
               "description": "Hard cap on expanded legs; the expander fails loud if the item count exceeds it."
+            },
+            "matrix_fields": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "description": "Optional: which item keys are inlined into matrix.leg.inputs for the agent. Unset = the full item. The full item is always persisted on the state branch; this only trims what rides the GHA matrix (large re-fetchable fields stay out)."
             }
           }
         },

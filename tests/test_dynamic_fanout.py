@@ -1,9 +1,11 @@
+import glob
 import importlib.util
 import json
 import os, stat, textwrap
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 import pytest
 import yaml
@@ -1078,3 +1080,799 @@ def test_status_body_renders_dynamic_legs(engine_env, tmp_path):
     man = read_state_yaml(d + "/review.__manifest.yaml")
     for leg in man["legs"]:                    # both dynamic leg ids appear (zero pre-fix)
         assert leg["id"] in body
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (M2 Spec B) — expand.matrix_fields declarative matrix projection +
+# fail-loud size guard.
+# ---------------------------------------------------------------------------
+
+
+def test_project_matrix_item_subsets_when_fields_given():
+    lib = _load_lib()
+    item = {"path": "src/a.py", "diff": "x" * 10000}
+    assert lib.project_matrix_item(item, ["path"]) == {"path": "src/a.py"}
+    assert lib.project_matrix_item(item, None) == item          # default = full item
+    assert lib.project_matrix_item(item, ["path", "missing"]) == {"path": "src/a.py"}  # skip absent
+
+
+def test_check_matrix_size_raises_over_cap():
+    lib = _load_lib()
+    big = [{"path": "l", "workflow": "w", "inputs": {"f": {"diff": "x" * 900_000}}} for _ in range(3)]
+    try:
+        lib.check_matrix_size(big); assert False, "expected ValueError"
+    except ValueError as e:
+        assert "matrix" in str(e).lower()
+    lib.check_matrix_size([{"path": "l", "workflow": "w", "inputs": {"f": {"path": "a"}}}])  # small: ok
+
+
+def test_matrix_fields_trims_leg_inputs_full_item_still_staged(engine_env, tmp_path):
+    # A dyn fixture whose expand sets matrix_fields:["path"] but items also carry "diff".
+    import shutil, json as _json, pathlib
+    from conftest import run_engine, read_state_yaml
+    src = ROOT / "tests/fixtures/dyn-fanout-flat"
+    dst = tmp_path / "proto"; shutil.copytree(src, dst)
+    proto = _json.load(open(dst / "protocol.json"))
+    proto["states"][0]["expand"]["matrix_fields"] = ["path"]
+    _json.dump(proto, open(dst / "protocol.json", "w"))
+    # items carry an extra big field
+    items = [{"path": "src/a.go", "diff": "X" * 5000}, {"path": "src/b.go", "diff": "Y" * 5000}]
+    _json.dump(items, open(dst / "expand" / "items.json", "w"))
+    out, err, rc = run_engine("next.py", str(tmp_path / "state"), "pr-1", str(dst / "protocol.json"), "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
+    for leg in action["legs"]:
+        assert set(leg["inputs"]["file"].keys()) == {"path"}          # trimmed for the matrix
+    # full item (with diff) is still staged on the state branch
+    d = str(tmp_path / "state") + "/dyn-fanout-flat/pr-1"
+    staged = _json.load(open(d + "/" + read_state_yaml(d + "/review.__manifest.yaml")["legs"][0]["id"] + ".file.item.json"))
+    assert "diff" in staged and staged["diff"]
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — nested from_fanout resolution + leg-terminal nested merge (ocr-nested)
+# ---------------------------------------------------------------------------
+
+OCR_NESTED_PROTO = ROOT / "tests/fixtures/ocr-nested/protocol.json"
+
+
+def _proto_load(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def test_nested_from_fanout_reduces_over_nested_legs(tmp_path):
+    """The collector is path-general: a NESTED findings fanout (keyed by the full
+    tree path) yields its own legs, not a top fanout's."""
+    lib = _load_lib()
+    paths = _load_paths()
+    d, pid, inst = str(tmp_path), "ocr-nested", "pr-1"
+    proto = str(OCR_NESTED_PROTO)
+    proto_data = _proto_load(proto)
+    fileleg = "abc123de"   # a synthetic file leg id
+    findings_path = ["review", fileleg, "findings"]
+    lib.write_manifest(d, pid, inst, findings_path,
+        {"count": 2, "legs": [{"id": "f1", "key": "f1", "item": {"fid": "f1"}},
+                              {"id": "f2", "key": "f2", "item": {"fid": "f2"}}]})
+    # per-leg evidence + state files, keyed by the NESTED tree path.
+    for fid, keep in [("f1", True), ("f2", False)]:
+        sf = lib.state_file(d, pid, inst, path=lib.state_path(proto_data, findings_path + [fid]))
+        os.makedirs(os.path.dirname(sf), exist_ok=True)
+        lib.dump_yaml(sf, {"state": "done"})
+        ev = lib.output_artifact_path(d, pid, inst, path=lib.state_path(proto_data, findings_path + [fid]))
+        with open(ev, "w") as f:
+            json.dump({"fid": fid, "keep": keep}, f)
+    fo_node = paths.node_at_path(proto_data, findings_path)
+    rows = lib.collect_fanout_evidence(d, pid, inst, findings_path, fo_node, proto=proto_data)
+    assert {r["leg_id"] for r in rows} == {"f1", "f2"}   # NESTED legs, not a top fanout
+    # Resolved from the REAL nested files (not a flat/empty lookup): state is
+    # "done" and evidence CONTENT round-trips per leg.
+    by_id = {r["leg_id"]: r for r in rows}
+    assert by_id["f1"]["state"] == "done" and by_id["f1"]["evidence"]["keep"] is True
+    assert by_id["f2"]["state"] == "done" and by_id["f2"]["evidence"]["keep"] is False
+
+
+def test_run_merge_hook_nested_from_fanout_resolves(tmp_path):
+    """A per-file `reduce` (a nested merge) resolves its from_fanout RELATIVE to
+    its node-path: consuming_path[:-1] + [findings], NOT the top-level [findings].
+    Before the fix this raised 'nested from_fanout is not supported yet'."""
+    lib = _load_lib()
+    d, pid, inst = str(tmp_path), "ocr-nested", "pr-1"
+    proto = str(OCR_NESTED_PROTO)
+    proto_data = _proto_load(proto)
+    fileleg = "abc123de"
+    findings_path = ["review", fileleg, "findings"]
+    consuming_path = ["review", fileleg, "reduce"]
+    lib.write_manifest(d, pid, inst, findings_path,
+        {"count": 2, "legs": [{"id": "f1", "key": "f1", "item": {"fid": "f1"}},
+                              {"id": "f2", "key": "f2", "item": {"fid": "f2"}}]})
+    reduce_state = next(s for s in proto_data["states"][0]["each"]["states"]
+                        if s.get("id") == "reduce")
+    res = lib.run_merge_hook(d, pid, inst, proto, reduce_state, consuming_path=consuming_path)
+    assert res["conclusion"] == "success"
+    assert "findings" in res["summary"]
+
+
+def test_validate_accepts_nested_from_fanout(tmp_path):
+    """Rule 6 validates a merge's from_fanout against a sibling fanout AT ITS OWN
+    LEVEL (a nested sub-pipeline), not only a top-level state."""
+    lib = _load_lib()
+    proto = _proto_load(OCR_NESTED_PROTO)
+    lib.validate_protocol(proto)   # must not raise: `reduce` ← `findings` (nested sibling)
+
+
+def test_ocr_nested_walk_reduces_and_merges(engine_env, tmp_path):
+    """Full offline walk: file fanout -> per file (main -> findings fanout -> jf ->
+    reduce) -> jr -> merge. A per-file `reduce` is LEG-TERMINAL: it marks the file
+    leg done and fires the enclosing (top-level → path-less) `review` join; the top
+    `merge` then reduces over both file legs."""
+    run, reclone, ry = _walker(engine_env, tmp_path, "ocr-nested")
+    v, ev = _pass_verdicts_t10(tmp_path)
+
+    # 1. start → per-file review legs, each a sub-pipeline at sub_state `main`.
+    run(NEXT, tmp_path / "s1", "pr-1", OCR_NESTED_PROTO, "start", "abc123")
+    man = ry(reclone("1") / "review.__manifest.yaml")
+    rlids = [leg["id"] for leg in man["legs"]]
+    assert len(rlids) == 2
+
+    for L in rlids:
+        # main → enter findings fanout (next sibling is a FANOUT).
+        run(ADVANCE, tmp_path / f"am-{L}", "pr-1", OCR_NESTED_PROTO, v, ev,
+            NODE_PATH=f"review.{L}.main")
+        run(NEXT, tmp_path / f"cf-{L}", "pr-1", OCR_NESTED_PROTO, "continue",
+            NODE_PATH=f"review.{L}.findings")
+        fman = ry(reclone(f"fm-{L}") / f"review.{L}.findings.__manifest.yaml")
+        flids = [leg["id"] for leg in fman["legs"]]
+        assert len(flids) == 2
+
+        # drive every finding leg to done → each fires the nested findings join.
+        for fid in flids:
+            rfv = run(ADVANCE, tmp_path / f"af-{L}-{fid}", "pr-1", OCR_NESTED_PROTO, v, ev,
+                      NODE_PATH=f"review.{L}.findings.{fid}")
+            assert f"client_payload[path]=review.{L}.findings" in rfv.stderr
+        dfd = reclone(f"fd-{L}")
+        for fid in flids:
+            assert ry(dfd / f"{L}.findings.{fid}.yaml")["state"] == "done"
+
+        # nested findings join (policy `any`) clears → `.next` is `reduce`: dispatch
+        # a path-continue onto the merge sub-state.
+        rj = run(JOIN, tmp_path / f"jf-{L}", "pr-1", OCR_NESTED_PROTO,
+                 NODE_PATH=f"review.{L}.findings")
+        assert f"client_payload[path]=review.{L}.reduce" in rj.stderr
+        assert ry(reclone(f"jfd-{L}") / f"{L}.findings.__join.yaml")["joined"] is True
+
+        # continue onto the per-file `reduce` merge → LEG-TERMINAL: run reduce hook,
+        # persist leg evidence, mark the file-leg cursor done, fire the (path-less)
+        # enclosing `review` join.
+        rr = run(NEXT, tmp_path / f"rd-{L}", "pr-1", OCR_NESTED_PROTO, "continue",
+                 NODE_PATH=f"review.{L}.reduce")
+        assert "event_type=protocol-join" in rr.stderr
+        assert "client_payload[path]=" not in rr.stderr   # enclosing review is TOP-level
+        drd = reclone(f"rd-{L}")
+        assert ry(drd / f"{L}.yaml")["state"] == "done"    # file leg cursor terminal
+        reduce_ev_path = drd / f"{L}.reduce.evidence.json"
+        assert reduce_ev_path.is_file()   # reduce leg evidence
+        # The per-file reduce hook (reduce-file.py) counts findings legs whose
+        # terminal STATE it read as "done", via collect_fanout_evidence resolving
+        # the NESTED findings legs by their real tree path (review.<L>.findings.<fid>).
+        # Before the collector was made nested-aware, the flat lookup found no
+        # state files here and this would read "reduced 0/2 findings".
+        with open(reduce_ev_path) as f:
+            reduce_result = json.load(f)
+        assert reduce_result["summary"] == f"reduced {len(flids)}/{len(flids)} findings"
+
+    # 2. top `review` join → policy `any`, both file legs done → advance to `merge`.
+    rtj = run(JOIN, tmp_path / "tj", "pr-1", OCR_NESTED_PROTO)
+    assert "client_payload[path]=merge" in rtj.stderr
+    assert ry(reclone("tj") / "_instance.yaml")["joined"] is True
+
+    # 3. continue onto the top `merge` → reduce over both file legs, finalize.
+    run(NEXT, tmp_path / "m", "pr-1", OCR_NESTED_PROTO, "continue", NODE_PATH="merge")
+    final = reclone("final")
+    inst = ry(final / "_instance.yaml")
+    assert inst["joined"] is True
+    assert inst["phase"] == "merge"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — code-review-ocr protocol.json: validates + within max_depth
+# ---------------------------------------------------------------------------
+
+
+def test_ocr_protocol_validates_and_within_depth():
+    """lib.validate_protocol raises ValueError on the first authoring-rule
+    violation and returns None (no list) on success — it is a pure assertion
+    function, not a collector. A clean protocol therefore must simply not
+    raise. lib.check_depth similarly raises ValueError if the static tree
+    exceeds max_depth; code-review-ocr's tree is depth 4 (review > each >
+    findings > each), under the default cap of 5."""
+    lib = _load_lib()
+    proto = json.load(open(ROOT / ".github/agent-factory/protocols/code-review-ocr/protocol.json"))
+    lib.validate_protocol(proto)   # must not raise
+    lib.check_depth(proto)         # must not raise (depth 4 <= max_depth 5)
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — code-review-ocr evidence schemas + expand-findings expander
+# ---------------------------------------------------------------------------
+
+EXPF = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/expand/expand-findings")
+
+
+def test_expand_findings_one_item_per_finding(tmp_path):
+    ev = tmp_path / "main.json"
+    json.dump({"files": [{"path": "a.py", "findings": [
+        {"finding_id": "a.py:1", "existing_code": "x=1", "side": "RIGHT", "line": 1, "comment": "c1"},
+        {"finding_id": "a.py:2", "existing_code": "y=2", "side": "RIGHT", "line": 2, "comment": "c2"}]}]}, open(ev, "w"))
+    r = subprocess.run([EXPF, str(tmp_path), "pr-1"], capture_output=True, text=True,
+                       env={**os.environ, "EXPAND_FINDINGS_EVIDENCE": str(ev)})
+    assert r.returncode == 0, r.stderr
+    items = json.loads(r.stdout)["items"]
+    assert [i["finding_id"] for i in items] == ["a.py:1", "a.py:2"]
+    assert items[0]["path"] == "a.py" and items[0]["comment"] == "c1"
+
+
+def test_expand_findings_no_evidence_fails_loud(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "EXPAND_FINDINGS_EVIDENCE"}
+    r = subprocess.run([EXPF, str(tmp_path), "pr-1"], capture_output=True, text=True, env=env)
+    assert r.returncode != 0
+    assert "expand-findings" in r.stderr
+
+
+def test_expand_findings_engine_local_reads_fixture(tmp_path):
+    fixture = ROOT / ".github/agent-factory/protocols/code-review-ocr/expand/findings.fixture.json"
+    r = subprocess.run([EXPF, str(tmp_path), "pr-1"], capture_output=True, text=True,
+                       env={**os.environ, "EXPAND_FINDINGS_EVIDENCE": str(fixture)})
+    assert r.returncode == 0, r.stderr
+    items = json.loads(r.stdout)["items"]
+    assert len(items) >= 1 and all("finding_id" in i for i in items)
+
+
+def test_ocr_evidence_schemas_are_valid_json():
+    for name in ("plan.evidence.schema.json", "main-review.evidence.schema.json", "filter.evidence.schema.json"):
+        schema = json.load(open(ROOT / f".github/agent-factory/protocols/code-review-ocr/{name}"))
+        assert schema["$schema"] == "http://json-schema.org/draft-07/schema#"
+        assert schema["type"] == "object"
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — code-review-ocr checks: schema-valid + traces-exist-in-diff (reused)
+# + filter-verdict-valid (new)
+# ---------------------------------------------------------------------------
+
+FVCHECK = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/checks/filter-verdict-valid.py")
+
+
+@pytest.mark.parametrize("ev,ok", [
+    ({"finding_id": "a.py:1", "keep": True, "anchor": {"side": "RIGHT", "line": 3}}, True),
+    ({"finding_id": "a.py:1", "keep": False}, True),                 # dropped: no anchor needed
+    ({"finding_id": "a.py:1", "keep": True}, False),                 # kept but no anchor
+    ({"keep": True, "anchor": {"side": "RIGHT", "line": 3}}, False), # no finding_id
+    ([], False), ("x", False), ({"finding_id": "a", "keep": "yes"}, False),  # garbage / non-bool
+])
+def test_filter_verdict_valid(ev, ok, tmp_path):
+    from conftest import run_check
+    p = tmp_path / "e.json"; P = tmp_path / "d.txt"; C = tmp_path / "c.txt"
+    P.write_text(""); C.write_text("")
+    json.dump(ev, open(p, "w"))
+    r = run_check(FVCHECK, p, P, C)     # raises if the check crashed / non-JSON stdout
+    assert r["check"] == "filter-verdict-valid"
+    assert r["pass"] is ok
+
+
+# ---------------------------------------------------------------------------
+# Task 5b — fix the code-review-ocr checks that were mis-copied from
+# code-review (a RUBRIC files->verdicts->category shape) so they actually
+# validate OCR's FLAT evidence shapes: a new dependency-free
+# evidence-schema-valid.py (driven by CHECK_PARAMS.schema) replaces the
+# rubric-only schema-valid.py, and traces-exist-in-diff.py is adapted to read
+# OCR's flat files->findings shape directly (it used to iterate `verdicts`
+# only, so on OCR evidence it always found zero and vacuously passed —
+# proven below by a genuinely-mismatched anchor now failing).
+# ---------------------------------------------------------------------------
+
+ESVCHECK = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/checks/evidence-schema-valid.py")
+OCR_TRACES = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/checks/traces-exist-in-diff.py")
+
+_PLAN_SCHEMA_PARAMS = {"schema": "plan.evidence.schema.json"}
+_MAIN_REVIEW_SCHEMA_PARAMS = {"schema": "main-review.evidence.schema.json"}
+_FILTER_SCHEMA_PARAMS = {"schema": "filter.evidence.schema.json"}
+
+_VALID_PLAN_EV = {"examined": ["src/foo.py"], "plan_items": ["check auth"]}
+_VALID_MAIN_REVIEW_EV = {"files": [{"path": "src/foo.py", "findings": [
+    {"finding_id": "f1", "existing_code": "x = 1", "side": "RIGHT", "line": 2, "comment": "looks off"}]}]}
+_VALID_FILTER_EV = {"finding_id": "f1", "keep": True}
+
+
+@pytest.mark.parametrize("ev,params,ok", [
+    (_VALID_PLAN_EV, _PLAN_SCHEMA_PARAMS, True),
+    ({"plan_items": ["x"]}, _PLAN_SCHEMA_PARAMS, False),              # missing required `examined`
+    (_VALID_MAIN_REVIEW_EV, _MAIN_REVIEW_SCHEMA_PARAMS, True),
+    ({"files": [{"path": "a.py"}]}, _MAIN_REVIEW_SCHEMA_PARAMS, False),  # file entry missing `findings`
+    (_VALID_FILTER_EV, _FILTER_SCHEMA_PARAMS, True),
+    ({"keep": True}, _FILTER_SCHEMA_PARAMS, False),                   # missing required `finding_id`
+])
+def test_evidence_schema_valid_validates_ocr_flat_shapes(ev, params, ok, tmp_path):
+    p = tmp_path / "e.json"; P = tmp_path / "d.txt"; C = tmp_path / "c.txt"
+    P.write_text(""); C.write_text("")
+    json.dump(ev, open(p, "w"))
+    r = run_check(ESVCHECK, p, P, C, check_params=params)
+    assert r["check"] == "evidence-schema-valid"
+    assert r["pass"] is ok
+
+
+@pytest.mark.parametrize("garbage", [[], None, "x", 42])
+def test_evidence_schema_valid_exits_0_on_garbage(garbage, tmp_path):
+    p = tmp_path / "e.json"; P = tmp_path / "d.txt"; C = tmp_path / "c.txt"
+    P.write_text(""); C.write_text("")
+    json.dump(garbage, open(p, "w"))
+    r = run_check(ESVCHECK, p, P, C, check_params=_MAIN_REVIEW_SCHEMA_PARAMS)
+    assert r["check"] == "evidence-schema-valid"
+    assert r["pass"] is False
+
+
+def test_evidence_schema_valid_no_schema_param_fails_not_crashes(tmp_path):
+    """No params.schema in CHECK_PARAMS -> a failing verdict (exit 0), not a crash."""
+    p = tmp_path / "e.json"; P = tmp_path / "d.txt"; C = tmp_path / "c.txt"
+    P.write_text(""); C.write_text("")
+    json.dump(_VALID_MAIN_REVIEW_EV, open(p, "w"))
+    r = run_check(ESVCHECK, p, P, C, check_params={})
+    assert r["check"] == "evidence-schema-valid"
+    assert r["pass"] is False
+
+
+_OCR_DIFF = """diff --git a/src/foo.py b/src/foo.py
+index abc..def 100644
+--- a/src/foo.py
++++ b/src/foo.py
+@@ -1,2 +1,3 @@
+ def foo():
++    x = 1
+     return x
+"""
+
+
+def test_traces_exist_in_diff_ocr_flat_pass_and_fail(tmp_path):
+    """GENUINE proof this now validates OCR's flat files->findings shape (the
+    pre-fix copy iterated `entry["verdicts"]`, found none on OCR evidence, and
+    vacuously passed every time — it never actually checked an anchor). Here a
+    finding whose existing_code/side/line MATCH the diff passes, and a finding
+    whose anchor does NOT match fails — proving real validation now happens."""
+    diff = tmp_path / "d.txt"; diff.write_text(_OCR_DIFF)
+    files = tmp_path / "c.txt"; files.write_text("src/foo.py\n")
+
+    good_ev = tmp_path / "good.json"
+    json.dump({"files": [{"path": "src/foo.py", "findings": [
+        {"finding_id": "f1", "existing_code": "x = 1", "side": "RIGHT", "line": 2, "comment": "c"}]}]},
+        open(good_ev, "w"))
+    r_good = run_check(OCR_TRACES, good_ev, diff, files)
+    assert r_good["check"] == "traces-exist-in-diff"
+    assert r_good["pass"] is True, r_good["feedback"]
+
+    bad_ev = tmp_path / "bad.json"
+    json.dump({"files": [{"path": "src/foo.py", "findings": [
+        {"finding_id": "f1", "existing_code": "this is not on that line", "side": "RIGHT", "line": 2,
+         "comment": "c"}]}]},
+        open(bad_ev, "w"))
+    r_bad = run_check(OCR_TRACES, bad_ev, diff, files)
+    assert r_bad["check"] == "traces-exist-in-diff"
+    assert r_bad["pass"] is False
+    assert "does not match" in r_bad["feedback"]
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — code-review-ocr publish: per-file `reduce-file` + top `post-review`
+# (reuses code-review/publish/_review.py verbatim) + a full offline OCR walk
+# against the REAL code-review-ocr/protocol.json (not a test fixture).
+# ---------------------------------------------------------------------------
+
+REDUCE_FILE = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/publish/reduce-file.py")
+POST_REVIEW = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/publish/post-review.py")
+CODE_REVIEW_OCR_PROTO = ROOT / ".github/agent-factory/protocols/code-review-ocr/protocol.json"
+
+
+def test_reduce_file_keeps_survivors(tmp_path):
+    """Only keep:true findings survive; a survivor round-trips path/comment/
+    existing_code when the filter evidence echoed them back."""
+    wd = tmp_path / "wd"; (wd / "inputs").mkdir(parents=True)
+    rows = [
+        {"leg_id": "f1", "state": "done", "evidence": {
+            "finding_id": "a:1", "keep": True, "anchor": {"side": "RIGHT", "line": 1},
+            "path": "a.py", "comment": "c1", "existing_code": "x=1"}},
+        {"leg_id": "f2", "state": "done", "evidence": {"finding_id": "a:2", "keep": False}},
+    ]
+    json.dump(rows, open(wd / "inputs" / "findings.json", "w"))
+    r = subprocess.run([REDUCE_FILE, str(wd), "pr-1"], capture_output=True, text=True,
+                       env={**os.environ, "ENGINE_LOCAL": "1"})
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["conclusion"] in ("success", "neutral")
+    assert [s["finding_id"] for s in out["survivors"]] == ["a:1"]
+    s = out["survivors"][0]
+    assert s["path"] == "a.py" and s["comment"] == "c1" and s["existing_code"] == "x=1"
+    assert s["side"] == "RIGHT" and s["line"] == 1
+
+
+def test_reduce_file_uses_relocated_anchor(tmp_path):
+    """A filter agent may relocate the anchor (e.g. after the surrounding context
+    shifted); reduce-file must use the anchor's side/line/start_line, never a
+    stray top-level side/line on the filter evidence."""
+    wd = tmp_path / "wd"; (wd / "inputs").mkdir(parents=True)
+    rows = [{"leg_id": "f1", "state": "done", "evidence": {
+        "finding_id": "a:1", "keep": True, "side": "RIGHT", "line": 1,
+        "anchor": {"side": "LEFT", "line": 9, "start_line": 5}}}]
+    json.dump(rows, open(wd / "inputs" / "findings.json", "w"))
+    r = subprocess.run([REDUCE_FILE, str(wd), "pr-1"], capture_output=True, text=True,
+                       env={**os.environ, "ENGINE_LOCAL": "1"})
+    assert r.returncode == 0, r.stderr
+    s = json.loads(r.stdout)["survivors"][0]
+    assert s["side"] == "LEFT" and s["line"] == 9 and s["start_line"] == 5
+
+
+def test_reduce_file_no_survivors_still_succeeds(tmp_path):
+    """All findings dropped -> a vacuous-but-successful reduce, not an error."""
+    wd = tmp_path / "wd"; (wd / "inputs").mkdir(parents=True)
+    json.dump([{"leg_id": "f1", "state": "done", "evidence": {"finding_id": "a:1", "keep": False}}],
+              open(wd / "inputs" / "findings.json", "w"))
+    r = subprocess.run([REDUCE_FILE, str(wd), "pr-1"], capture_output=True, text=True,
+                       env={**os.environ, "ENGINE_LOCAL": "1"})
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["conclusion"] == "success" and out["survivors"] == []
+
+
+def test_post_review_dedups_regroups_and_dry_runs(tmp_path):
+    """Two file legs' survivors are gathered from inputs/files.json, cross-file
+    deduped by (path,side,line,existing_code), regrouped by path, and posted as
+    ONE review via the shared (unmodified) _review.py mechanism — asserted here
+    via its ENGINE_LOCAL dry-run stderr dump, not a real GitHub POST."""
+    wd = tmp_path / "wd"; (wd / "inputs").mkdir(parents=True)
+    rows = [
+        {"leg_id": "L1", "state": "done", "evidence": {
+            "conclusion": "success", "summary": "1 finding(s) kept", "survivors": [
+                {"finding_id": "a:1", "path": "a.py", "existing_code": "x=1",
+                 "comment": "issue A", "side": "RIGHT", "line": 3}]}},
+        {"leg_id": "L2", "state": "done", "evidence": {
+            "conclusion": "success", "summary": "2 finding(s) kept", "survivors": [
+                # Same (path,side,line,existing_code) as a:1 above -> collapses to ONE.
+                {"finding_id": "a:1-dup", "path": "a.py", "existing_code": "x=1",
+                 "comment": "issue A (dup)", "side": "RIGHT", "line": 3},
+                {"finding_id": "b:1", "path": "b.py", "existing_code": "y=2",
+                 "comment": "issue B", "side": "RIGHT", "line": 7}]}},
+    ]
+    json.dump(rows, open(wd / "inputs" / "files.json", "w"))
+    env = {**os.environ, "ENGINE_LOCAL": "1", "GITHUB_REPOSITORY": "acme/repo",
+           "PR": "1", "PUBLISH_TOKEN": "x"}
+    r = subprocess.run([POST_REVIEW, str(wd), "pr-1"], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["conclusion"] == "failure"           # issues-found -> REQUEST_CHANGES
+    lines = r.stderr.splitlines()
+    assert lines[0] == "[ENGINE_LOCAL] POST repos/acme/repo/pulls/1/reviews"
+    review = json.loads("\n".join(lines[1:]))
+    assert review["event"] == "REQUEST_CHANGES"
+    assert len(review["comments"]) == 2              # deduped: 2 distinct, not 3
+    assert {c["path"] for c in review["comments"]} == {"a.py", "b.py"}
+
+
+def test_post_review_approves_with_no_survivors(tmp_path):
+    """No survivors anywhere (incl. a leg whose evidence is defensively None,
+    e.g. an unresolvable leg) -> a clean APPROVE, not a crash."""
+    wd = tmp_path / "wd"; (wd / "inputs").mkdir(parents=True)
+    rows = [
+        {"leg_id": "L1", "state": "done", "evidence": {
+            "conclusion": "success", "summary": "0 finding(s) kept", "survivors": []}},
+        {"leg_id": "L2", "state": "done", "evidence": None},
+    ]
+    json.dump(rows, open(wd / "inputs" / "files.json", "w"))
+    env = {**os.environ, "ENGINE_LOCAL": "1", "GITHUB_REPOSITORY": "acme/repo",
+           "PR": "1", "PUBLISH_TOKEN": "x"}
+    r = subprocess.run([POST_REVIEW, str(wd), "pr-1"], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["conclusion"] == "success"
+
+
+def test_run_expander_does_not_forward_expand_findings_evidence(engine_env, tmp_path):
+    """Minimal repro, through the REAL engine: start a review leg, drive it to
+    main-review with crafted findings evidence, then `continue` onto the nested
+    `findings` fanout with EXPAND_FINDINGS_EVIDENCE pointed at that evidence.
+    run_expander's env allowlist (_ALLOW) still does NOT forward
+    EXPAND_FINDINGS_EVIDENCE (deliberately left untouched — a Task-8 concern),
+    so the hook never sees the crafted main-review evidence pointed to by that
+    var. FIXED (Task 6b, offline-only): expand-findings now falls back to its
+    beside-script findings.fixture.json when ENGINE_LOCAL is set and
+    EXPAND_FINDINGS_EVIDENCE is unusable — and ENGINE_LOCAL IS in run_expander's
+    allowlist, so the real engine `continue` path now materializes the findings
+    fanout offline (from the fixture, not the crafted evidence) instead of
+    failing loud."""
+    run, reclone, ry = _walker(engine_env, tmp_path, "code-review-ocr")
+    v, ev = _pass_verdicts_t10(tmp_path)
+    run(NEXT, tmp_path / "s1", "pr-1", CODE_REVIEW_OCR_PROTO, "start", "abc123")
+    L = ry(reclone("1") / "review.__manifest.yaml")["legs"][0]["id"]
+    run(ADVANCE, tmp_path / "ap", "pr-1", CODE_REVIEW_OCR_PROTO, v, ev,
+        NODE_PATH=f"review.{L}.plan")
+    run(NEXT, tmp_path / "cm", "pr-1", CODE_REVIEW_OCR_PROTO, "continue",
+        NODE_PATH=f"review.{L}.main-review")
+    main_ev = tmp_path / "main-ev.json"
+    main_ev.write_text(json.dumps({"files": [{"path": "x.py", "findings": [
+        {"finding_id": "x:1", "existing_code": "c", "side": "RIGHT", "line": 1, "comment": "c"}]}]}))
+    run(ADVANCE, tmp_path / "am", "pr-1", CODE_REVIEW_OCR_PROTO, v, main_ev,
+        NODE_PATH=f"review.{L}.main-review")
+    run(NEXT, tmp_path / "cf", "pr-1", CODE_REVIEW_OCR_PROTO, "continue",
+        NODE_PATH=f"review.{L}.findings", EXPAND_FINDINGS_EVIDENCE=str(main_ev))
+
+    # The findings fanout materialized (via run_expander -> ENGINE_LOCAL ->
+    # the beside-script fixture, since EXPAND_FINDINGS_EVIDENCE never reached
+    # the subprocess): the manifest now has real legs, one per fixture finding.
+    fman = ry(reclone("fm") / f"review.{L}.findings.__manifest.yaml")
+    fixture = json.load(open(ROOT / ".github/agent-factory/protocols/code-review-ocr/expand/findings.fixture.json"))
+    fixture_ids = {fi["finding_id"] for fobj in fixture["files"] for fi in fobj["findings"]}
+    assert fman["count"] == len(fixture_ids)
+    assert {leg["item"]["finding_id"] for leg in fman["legs"]} == fixture_ids
+
+
+def _seed_findings_fanout_directly(engine_env, workdir, pid, inst_key, proto_data, findings_path, items):
+    """Materialize a FLAT dynamic fanout's manifest + leg cursor files directly
+    via `lib` public API (state_checkout/write_join/build_manifest/write_manifest/
+    state_file/dump_yaml/cas_push), mirroring next.py's enter_node dynamic-fanout
+    arm byte-for-byte. Used ONLY to work around the run_expander allowlist gap
+    documented in test_run_expander_does_not_forward_expand_findings_evidence —
+    every OTHER step of the walk this feeds into goes through the real engine
+    (next.py/advance.py/join.py) unmodified, including the REAL reduce-file.py/
+    post-review.py hooks this task wrote."""
+    old = os.environ.get("STATE_REMOTE")
+    os.environ["STATE_REMOTE"] = engine_env["STATE_REMOTE"]
+    try:
+        lib = _load_lib()
+        paths = _load_paths()
+    finally:
+        if old is None:
+            os.environ.pop("STATE_REMOTE", None)
+        else:
+            os.environ["STATE_REMOTE"] = old
+    d = str(workdir)
+    lib.state_checkout(d)
+    lib.write_join(d, pid, inst_key, lib.state_path(proto_data, findings_path), {"joined": False})
+    manifest = lib.build_manifest(items, "$.finding_id", 32)
+    lib.write_manifest(d, pid, inst_key, findings_path, manifest)
+    for leg in manifest["legs"]:
+        leg_path = findings_path + [leg["id"]]
+        life = paths.enclosing_fanout_id(proto_data, leg_path)
+        sf = lib.state_file(d, pid, inst_key, path=lib.state_path(proto_data, leg_path))
+        os.makedirs(os.path.dirname(sf), exist_ok=True)
+        lib.dump_yaml(sf, {"protocol": pid, "instance": inst_key, "state": life,
+                           "iteration": 1, "gates": {}, "history": []})
+    lib.cas_push(d, f"{pid}/{inst_key}: seed findings {'.'.join(findings_path)} (test harness)")
+    return manifest
+
+
+def test_ocr_real_protocol_walk_files_to_reduce(engine_env, tmp_path):
+    """Full offline walk of the REAL code-review-ocr protocol (not a test
+    fixture): review fanout (file legs, each a plan -> main-review ->
+    findings(nested fanout) -> join-findings -> reduce sub-pipeline) ->
+    join-review -> merge. Drives the REAL reduce-file.py/post-review.py hooks
+    this task wrote, through next.py's own merge-hook invocation (never called
+    directly) — proving the engine actually resolves+runs them, not just that
+    they work in isolation.
+
+    Every non-findings-carrying node uses always-pass verdicts + blank evidence
+    (schema/trace checks are bypassed here, exactly as in every other offline
+    walk in this file — this exercises the state machine + the two Task-6
+    hooks, not the Task-5 checks). The per-file main-review evidence and
+    per-finding filter evidence ARE crafted (not blank) so reduce-file.py has
+    real findings/keep-verdicts to work with.
+
+    SECOND, SEPARATE DOCUMENTED GAP hit while writing this walk (distinct from
+    the collect_fanout_evidence one below): the real `findings` fanout cannot be
+    materialized through next.py's actual `continue` path offline. next.py's
+    enter_node calls lib.run_expander, which builds the expander subprocess's
+    env from a hardcoded security allowlist (`_ALLOW`, deliberately NOT
+    forwarding STATE_REMOTE/PUBLISH_TOKEN/etc. — see run_expander's docstring)
+    that does not include EXPAND_FINDINGS_EVIDENCE. So even though
+    expand-findings.py supports an ENGINE_LOCAL/test fixture via that env var
+    (proven directly in test_expand_findings_one_item_per_finding, which invokes
+    the hook as a bare subprocess), the real engine path strips it before the
+    hook ever sees it — confirmed empirically below (a `continue` onto
+    review.<L>.findings with EXPAND_FINDINGS_EVIDENCE set raises "no main-review
+    evidence at None"). expand-findings.py's own docstring already flags the
+    live per-leg evidence wiring as a Task-8 concern; this is that same gap,
+    now shown to also block a fully-offline walk. Task 6 is scoped to the
+    publish hooks, not this wiring, so this walk works around it by
+    materializing the findings fanout's manifest+leg files directly via `lib`
+    (mirroring next.py's enter_node dynamic-fanout arm byte-for-byte) instead
+    of going through run_expander — the REAL reduce-file.py/post-review.py
+    hooks are still exercised through the REAL engine's continue/join code
+    paths from that point on, which is Task 6's actual scope.
+
+    FULL CARRY-UP (see test_collect_fanout_evidence_resolves_subpipeline_terminal_substate
+    below for the minimal repro): each file leg's OWN `<lid>.reduce.evidence.json`
+    is asserted to carry the correct survivors (a direct file read — fully
+    correct, proving reduce-file.py works end-to-end through the real engine).
+    The top merge step is then asserted to have actually received BOTH files'
+    survivors through its `from_fanout` input — collect_fanout_evidence resolves
+    each DYNAMIC sub-pipeline leg's terminal `reduce` sub-state evidence (fixed
+    in ebe9368), so post-review.py sees real survivor findings for both legs,
+    not evidence=None."""
+    run, reclone, ry = _walker(engine_env, tmp_path, "code-review-ocr")
+    v, ev = _pass_verdicts_t10(tmp_path)
+
+    # 1. start -> per-file review legs (expand-files reads its own items.json:
+    #    src/example_one.py, src/example_two.py), each seeded at sub_state `plan`.
+    run(NEXT, tmp_path / "s1", "pr-1", CODE_REVIEW_OCR_PROTO, "start", "abc123")
+    man = ry(reclone("1") / "review.__manifest.yaml")
+    assert man["count"] == 2
+    by_path = {leg["key"]: leg["id"] for leg in man["legs"]}
+    assert set(by_path) == {"src/example_one.py", "src/example_two.py"}
+
+    per_file_findings = {
+        "src/example_one.py": [
+            {"finding_id": "one:1", "existing_code": "x = 1", "side": "RIGHT", "line": 3,
+             "comment": "issue A", "keep": True},
+            {"finding_id": "one:2", "existing_code": "y = 2", "side": "RIGHT", "line": 5,
+             "comment": "issue B", "keep": False},
+        ],
+        "src/example_two.py": [
+            {"finding_id": "two:1", "existing_code": "z = 3", "side": "RIGHT", "line": 8,
+             "comment": "issue C", "keep": True},
+        ],
+    }
+    file_reduce_evidence = {}
+
+    for path, findings in per_file_findings.items():
+        L = by_path[path]
+
+        # plan -> main-review: agent->agent hop.
+        rp = run(ADVANCE, tmp_path / f"ap-{L}", "pr-1", CODE_REVIEW_OCR_PROTO, v, ev,
+                 NODE_PATH=f"review.{L}.plan")
+        assert f"client_payload[path]=review.{L}.main-review" in rp.stderr
+        run(NEXT, tmp_path / f"cm-{L}", "pr-1", CODE_REVIEW_OCR_PROTO, "continue",
+            NODE_PATH=f"review.{L}.main-review")
+
+        # main-review's OWN evidence: real findings for this file (persisted as
+        # this leg's evidence output by the ADVANCE call below).
+        main_ev = tmp_path / f"main-ev-{L}.json"
+        main_ev.write_text(json.dumps({"files": [{"path": path, "findings": [
+            {k: fnd[k] for k in ("finding_id", "existing_code", "side", "line", "comment")}
+            for fnd in findings]}]}))
+
+        # main-review -> findings: agent->fanout hop (fanout NOT yet materialized).
+        rm = run(ADVANCE, tmp_path / f"am-{L}", "pr-1", CODE_REVIEW_OCR_PROTO, v, main_ev,
+                 NODE_PATH=f"review.{L}.main-review")
+        assert f"client_payload[path]=review.{L}.findings" in rm.stderr
+
+        # Materialize the findings fanout directly (GAP #2 workaround — see the
+        # docstring above and test_run_expander_does_not_forward_expand_findings_evidence):
+        # the real expand-findings hook cannot be reached offline through
+        # next.py's continue path, so seed exactly what it WOULD have produced
+        # from the crafted main-review evidence.
+        proto_data = json.load(open(CODE_REVIEW_OCR_PROTO))
+        items = [{"finding_id": fnd["finding_id"], "path": path,
+                  "existing_code": fnd["existing_code"], "side": fnd["side"],
+                  "line": fnd["line"], "comment": fnd["comment"]} for fnd in findings]
+        _seed_findings_fanout_directly(engine_env, tmp_path / f"seed-{L}", "code-review-ocr",
+                                       "pr-1", proto_data, ["review", L, "findings"], items)
+        fman = ry(reclone(f"fm-{L}") / f"review.{L}.findings.__manifest.yaml")
+        assert fman["count"] == len(findings)
+        fid_to_leg = {leg["item"]["finding_id"]: leg["id"] for leg in fman["legs"]}
+        assert set(fid_to_leg) == {f["finding_id"] for f in findings}
+
+        # Drive every finding leg to done with a REAL filter verdict (keep per the
+        # crafted table above), echoing path/existing_code/comment back (the
+        # Task-7 agent-prompt requirement documented in reduce-file.py's docstring).
+        for fnd in findings:
+            fid = fnd["finding_id"]
+            fL = fid_to_leg[fid]
+            filt_ev = tmp_path / f"filt-{fL}.json"
+            filt_ev.write_text(json.dumps({
+                "finding_id": fid, "keep": fnd["keep"],
+                "path": path, "existing_code": fnd["existing_code"], "comment": fnd["comment"],
+                **({"anchor": {"side": fnd["side"], "line": fnd["line"]}} if fnd["keep"] else {}),
+            }))
+            rf = run(ADVANCE, tmp_path / f"af-{L}-{fL}", "pr-1", CODE_REVIEW_OCR_PROTO, v, filt_ev,
+                     NODE_PATH=f"review.{L}.findings.{fL}")
+            assert f"client_payload[path]=review.{L}.findings" in rf.stderr
+
+        # nested findings join (policy any) -> .next = reduce.
+        rj = run(JOIN, tmp_path / f"jf-{L}", "pr-1", CODE_REVIEW_OCR_PROTO,
+                 NODE_PATH=f"review.{L}.findings")
+        assert f"client_payload[path]=review.{L}.reduce" in rj.stderr
+
+        # continue onto the per-file `reduce` merge: LEG-TERMINAL, runs the REAL
+        # reduce-file.py this task wrote (via lib.run_merge_hook, not called
+        # directly), persists its printed {conclusion,summary,survivors} as this
+        # leg's own evidence, marks the leg done, fires the (path-less) top
+        # `review` join.
+        rr = run(NEXT, tmp_path / f"rd-{L}", "pr-1", CODE_REVIEW_OCR_PROTO, "continue",
+                 NODE_PATH=f"review.{L}.reduce")
+        assert "event_type=protocol-join" in rr.stderr
+        assert "client_payload[path]=" not in rr.stderr
+        drd = reclone(f"rd-{L}")
+        assert ry(drd / f"{L}.yaml")["state"] == "done"
+        with open(drd / f"{L}.reduce.evidence.json") as f:
+            reduce_result = json.load(f)
+        file_reduce_evidence[path] = reduce_result
+        kept = [f["finding_id"] for f in findings if f["keep"]]
+        assert [s["finding_id"] for s in reduce_result["survivors"]] == kept
+
+    # Both files' per-file reduce evidence is correct and independently verified
+    # — this is the file-leg-scoped carry-up (a direct file read), further
+    # confirmed to reach the top merge's from_fanout input below.
+    assert file_reduce_evidence["src/example_one.py"]["survivors"][0]["finding_id"] == "one:1"
+    assert file_reduce_evidence["src/example_two.py"]["survivors"][0]["finding_id"] == "two:1"
+
+    # 2. top `review` join -> both file legs done -> advance to `merge`.
+    rtj = run(JOIN, tmp_path / "tj", "pr-1", CODE_REVIEW_OCR_PROTO)
+    assert "client_payload[path]=merge" in rtj.stderr
+
+    # 3. continue onto the top `merge`: runs the REAL post-review.py this task
+    # wrote, via lib.run_merge_hook's collect_fanout_evidence resolution of
+    # each dynamic sub-pipeline leg's terminal `reduce` sub-state (ebe9368).
+    # Snapshot run_merge_hook's tempfile.mkdtemp(prefix="merge-") workdirs
+    # before/after so the new one can be inspected directly: it is the exact
+    # `inputs/files.json` post-review.py itself reads, so asserting on it pins
+    # the true end-to-end carry-up (both files' survivors reaching the top
+    # merge), not just "the hook didn't crash".
+    before_workdirs = set(glob.glob(os.path.join(tempfile.gettempdir(), "merge-*")))
+    rmg = run(NEXT, tmp_path / "m", "pr-1", CODE_REVIEW_OCR_PROTO, "continue",
+              NODE_PATH="merge", GITHUB_REPOSITORY="acme/repo", PR="1", PUBLISH_TOKEN="x")
+    assert "[merge] hook nonzero" not in rmg.stderr
+    after_workdirs = set(glob.glob(os.path.join(tempfile.gettempdir(), "merge-*")))
+    new_workdirs = after_workdirs - before_workdirs
+    assert len(new_workdirs) == 1, new_workdirs
+    with open(os.path.join(new_workdirs.pop(), "inputs", "files.json")) as f:
+        merge_rows = json.load(f)
+    merge_survivor_ids = {
+        s["finding_id"] for row in merge_rows
+        for s in (row.get("evidence") or {}).get("survivors", [])
+    }
+    # BOTH file legs' kept findings carried all the way up to the top merge's
+    # from_fanout input — the genuine end-to-end pin of the carry-up.
+    assert merge_survivor_ids == {"one:1", "two:1"}
+    # The engine also observed real issues (not the no-survivors APPROVE path):
+    # a real REQUEST_CHANGES conclusion, only reachable if post-review.py saw
+    # non-empty survivors for both files.
+    assert "conclusion=failure" in rmg.stderr
+    final = reclone("final")
+    inst = ry(final / "_instance.yaml")
+    assert inst["joined"] is True
+    assert inst["phase"] == "merge"
+    for path, L in by_path.items():
+        assert ry(final / f"{L}.yaml")["state"] == "done"
+
+
+def test_collect_fanout_evidence_resolves_subpipeline_terminal_substate(tmp_path):
+    """Minimal repro at the lib.collect_fanout_evidence level: a single review
+    leg whose per-file `reduce` genuinely completed (leg cursor done + real
+    evidence at <lid>.reduce.evidence.json, exactly as next.py's LEG-TERMINAL
+    nested-merge arm writes it) must be visible to collect_fanout_evidence as
+    that leg's `evidence` when collecting the ENCLOSING `review` fanout for the
+    top merge's from_fanout. FIXED (Task 6b): collect_fanout_evidence now
+    appends the sub-pipeline `each`'s terminal sub-state id (here 'reduce') to
+    the leg's evidence lookup path, while still resolving the leg's `state`
+    from its own (unaugmented) sequence-cursor path — mirroring the analogous
+    fix already in _resolve_input_ref_pathaware for STATIC sub-pipeline `from`
+    refs."""
+    lib = _load_lib()
+    paths = _load_paths()
+    d, pid, inst = str(tmp_path), "ocr-nested", "pr-1"
+    proto_data = _proto_load(OCR_NESTED_PROTO)
+    L = "abc123de"
+    lib.write_manifest(d, pid, inst, ["review"],
+        {"count": 1, "legs": [{"id": L, "key": "src/a.go", "item": {"path": "src/a.go"}}]})
+    # Exactly what next.py's LEG-TERMINAL nested-merge arm writes for a per-file
+    # `reduce`: the leg cursor marked done, and the reduce result persisted at
+    # the reduce sub-state's OWN tree path (tree_path+[lid,'reduce']).
+    cursor_sf = lib.state_file(d, pid, inst, path=lib.state_path(proto_data, ["review", L]))
+    os.makedirs(os.path.dirname(cursor_sf), exist_ok=True)
+    lib.dump_yaml(cursor_sf, {"state": "done"})
+    reduce_ev = lib.output_artifact_path(d, pid, inst,
+        path=lib.state_path(proto_data, ["review", L, "reduce"]))
+    os.makedirs(os.path.dirname(reduce_ev), exist_ok=True)
+    with open(reduce_ev, "w") as f:
+        json.dump({"conclusion": "success", "survivors": [{"finding_id": "x"}]}, f)
+
+    review_node = paths.node_at_path(proto_data, ["review"])
+    rows = lib.collect_fanout_evidence(d, pid, inst, ["review"], review_node, proto=proto_data)
+    assert rows[0]["state"] == "done"              # the leg cursor resolves correctly
+    assert rows[0]["evidence"] == {"conclusion": "success", "survivors": [{"finding_id": "x"}]}

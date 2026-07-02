@@ -84,6 +84,7 @@ def _fanout_action(proto, path, branches):
             leg["inputs"] = b["inputs"]
         legs.append(leg)
     act["legs"] = legs
+    lib.check_matrix_size(legs)
     return act
 
 
@@ -132,7 +133,8 @@ def enter_node(proto, path, command, emit=True):
                 seeded = _seed_child(proto, path + [leg["id"]], cfg)
                 lib.stage_item(DIR, PID, INSTANCE, lib.state_path(proto, path + [leg["id"]]),
                                node["expand"]["as"], leg["item"])
-                seeded["inputs"] = {node["expand"]["as"]: leg["item"]}
+                seeded["inputs"] = {node["expand"]["as"]:
+                                    lib.project_matrix_item(leg["item"], node["expand"].get("matrix_fields"))}
                 branches.append(seeded)
             # zero legs → branches == [] falls through the shared tail unchanged (vacuous fanout)
         else:
@@ -763,10 +765,37 @@ if COMMAND == "continue" and NODE_PATH:
                           "reason": f"gate-open:{NODE_PATH}"}))
         sys.exit(0)
     if _kind == "merge":
-        # A `continue` onto a MERGE state (dispatched by the top join via path-continue).
-        # Run the reduce hook, finalize the instance, update comment + label.
+        # A `continue` onto a MERGE state. Two shapes:
+        #  - NESTED merge (a per-file `reduce`, path length > 1): LEG-TERMINAL.
+        #  - TOP merge (path length 1, dispatched by the top join): finalize instance.
         node = paths.node_at_path(proto_data, _p)
-        res = lib.run_merge_hook(DIR, PID, INSTANCE, PROTO, node)
+        res = lib.run_merge_hook(DIR, PID, INSTANCE, PROTO, node, consuming_path=_p)
+        if len(_p) > 1:
+            # NESTED merge (a per-file `reduce`): LEG-TERMINAL, mirroring
+            # advance.complete_sequence. (1) persist the merge result as THIS leg's
+            # output evidence so the enclosing fanout's from_fanout can collect the
+            # survivors; (2) mark the file-leg SEQUENCE CURSOR done; (3) fire the
+            # enclosing fanout's join exactly as join.py does (path-less for a
+            # top-level enclosing fanout, path-keyed if nested).
+            leg_path = _p[:-1]                       # the file-leg sub-pipeline cursor
+            ev = lib.output_artifact_path(DIR, PID, INSTANCE, path=lib.state_path(proto_data, _p))
+            os.makedirs(os.path.dirname(ev), exist_ok=True)
+            with open(ev, "w") as f:
+                json.dump(res, f)
+            cursor_sf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, leg_path))
+            cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
+            cur["state"] = "done"
+            lib.dump_yaml(cursor_sf, cur)
+            lib.cas_push(DIR, f"{INSTANCE}: nested merge {'.'.join(_p)} → leg done")
+            efp = paths.enclosing_fanout_path(proto_data, _p)
+            fields = {"protocol": PID, "instance": INSTANCE}
+            if efp and len(efp) > 1:
+                fields["path"] = ".".join(efp)
+            lib._gh_dispatch("protocol-join", fields)
+            print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
+                              "reason": f"nested-merge-done:{'.'.join(_p)}"}))
+            sys.exit(0)
+        # TOP merge (existing behavior, unchanged): finalize the instance.
         inf = lib.instance_file(DIR, PID, INSTANCE)
         inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
         inst["phase"] = _p[-1]
