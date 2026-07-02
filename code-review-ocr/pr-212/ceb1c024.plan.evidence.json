@@ -1,0 +1,9 @@
+{
+  "examined": ["sample/calc.py"],
+  "plan_items": [
+    "Check average() for division-by-zero when nums is empty (len(nums) == 0)",
+    "Check average() for type safety — no guard against non-numeric elements in nums",
+    "Check discount() for missing bounds validation on pct (negative pct silently inflates price; pct > 100 yields negative result)",
+    "Check discount() for edge cases: zero price, zero pct, very large pct values"
+  ]
+}
