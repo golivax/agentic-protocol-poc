@@ -1,9 +1,0 @@
-{
-  "examined": ["sample/parse.py"],
-  "plan_items": [
-    "Mutable default argument `defaults={}` — classic Python gotcha where the dict is shared across calls; check whether this causes state leakage between invocations.",
-    "Resource leak: `open(path)` is passed directly to `json.load` without a `with` statement, so the file handle is never explicitly closed.",
-    "No error handling for missing file, permission errors, or malformed JSON — callers get raw exceptions with no context.",
-    "Check whether in-place mutation of `data` (setting defaults) is intentional and documented, or an unintended side effect on any caller-provided structure."
-  ]
-}

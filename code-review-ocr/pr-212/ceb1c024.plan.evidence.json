@@ -1,9 +1,0 @@
-{
-  "examined": ["sample/calc.py"],
-  "plan_items": [
-    "Check average() for division-by-zero when nums is empty — len(nums) is used directly as divisor with no guard",
-    "Check discount() for out-of-range pct values (negative, >100) that could yield negative or inflated prices",
-    "Note that average() uses a manual accumulator loop rather than built-in sum() — flag if stylistically inconsistent with surrounding codebase",
-    "Both functions are pure additions (new file); no deletions or regressions to trace"
-  ]
-}

@@ -1,9 +1,0 @@
-{
-  "finding_id": "sample/parse.py:5:1",
-  "keep": true,
-  "anchor": { "side": "RIGHT", "line": 5 },
-  "reason": "The unclosed file handle at the confirmed diff location is a legitimate resource-leak bug that warrants a reviewer comment.",
-  "path": "sample/parse.py",
-  "existing_code": "    data = json.load(open(path))",
-  "comment": "The file handle returned by `open(path)` is passed directly to `json.load()` and is never explicitly closed. In CPython reference-counting usually closes it promptly, but on PyPy/Jython or if `json.load()` raises an exception the handle can stay open indefinitely, leaking an OS file descriptor. Use `with open(path) as f: data = json.load(f)` to guarantee the handle is closed."
-}
