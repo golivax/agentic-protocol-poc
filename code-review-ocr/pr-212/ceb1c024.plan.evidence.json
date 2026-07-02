@@ -1,0 +1,10 @@
+{
+  "examined": ["sample/calc.py"],
+  "plan_items": [
+    "Check `average()` for ZeroDivisionError when `nums` is an empty list — `len(nums)` will be 0 and the division will raise at runtime.",
+    "Check `average()` for missing type/input validation — non-numeric elements in `nums` would cause a TypeError silently propagated to the caller.",
+    "Check `discount()` for missing bounds validation on `pct` — negative percentages or values > 100 are not guarded against, which can produce negative prices or refund-like results unexpectedly.",
+    "Check `discount()` for floating-point precision issues — `price * pct / 100` with large or fractional values may produce imprecise results; consider rounding or Decimal.",
+    "Both functions lack docstrings and have no test coverage in the PR — note whether that is a requirement in this codebase."
+  ]
+}
