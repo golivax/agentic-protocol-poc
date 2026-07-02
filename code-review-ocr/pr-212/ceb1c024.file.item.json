@@ -1,0 +1,1 @@
+{"path": "sample/calc.py", "diff": "diff --git a/sample/calc.py b/sample/calc.py\nnew file mode 100644\nindex 0000000..ab93fb2\n--- /dev/null\n+++ b/sample/calc.py\n@@ -0,0 +1,9 @@\n+def average(nums):\n+    total = 0\n+    for n in nums:\n+        total += n\n+    return total / len(nums)\n+\n+\n+def discount(price, pct):\n+    return price - price * pct / 100\n"}

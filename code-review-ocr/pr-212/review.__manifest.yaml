@@ -1,0 +1,72 @@
+count: 2
+legs:
+- id: ceb1c024
+  key: sample/calc.py
+  item:
+    path: sample/calc.py
+    diff: 'diff --git a/sample/calc.py b/sample/calc.py
+
+      new file mode 100644
+
+      index 0000000..ab93fb2
+
+      --- /dev/null
+
+      +++ b/sample/calc.py
+
+      @@ -0,0 +1,9 @@
+
+      +def average(nums):
+
+      +    total = 0
+
+      +    for n in nums:
+
+      +        total += n
+
+      +    return total / len(nums)
+
+      +
+
+      +
+
+      +def discount(price, pct):
+
+      +    return price - price * pct / 100
+
+      '
+- id: f877677f
+  key: sample/parse.py
+  item:
+    path: sample/parse.py
+    diff: 'diff --git a/sample/parse.py b/sample/parse.py
+
+      new file mode 100644
+
+      index 0000000..997185d
+
+      --- /dev/null
+
+      +++ b/sample/parse.py
+
+      @@ -0,0 +1,9 @@
+
+      +import json
+
+      +
+
+      +
+
+      +def load_config(path, defaults={}):
+
+      +    data = json.load(open(path))
+
+      +    for k in defaults:
+
+      +        if k not in data:
+
+      +            data[k] = defaults[k]
+
+      +    return data
+
+      '
