@@ -1,6 +1,6 @@
 protocol: code-review-ocr
 instance: pr-212
-state: review
+state: done
 sub_state: reduce
 iteration: 1
 gates: {}
