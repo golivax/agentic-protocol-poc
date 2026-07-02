@@ -46,7 +46,7 @@ def type_ok(value, declared_type):
         return True  # unknown/unsupported declared type: don't block on it
     if py_type is bool:
         return isinstance(value, bool)
-    return isinstance(value, py_type) and (py_type is not dict or True)
+    return isinstance(value, py_type)
 
 
 def check_required(obj, schema, errs, where):

@@ -1,9 +1,11 @@
+import glob
 import importlib.util
 import json
 import os, stat, textwrap
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 import pytest
 import yaml
@@ -1554,9 +1556,8 @@ def test_post_review_dedups_regroups_and_dry_runs(tmp_path):
 
 
 def test_post_review_approves_with_no_survivors(tmp_path):
-    """No survivors anywhere (incl. a leg whose evidence never resolved, exactly
-    what the documented collect_fanout_evidence gap currently produces) -> a
-    clean APPROVE, not a crash."""
+    """No survivors anywhere (incl. a leg whose evidence is defensively None,
+    e.g. an unresolvable leg) -> a clean APPROVE, not a crash."""
     wd = tmp_path / "wd"; (wd / "inputs").mkdir(parents=True)
     rows = [
         {"leg_id": "L1", "state": "done", "evidence": {
@@ -1684,16 +1685,15 @@ def test_ocr_real_protocol_walk_files_to_reduce(engine_env, tmp_path):
     hooks are still exercised through the REAL engine's continue/join code
     paths from that point on, which is Task 6's actual scope.
 
-    PARTIAL POINT #2 (by design, documented — see
-    test_collect_fanout_evidence_missing_subpipeline_terminal_substate below):
-    each file leg's OWN `<lid>.reduce.evidence.json` is asserted to carry the
-    correct survivors (a direct file read — fully correct, proving reduce-file.py
-    works end-to-end through the real engine). The top merge step is only
-    asserted to complete without the hook crashing — collect_fanout_evidence's
-    from_fanout leg-evidence lookup does not yet descend into a DYNAMIC
-    sub-pipeline leg's terminal substate, so post-review.py currently receives
-    evidence=None for both legs there (see the dedicated xfail test for the
-    precise mechanism)."""
+    FULL CARRY-UP (see test_collect_fanout_evidence_resolves_subpipeline_terminal_substate
+    below for the minimal repro): each file leg's OWN `<lid>.reduce.evidence.json`
+    is asserted to carry the correct survivors (a direct file read — fully
+    correct, proving reduce-file.py works end-to-end through the real engine).
+    The top merge step is then asserted to have actually received BOTH files'
+    survivors through its `from_fanout` input — collect_fanout_evidence resolves
+    each DYNAMIC sub-pipeline leg's terminal `reduce` sub-state evidence (fixed
+    in ebe9368), so post-review.py sees real survivor findings for both legs,
+    not evidence=None."""
     run, reclone, ry = _walker(engine_env, tmp_path, "code-review-ocr")
     v, ev = _pass_verdicts_t10(tmp_path)
 
@@ -1796,8 +1796,8 @@ def test_ocr_real_protocol_walk_files_to_reduce(engine_env, tmp_path):
         assert [s["finding_id"] for s in reduce_result["survivors"]] == kept
 
     # Both files' per-file reduce evidence is correct and independently verified
-    # — this is the file-leg-scoped carry-up (a direct file read), unaffected by
-    # the collect_fanout_evidence gap exercised at the top merge below.
+    # — this is the file-leg-scoped carry-up (a direct file read), further
+    # confirmed to reach the top merge's from_fanout input below.
     assert file_reduce_evidence["src/example_one.py"]["survivors"][0]["finding_id"] == "one:1"
     assert file_reduce_evidence["src/example_two.py"]["survivors"][0]["finding_id"] == "two:1"
 
@@ -1806,13 +1806,33 @@ def test_ocr_real_protocol_walk_files_to_reduce(engine_env, tmp_path):
     assert "client_payload[path]=merge" in rtj.stderr
 
     # 3. continue onto the top `merge`: runs the REAL post-review.py this task
-    # wrote. Completes cleanly (rc==0, no "[merge] hook nonzero" fallback) even
-    # though — per the documented gap — every file leg's evidence currently
-    # resolves to None here, so nothing is posted (post-review.py's graceful
-    # no-survivors APPROVE path, unit-tested above).
+    # wrote, via lib.run_merge_hook's collect_fanout_evidence resolution of
+    # each dynamic sub-pipeline leg's terminal `reduce` sub-state (ebe9368).
+    # Snapshot run_merge_hook's tempfile.mkdtemp(prefix="merge-") workdirs
+    # before/after so the new one can be inspected directly: it is the exact
+    # `inputs/files.json` post-review.py itself reads, so asserting on it pins
+    # the true end-to-end carry-up (both files' survivors reaching the top
+    # merge), not just "the hook didn't crash".
+    before_workdirs = set(glob.glob(os.path.join(tempfile.gettempdir(), "merge-*")))
     rmg = run(NEXT, tmp_path / "m", "pr-1", CODE_REVIEW_OCR_PROTO, "continue",
               NODE_PATH="merge", GITHUB_REPOSITORY="acme/repo", PR="1", PUBLISH_TOKEN="x")
     assert "[merge] hook nonzero" not in rmg.stderr
+    after_workdirs = set(glob.glob(os.path.join(tempfile.gettempdir(), "merge-*")))
+    new_workdirs = after_workdirs - before_workdirs
+    assert len(new_workdirs) == 1, new_workdirs
+    with open(os.path.join(new_workdirs.pop(), "inputs", "files.json")) as f:
+        merge_rows = json.load(f)
+    merge_survivor_ids = {
+        s["finding_id"] for row in merge_rows
+        for s in (row.get("evidence") or {}).get("survivors", [])
+    }
+    # BOTH file legs' kept findings carried all the way up to the top merge's
+    # from_fanout input — the genuine end-to-end pin of the carry-up.
+    assert merge_survivor_ids == {"one:1", "two:1"}
+    # The engine also observed real issues (not the no-survivors APPROVE path):
+    # a real REQUEST_CHANGES conclusion, only reachable if post-review.py saw
+    # non-empty survivors for both files.
+    assert "conclusion=failure" in rmg.stderr
     final = reclone("final")
     inst = ry(final / "_instance.yaml")
     assert inst["joined"] is True
@@ -1821,7 +1841,7 @@ def test_ocr_real_protocol_walk_files_to_reduce(engine_env, tmp_path):
         assert ry(final / f"{L}.yaml")["state"] == "done"
 
 
-def test_collect_fanout_evidence_missing_subpipeline_terminal_substate(tmp_path):
+def test_collect_fanout_evidence_resolves_subpipeline_terminal_substate(tmp_path):
     """Minimal repro at the lib.collect_fanout_evidence level: a single review
     leg whose per-file `reduce` genuinely completed (leg cursor done + real
     evidence at <lid>.reduce.evidence.json, exactly as next.py's LEG-TERMINAL

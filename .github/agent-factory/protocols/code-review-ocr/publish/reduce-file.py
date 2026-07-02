@@ -13,8 +13,8 @@ VERBATIM as the file leg's own output evidence
 (<lid>.reduce.evidence.json, via lib.output_artifact_path keyed on this node's
 own tree path). That is the carry-up path: the top `merge`'s
 `from_fanout: review` later collects each file leg's evidence via
-lib.collect_fanout_evidence and (when it resolves — see the task-6 report for a
-documented engine-side gap for sub-pipeline legs) reads `evidence.survivors`
+lib.collect_fanout_evidence — which resolves a sub-pipeline leg's terminal
+`reduce` sub-state evidence (fixed in ebe9368) — and reads `evidence.survivors`
 from there. Keeping `survivors` inside the same printed JSON that already
 carries {conclusion,summary} means the carry-up needs no separate side-channel
 file and no protocol/engine ABI change.

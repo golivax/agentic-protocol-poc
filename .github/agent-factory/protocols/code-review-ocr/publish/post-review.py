@@ -5,9 +5,10 @@ Reads inputs/files.json (the from_fanout rows over the `review` file legs — on
 row per file, {leg_id,key,state,evidence}). Each row's `evidence` is the file's
 per-file `reduce` result (reduce-file.py's printed {conclusion,summary,survivors}
 dict, persisted as that leg's own output evidence by next.py's nested-merge arm
-— see reduce-file.py's docstring and the task-6 report for the full carry-up
-trace, including a documented engine-side gap where `evidence` currently comes
-back None for a sub-pipeline leg under from_fanout).
+— see reduce-file.py's docstring for the full carry-up trace). Each file leg is
+itself a sub-pipeline; `lib.collect_fanout_evidence` resolves a sub-pipeline
+leg's terminal `reduce` sub-state evidence (fixed in ebe9368), so `evidence`
+here is that leg's real {conclusion,summary,survivors} dict, not None.
 
 Collects every row's `evidence.survivors`, dedups cross-file by
 (path, side, line, existing_code), regroups by path, and posts ONE GitHub review
