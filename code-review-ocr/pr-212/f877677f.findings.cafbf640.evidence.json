@@ -1,0 +1,9 @@
+{
+  "finding_id": "sample/parse.py:4:1",
+  "keep": true,
+  "anchor": { "side": "RIGHT", "line": 4 },
+  "reason": "The snippet exists exactly at RIGHT:4 in the diff; the mutable default argument `defaults={}` is a genuine Python anti-pattern that risks silent state sharing across call sites.",
+  "path": "sample/parse.py",
+  "existing_code": "def load_config(path, defaults={}):",
+  "comment": "Mutable default argument: `defaults={}` is evaluated once at function definition time and the same dict object is reused across every call that omits the argument. If this function is ever extended to write back into `defaults`, those writes will silently persist across call sites. The idiomatic fix is `defaults=None` with `if defaults is None: defaults = {}` at the top of the body."
+}
