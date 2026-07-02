@@ -149,9 +149,23 @@ What is / isn't covered here:
   `join(all)` → `done`, with the PR status comment rendering both dynamic legs.
   Zero live-only functional bugs (one cosmetic follow-up: gh-aw's default
   no-safe-output issue, suppressed via `dyn-stub-agent`'s `noop.report-as-issue:false`).
-  Still deferred to **Spec B**: the real
-  `code-review-ocr` protocol, nested `from_fanout` resolution, per-finding
-  nested fan-out, and **matrix leg-input size (Spec B):** each dynamic leg's runtime item (`{path, diff}`) is threaded to its agent via `matrix.leg.inputs` → the plan job's `legs` output (a `$GITHUB_OUTPUT`, ~1 MB cap) and `strategy.matrix`. Fine for small fan-outs; before the real `code-review-ocr` protocol (many files × large diffs) this must switch to threading only the file `path` (agent re-fetches its own diff from the checkout) or staging the item to the state branch and passing a reference, to stay under the output/matrix/`workflow_dispatch` input limits.
+- **Milestone 2 Spec B (`code-review-ocr` protocol), done + live-verified:** the
+  full nested open-code-review mimic — `review` fanout over changed files →
+  per-file `plan → main-review → findings`(nested dynamic fanout over findings) `→
+  join-findings → reduce` → top `join-review → merge` (cross-file dedup + one
+  posted GitHub review), fully automated, join policy `any`. Delivered the two
+  deferred infra pieces: **nested `from_fanout`** (`lib.run_merge_hook` resolves a
+  nested fanout's tree-path; `collect_fanout_evidence` resolves a sub-pipeline
+  leg's terminal sub-state evidence) + a **leg-terminal nested merge**
+  (`next.py`), and the **matrix leg-input size** fix via the `expand.matrix_fields`
+  DSL key (files inline only `path`; agents re-fetch their diff). OCR-native checks
+  (`evidence-schema-valid` + flat-shape `traces-exist-in-diff` + `filter-verdict-valid`)
+  and three read-only agents. **Live-verified end-to-end on PR #212**: `/ocr-review`
+  found 4 real issues across 2 files, filtered per-finding, and posted one inline
+  GitHub review. One live-only bug fixed (`run_expander` now exports the enclosing
+  sub-pipeline's predecessor-phase evidence path as `EXPAND_PRIOR_EVIDENCE_PATH` so
+  `expand-findings` reaches its file leg's `main-review` evidence). Minor cosmetic
+  backlog: the terminal-merge phase label reads `Merge` rather than a `done` label.
 - **Expander credential-scoping (design spec §14), enforced:** `lib.run_expander`
   now builds the subprocess env from a strict allowlist, handing the expander
   only a read-only token (`EXPANDER_TOKEN`), never `STATE_REMOTE` /
