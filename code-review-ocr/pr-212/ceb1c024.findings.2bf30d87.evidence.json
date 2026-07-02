@@ -1,0 +1,9 @@
+{
+  "finding_id": "sample/calc.py:9:1",
+  "keep": true,
+  "anchor": { "side": "RIGHT", "line": 9 },
+  "reason": "Snippet confirmed at RIGHT line 9; missing bounds check on pct is a real correctness issue with concrete failure cases.",
+  "path": "sample/calc.py",
+  "existing_code": "    return price - price * pct / 100",
+  "comment": "No bounds check on `pct`: a negative value silently inflates the returned price (e.g. `discount(100, -10)` returns 110.0), and a value above 100 produces a negative price. Add validation or document the accepted range."
+}
