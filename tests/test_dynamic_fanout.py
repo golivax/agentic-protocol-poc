@@ -1270,3 +1270,21 @@ def test_ocr_nested_walk_reduces_and_merges(engine_env, tmp_path):
     inst = ry(final / "_instance.yaml")
     assert inst["joined"] is True
     assert inst["phase"] == "merge"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — code-review-ocr protocol.json: validates + within max_depth
+# ---------------------------------------------------------------------------
+
+
+def test_ocr_protocol_validates_and_within_depth():
+    """lib.validate_protocol raises ValueError on the first authoring-rule
+    violation and returns None (no list) on success — it is a pure assertion
+    function, not a collector. A clean protocol therefore must simply not
+    raise. lib.check_depth similarly raises ValueError if the static tree
+    exceeds max_depth; code-review-ocr's tree is depth 4 (review > each >
+    findings > each), under the default cap of 5."""
+    lib = _load_lib()
+    proto = json.load(open(ROOT / ".github/agent-factory/protocols/code-review-ocr/protocol.json"))
+    lib.validate_protocol(proto)   # must not raise
+    lib.check_depth(proto)         # must not raise (depth 4 <= max_depth 5)
