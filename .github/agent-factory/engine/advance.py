@@ -12,14 +12,17 @@ Env: AGENT_RUN_ID, GITHUB_REPOSITORY, PUBLISH_TOKEN (reviews+comments),
 import dataclasses
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import typing
 
 # Import shared library from the same directory as this script.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib
+import paths as _paths
 
 
 @dataclasses.dataclass
@@ -207,6 +210,7 @@ def advance_node(ctx, process):
             # multi-phase protocols produce the correct filename (e.g.
             # review.B.clarify.yaml, not the legacy single-phase B.clarify.yaml).
             questions = []
+            questions_known = False  # source evidence carried an EXPLICIT `questions` list
             qfrom = (_paths.node_at_path(proto, parent + [nxt_sub]) or {}).get("questions_from")
             if qfrom:
                 qpath = lib.output_artifact_path(dir_, pid, instance,
@@ -214,9 +218,28 @@ def advance_node(ctx, process):
                                                  kind="evidence")
                 if os.path.isfile(qpath):
                     try:
-                        questions = json.load(open(qpath)).get("questions", []) or []
+                        raw = json.load(open(qpath)).get("questions", None)
                     except (json.JSONDecodeError, ValueError):
-                        questions = []
+                        raw = None
+                    if isinstance(raw, list):
+                        questions, questions_known = raw, True
+            if qfrom and questions_known and not questions:
+                # Auto-complete an empty DATA gate ONLY when the source agent deliberately
+                # surfaced an EXPLICIT empty `questions` list — advance past it as if
+                # resolved (→ gate.next, or leg-terminal → join). A missing / null / garbled
+                # `questions` is an agent malfunction, not a decision to skip a HUMAN gate, so
+                # fall through to open_gate (fail-closed: hold for a human) instead of silently
+                # advancing. (The cursor sub_state was already set to the gate above.)
+                gate_path = parent + [nxt_sub]
+                gsf = lib.state_file(dir_, pid, instance,
+                                     path=lib.state_path(proto, gate_path))
+                lib.dump_yaml(gsf, {"protocol": pid, "instance": instance,
+                                    "state": "done", "head_sha": sha,
+                                    "gates": {"state": "auto-resolved", "history": []}})
+                advance_node(dataclasses.replace(
+                    ctx, substate=nxt_sub, tree_path=gate_path,
+                    cr_name=pid + "/" + "/".join(gate_path[1:])), "done")
+                return
             gate_channel = (_paths.node_at_path(proto, parent + [nxt_sub]) or {}).get("channel", "comment")
             lib.open_gate(dir_, pid, instance, proto_path, nxt_sub, sha, pr,
                           questions=questions,
@@ -246,12 +269,23 @@ def advance_node(ctx, process):
         complete_sequence(ctx, cur)
 
 
-def run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid):
+def run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid,
+                     tree_path=None):
     """Resolve and run the protocol's publish-state executable.
     Returns {conclusion, summary} dict; on any resolution/exec failure,
-    returns a neutral conclusion so the transition still completes."""
+    returns a neutral conclusion so the transition still completes.
 
-    if branch:
+    When tree_path is not None (NODE_PATH mode), resolve the action path-aware:
+    use node_at_path to get the leg's node dict directly (which carries .publish),
+    regardless of which fanout the leg belongs to. This fixes the first-fanout-only
+    resolution bug where the old branch-scan always broke on the first fanout found."""
+
+    if tree_path is not None:
+        # Path-aware resolution: look up the exact leg node and read its .publish.
+        node = _paths.node_at_path(proto, tree_path) or {}
+        action = node.get("publish") or None
+        exec_override = ""
+    elif branch:
         # fan-out branch: get .publish from the branch entry
         action = None
         for state in proto.get("states", []):
@@ -316,10 +350,54 @@ def run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid
     return {"conclusion": "neutral", "summary": "publish hook returned no verdict"}
 
 
-def run_conclude_hook(proto_path, proto, state_id, evid, instance, blocking):
+_TOKEN_PATTERNS = [
+    # GitHub token families: prefix + token body chars.
+    re.compile(r"gh[posu]_[A-Za-z0-9_]+"),
+    re.compile(r"github_pat_[A-Za-z0-9_]+"),
+    # OpenAI / Anthropic API keys — structural, so protection does NOT depend on
+    # the secret being present in THIS job's environment (per the trust-zone
+    # table LLM creds live in the agent job, not advance/checks).
+    re.compile(r"sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
+    # x-access-token:<secret>@ inside clone/remote URLs.
+    re.compile(r"x-access-token:[^@\s/]+@"),
+]
+_SECRET_ENV_VARS = (
+    "PUBLISH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "POC_DISPATCH_TOKEN",
+    "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY",
+)
+
+
+def _redact(text):
+    """Redact secrets from text before it reaches a PUBLIC check-run/comment or
+    the job log. Generic (no protocol coupling): redacts the values of known
+    secret env vars, GitHub token patterns, and the x-access-token:<secret>@
+    form in remote URLs. Replaces each with ***."""
+    if not text:
+        return text
+    out = text
+    # 1) Concrete secret values from the environment (longest first so a token
+    #    that is a substring of another does not leave a tail behind).
+    values = sorted(
+        (v for name in _SECRET_ENV_VARS for v in (os.environ.get(name, ""),) if v),
+        key=len, reverse=True,
+    )
+    for v in values:
+        out = out.replace(v, "***")
+    # 2) Structural patterns (tokens that were not in our env, e.g. from stderr).
+    for pat in _TOKEN_PATTERNS:
+        if pat.pattern.startswith("x-access-token"):
+            out = pat.sub("x-access-token:***@", out)
+        else:
+            out = pat.sub("***", out)
+    return out
+
+
+def run_conclude_hook(proto_path, proto, state_id, evid, instance, blocking,
+                      dir_=None, tree_path=None):
     """Resolve+run the optional `conclude` hook for an agent state. Returns
     {conclusion,summary,blocked} or None if the state declares none. Trusted
-    (zone 4). Receives BLOCKING via env."""
+    (zone 4). Receives BLOCKING via env and, for states with declared inputs,
+    CONCLUDE_INPUTS_DIR with those inputs materialized as <as>.json."""
     state = lib.state_by_id(proto, state_id)
     action = (state or {}).get("conclude") or None
     if not action:
@@ -332,15 +410,63 @@ def run_conclude_hook(proto_path, proto, state_id, evid, instance, blocking):
         return {"conclusion": "neutral", "summary": "conclude hook unresolved", "blocked": False}
     env = dict(os.environ)
     env["BLOCKING"] = "1" if blocking else "0"
-    result = subprocess.run([path, evid, instance], text=True,
-                            stdout=subprocess.PIPE, env=env)
+    # Generic capability (not protocol-specific): expose the state checkout so a
+    # conclude hook can read any node's persisted evidence directly — e.g. read a
+    # deeply-nested leg's gather evidence whose path the input-resolver cannot
+    # reach from a sibling root child. "" when there is no checkout (degraded).
+    env["CONCLUDE_STATE_DIR"] = dir_ or ""
+    workdir = None
+    declared = lib.state_inputs(proto, state_id)
+    if dir_ is not None and declared:
+        fo = lib._fanout_state(proto)
+        phase = fo["id"] if (fo and lib.is_multiphase(proto)) else None
+        consuming_branch = tree_path[-2] if tree_path and len(tree_path) >= 2 else None
+        resolved = lib.resolve_inputs(
+            proto,
+            dir_,
+            lib.protocol_id(proto_path),
+            instance,
+            consuming_branch=consuming_branch,
+            consuming_phase=phase,
+            inputs=declared,
+            consuming_path=tree_path,
+        )
+        workdir = tempfile.mkdtemp(prefix="conclude-inputs-")
+        lib.materialize_inputs(resolved, workdir)
+        env["CONCLUDE_INPUTS_DIR"] = os.path.join(workdir, "inputs")
     try:
-        parsed = json.loads(result.stdout.strip())
-        if isinstance(parsed, dict) and "blocked" in parsed:
+        result = subprocess.run([path, evid, instance], text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env=env)
+        parsed = None
+        try:
+            parsed = json.loads((result.stdout or "").strip())
+        except (json.JSONDecodeError, ValueError):
+            parsed = None
+        # SUCCESS: a well-formed verdict is returned verbatim (preserves the
+        # {"blocked": true} gate semantics used by preflight-gate / on_blocked=halt).
+        if result.returncode == 0 and isinstance(parsed, dict) and "blocked" in parsed:
             return parsed
-    except (json.JSONDecodeError, ValueError):
-        pass
-    return {"conclusion": "neutral", "summary": "conclude hook returned no verdict", "blocked": False}
+        # FAILURE: a crashed hook (non-zero exit) OR malformed stdout must be
+        # SURFACED, not swallowed. Conclusion is "failure" — a red check-run that
+        # does NOT halt a normal pipeline (halt requires blocked=true, which we
+        # never set here; that is a separate gate concern). Scrub secrets from
+        # both the public summary and the job log.
+        hook_name = os.path.basename(path)
+        detail = _redact(result.stderr or "") or _redact(result.stdout or "")
+        tail = detail[-300:] if detail else "(no output)"
+        summary = (f"conclude hook `{hook_name}` failed "
+                   f"(exit {result.returncode}): {tail}")
+        sys.stderr.write(
+            f"[advance] conclude hook {hook_name} failed (exit "
+            f"{result.returncode}); scrubbed stderr:\n{_redact(result.stderr or '')}\n"
+        )
+        return {"conclusion": "failure", "summary": summary, "blocked": False}
+    finally:
+        # Materialized inputs are only needed for the hook subprocess above; remove the
+        # temp dir so repeated conclude calls (triage/fix/mrp) don't leak it per run.
+        if workdir:
+            shutil.rmtree(workdir, ignore_errors=True)
 
 
 def render_status_body(sf, headline, pid, instance, max_iter, github_repository):
@@ -544,8 +670,21 @@ def main():
         # fire the enclosing fanout's path-keyed join — DO NOT write a cursor
         # file at the parent (that would prematurely mark the whole fanout done).
         if _paths.is_fanout(proto, _paths.parent_path(tree_path)):
-            lib.set_check_run(cr_name, sha, "completed", "success",
-                              f"{substate} complete", "")
+            # Run the publish hook if this leg declares one. Use path-aware
+            # resolution (tree_path) so legs in the SECOND (or any later) fanout
+            # resolve correctly. Legs without a "publish" key are unchanged
+            # (conclusion "success", empty summary — no-op, no hook invocation).
+            leg_node = _paths.node_at_path(proto, tree_path) or {}
+            if leg_node.get("publish"):
+                hook = run_publish_hook(proto_path, proto, branch, agent_state,
+                                        evid, instance, pid, tree_path=tree_path)
+                concl = hook.get("conclusion", "neutral")
+                csum = hook.get("summary", "")
+            else:
+                concl = "success"
+                csum = ""
+            lib.set_check_run(cr_name, sha, "completed", concl,
+                              f"{substate} complete", csum)
             update_status_comment(sf, inf, branch, pr, pid, instance, proto_path, dir_,
                                   "✅ done — published.", max_iter, github_repository)
             lib.cas_push(dir_, f"{instance}: {'.'.join(tree_path)} done → leg done")
@@ -566,7 +705,9 @@ def main():
         if (_paths.is_root_child(proto, tree_path)
                 and _paths.node_kind(proto, tree_path) == "agent"):
             _this_state = lib.state_by_id(proto, agent_state)
-            _conclude = run_conclude_hook(proto_path, proto, agent_state, evid, instance, blocking)
+            _conclude = run_conclude_hook(
+                proto_path, proto, agent_state, evid, instance, blocking,
+                dir_=dir_, tree_path=tree_path)
             hook = run_publish_hook(proto_path, proto, branch, agent_state, evid, instance, pid)
             if _conclude is not None:
                 concl = _conclude.get("conclusion", "neutral")
@@ -603,7 +744,13 @@ def main():
                 # `concl` is never "blocked" here: a blocked conclude goes to
                 # the halt arm above; this arm only runs on a clear gate.
                 nxt = _paths.next_sibling(proto, tree_path)
-                lib.set_check_run(cr_name, sha, "completed", "success",
+                # A crashed/failed conclude hook (concl == "failure", from
+                # run_conclude_hook's failure branch) still ADVANCES — halt
+                # requires blocked=true, which it never sets — but must be
+                # surfaced as a RED check-run, not a misleading green "success".
+                # Normal conclusions (neutral/success) keep the "success" badge.
+                _clear_concl = "failure" if concl == "failure" else "success"
+                lib.set_check_run(cr_name, sha, "completed", _clear_concl,
                                   "Gate complete", csum)
                 inst = lib.load_yaml(inf) if os.path.isfile(inf) else {}
                 if nxt:
@@ -617,8 +764,9 @@ def main():
                     lib.cas_push(dir_, f"{instance}: phase {_phase_id} clear → advancing to {nxt}")
                     lib.dispatch_continue(pid, instance, path=nxt)
                 else:
-                    # No further sibling → pipeline complete.
-                    lib.set_check_run(pid, sha, "completed", "success", "Complete", csum)
+                    # No further sibling → pipeline complete (or, if the final
+                    # phase's conclude crashed, surfaced red via _clear_concl).
+                    lib.set_check_run(pid, sha, "completed", _clear_concl, "Complete", csum)
                     update_status_comment(
                         sf, inf, branch, pr, pid, instance, proto_path, dir_,
                         "✅ complete", max_iter, github_repository

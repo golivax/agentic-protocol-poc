@@ -14,7 +14,7 @@ def _proto(name):
 
 
 def _cr():
-    return json.load(open(PROTOCOLS / "code-review/protocol.json"))
+    return json.load(open(PROTOCOLS / "code-review-v1/protocol.json"))
 
 
 # gate-deep (single-phase) is the kept depth-5 sub-pipeline fixture:
@@ -80,7 +80,7 @@ def test_state_path_single_phase_drops_top():
 
 
 def test_state_path_multiphase_keeps_full():
-    # code-review is multi-phase → the full tree path is kept.
+    # code-review-v1 is multi-phase → the full tree path is kept.
     p = _cr()
     assert lib.state_path(p, ["review", "grumpy"]) == ["review", "grumpy"]
 

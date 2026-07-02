@@ -108,6 +108,54 @@ dated record from when it was a stub and are left unchanged.
 `multi-grumpy` (single-phase fanout) were retired into `tests/fixtures/single-agent/`
 and `tests/fixtures/fanout-mini/` on 2026-06-20 as engine regression fixtures.
 
+**Custody-pipeline migration (2026-06-26):** the production `code-review` protocol
+above was superseded by the full **custody-story pipeline** backported from
+`golivax2/yuanrong-datasystem@main`. The original grumpy/security/approval example is
+preserved verbatim as **`code-review-v1`** (start/override triggers renamed to
+`/v1-review`/`/v1-override` so `code-review` keeps `/review`+`/override`; its gate
+commands `/approve`·`/request-changes`·`/reject` are unchanged). The new `code-review`
+is `preflight → overview → review` (5-leg fanout) `→ join → triage → fix → context →
+mrp → done` on Codex agents, with Bun/Node/Z3 toolchains vendored under its `scripts/`
+(outside the engine's Python-only contract — those phase checks degrade to advisory
+when a toolchain is absent). Engine backport was **cherry-picked, not bulk-copied**
+(a bulk copy would delete the engine-only `protocol-lint.py`/`protocol.schema.json`):
+`next.py` iterate-state-preserve, `advance.py` conclude-`inputs[]`, and a now-generic
+`lib._evidence_status_note` (config-driven via a fanout's `params.status_note` — no
+protocol vocabulary in the engine). The advisory `local-review-evidence` preflight
+check fetches its own PR review activity (via the protocol-owned
+`checks/_review_fetch.py`, using the checks job's read-only token + the generic
+`PR`/`GITHUB_REPOSITORY` env) — so no protocol-specific prefetch script lives in the
+engine and the reusable `agentic-engine.yml` carries no preflight-specific block.
+
+**Mental-model phases (2026-06-26, same PR):** the two mental-model agents are wired
+INTO `code-review` as phases (not standalone): `preflight → mm-compliance → overview`
+(a BLOCKING gate — `conclude-mm-compliance` halts on `verdict:diverges` until
+`/override`), and `fix → fanout[context, mm-updater→mm-gate] → join → mrp` (context and
+the MM-updater run in parallel; `mrp` waits the join). The empty-data-gate auto-skip
+(`advance.py`) makes `mm-updater` engage the human gate only when it opened an `[mm]`
+PR — a `mm-questions-present` check forces a question when `mm_changed`, and the
+auto-skip fires only on an EXPLICIT empty list (fail-closed on missing/null/garbled).
+The gate uses the protocol's own `/mm-answer` trigger — protocol-namespaced and
+distinct from every other shipped command; `open_gate` now derives the answer
+prefix from the protocol's `answer` trigger rather than hardcoding `/answer`.
+**Deliberate deviations:** (1) `mm-updater` carries a gh-aw `create-pull-request`
+**write** safe-output on an engine leg — the agent stays read-only (zone 2) and
+gh-aw's trusted post-job performs the write, so it emits intent rather than writing
+directly; the normal zone-4 publish-hook path doesn't reach sub-pipeline leg agents.
+(2) The production `code-review` has **no final human approval gate** — it drives to
+`mrp → done` (the merge-readiness pack is the artifact); `/approve`·`/request-changes`·
+`/reject` live on `code-review-v1`. (3) `context` is an advisory fanout leg, so
+`conclude-context.py` does not run (a fanout leg has no conclude hook); it is retained
+for the v1/standalone shape.
+
+**Two-top-level-fanout join (2026-06-26 fix):** `code-review` is the first shipped
+protocol with two top-level fanouts (`review`, `post-fix`). The top-level join uses an
+instance-wide `_instance.yaml joined` flag; `next.py`'s fanout-entry now resets it when
+a top fanout is entered, so the second fanout's barrier fires (else `mrp` was never
+dispatched — a hard stall). Covered by `tests/fixtures/two-fanout` + a regression test.
+
+**Fix-phase push limitation — fork PRs:** `conclude-fix` pushes the committed fix patch to the PR head branch via `git push origin HEAD:refs/heads/<head>` using `PUBLISH_TOKEN` (wired to `POC_DISPATCH_TOKEN`). For PRs **from a fork** this push targets the base repo and will fail, because the fork's head branch is not writable by the base repo's token. The phase degrades gracefully: it records `push_error` in the apply report and surfaces it in the apply-report PR comment; the conclusion remains neutral and the pipeline is not halted. The fix commit will not land on a fork PR. Known limitation; same-repo PRs are unaffected.
+
 The v1/v2/v3/v4 milestone sections below are a dated record of what was built
 in sequence. Protocol names (`grumpy-review`, `multi-grumpy`) inside those
 clearly-historical sections refer to the protocols as they existed at that

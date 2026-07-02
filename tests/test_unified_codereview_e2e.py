@@ -1,4 +1,4 @@
-"""test_unified_codereview_e2e.py — Task 8: full e2e oracle walk for code-review via NODE_PATH.
+"""test_unified_codereview_e2e.py — Task 8: full e2e oracle walk for code-review-v1 via NODE_PATH.
 
 Walk:
   start
@@ -23,7 +23,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENG = ROOT / ".github/agent-factory/engine"
-PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
+PROTO = ROOT / ".github/agent-factory/protocols/code-review-v1/protocol.json"
 
 NEXT = ENG / "next.py"
 ADVANCE = ENG / "advance.py"
@@ -35,7 +35,7 @@ def _yaml(p):
 
 
 def test_codereview_unified_e2e(engine_env, tmp_path):
-    """Full code-review pipeline driven entirely via NODE_PATH."""
+    """Full code-review-v1 pipeline driven entirely via NODE_PATH."""
     base = dict(engine_env)
     base["PR_HEAD_SHA"] = "sha1"
     base["AGENT_RUN_ID"] = "r"
@@ -57,7 +57,7 @@ def test_codereview_unified_e2e(engine_env, tmp_path):
              engine_env["STATE_REMOTE"], str(d)],
             check=True,
         )
-        return d / "code-review" / "pr-1"
+        return d / "code-review-v1" / "pr-1"
 
     # Passing verdicts
     v = tmp_path / "v.json"

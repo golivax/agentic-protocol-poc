@@ -1,6 +1,6 @@
 """test_cap_approval_gate.py — Task 11: Approval-gate decisions capability.
 
-Drives the code-review pipeline to the open approval gate (via the unified
+Drives the code-review-v1 pipeline to the open approval gate (via the unified
 NODE_PATH walk) and then exercises each of the four decision paths in
 ISOLATION (fresh instance per test case):
 
@@ -24,7 +24,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENG  = ROOT / ".github/agent-factory/engine"
-PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
+PROTO = ROOT / ".github/agent-factory/protocols/code-review-v1/protocol.json"
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def _run(engine_env, *args, **extra_env):
 
 
 def _drive_to_gate(engine_env, tmp_path):
-    """Drive the code-review pipeline to the open approval gate.
+    """Drive the code-review-v1 pipeline to the open approval gate.
 
     Mirrors the helper in test_unified_gate_resolve.py so every test starts
     from a fresh, gate-open instance.  Returns (base_env, run_fn).
@@ -112,12 +112,12 @@ def _drive_to_gate(engine_env, tmp_path):
 
 def _read_approval(engine_env, tmp_path, tag):
     d = _reclone(engine_env, tmp_path, tag)
-    return yaml.safe_load(open(d / "code-review" / "pr-1" / "approval.yaml"))
+    return yaml.safe_load(open(d / "code-review-v1" / "pr-1" / "approval.yaml"))
 
 
 def _read_instance(engine_env, tmp_path, tag):
     d = _reclone(engine_env, tmp_path, tag)
-    return yaml.safe_load(open(d / "code-review" / "pr-1" / "_instance.yaml"))
+    return yaml.safe_load(open(d / "code-review-v1" / "pr-1" / "_instance.yaml"))
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ def test_approve_sets_gate_approved_and_done_label(engine_env, tmp_path):
     assert gate["gates"]["state"] == "approved"
 
     # aggregate check-run marked done
-    assert "check-run code-review" in r.stderr
+    assert "check-run code-review-v1" in r.stderr
     assert "status=completed" in r.stderr
 
     # phase_label stored on _instance.yaml
@@ -211,7 +211,7 @@ def test_reject_terminates_pipeline(engine_env, tmp_path):
     assert gate.get("state") == "failed"
 
     # Aggregate pipeline check-run marked failure
-    assert "check-run code-review" in r.stderr
+    assert "check-run code-review-v1" in r.stderr
     assert "status=completed" in r.stderr
 
     # Phase label must be "failed"
@@ -230,7 +230,7 @@ def test_reject_terminates_pipeline(engine_env, tmp_path):
 def test_self_approve_refused(engine_env, tmp_path):
     """Self-approve is refused when approve_excludes_author==true in the gate.
 
-    code-review/approval has approve_excludes_author=true. When GATE_ACTOR ==
+    code-review-v1/approval has approve_excludes_author=true. When GATE_ACTOR ==
     GATE_PR_AUTHOR the engine must refuse with a halt action; the gate must stay
     open (gates.state still "open").
     """

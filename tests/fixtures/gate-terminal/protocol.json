@@ -1,0 +1,40 @@
+{
+  "name": "gate-terminal",
+  "version": "0.1.0",
+  "max_depth": 4,
+  "triggers": [],
+  "states": [
+    {
+      "id": "f",
+      "kind": "fanout",
+      "branches": [
+        {
+          "id": "a",
+          "workflow": "a-agent",
+          "max_iterations": 2,
+          "checks": [{ "run": "always-pass", "on_fail": "iterate" }]
+        },
+        {
+          "id": "b",
+          "states": [
+            {
+              "id": "draft",
+              "kind": "agent",
+              "workflow": "draft-agent",
+              "max_iterations": 2,
+              "checks": [{ "run": "always-pass", "on_fail": "iterate" }]
+            },
+            {
+              "id": "gate",
+              "kind": "gate",
+              "questions_from": "draft",
+              "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }]
+            }
+          ]
+        }
+      ],
+      "next": "join-f"
+    },
+    { "id": "join-f", "kind": "join", "of": "f", "next": "done" }
+  ]
+}

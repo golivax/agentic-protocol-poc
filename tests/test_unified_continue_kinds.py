@@ -10,7 +10,7 @@ def _rc(engine_env, tmp_path, pid, tag):
     return d/pid/"pr-1"
 
 def test_continue_at_approval_gate_opens_it(engine_env, tmp_path):
-    proto = ROOT/".github/agent-factory/protocols/code-review/protocol.json"
+    proto = ROOT/".github/agent-factory/protocols/code-review-v1/protocol.json"
     base=dict(engine_env); base["PR_HEAD_SHA"]="s1"
     # seed an _instance with phase=approval (simulate post-join cursor)
     subprocess.run(["python3",str(ENG/"next.py"),str(tmp_path/"s"),"pr-1",str(proto),
@@ -20,5 +20,5 @@ def test_continue_at_approval_gate_opens_it(engine_env, tmp_path):
                       "continue"],text=True,capture_output=True,env=e)
     assert r.returncode==0, r.stderr
     assert json.loads(r.stdout)["reason"].startswith("gate-open")
-    g=_yaml(_rc(engine_env,tmp_path,"code-review","g")/"approval.yaml")
+    g=_yaml(_rc(engine_env,tmp_path,"code-review-v1","g")/"approval.yaml")
     assert g.get("gates",{}).get("state")=="open"

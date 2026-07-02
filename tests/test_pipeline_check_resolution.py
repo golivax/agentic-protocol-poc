@@ -1,4 +1,4 @@
-"""Regression guard: the code-review protocol's preflight and review-branch checks
+"""Regression guard: the code-review-v1 protocol's preflight and review-branch checks
 must resolve to distinct validators.  If both phases again reference the same file
 this test will catch it early.
 """
@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CHECKS = ROOT / ".github/agent-factory/protocols/code-review/checks"
+CHECKS = ROOT / ".github/agent-factory/protocols/code-review-v1/checks"
 
 
 def _run(check_name, evidence_obj, tmp_path, check_params=None):

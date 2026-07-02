@@ -1,6 +1,6 @@
 """Unified gate-resolve: approve finalizes via path-continue (not seed_and_dispatch_phase).
 After Task 7, do_resolve_gate's approve arm sets _instance.yaml.phase=nxt and dispatches
-protocol-continue(path=nxt) instead of calling seed_and_dispatch_phase. For code-review's
+protocol-continue(path=nxt) instead of calling seed_and_dispatch_phase. For code-review-v1's
 approval gate (the LAST phase), nxt is None so it finalizes directly (no continue)."""
 import json
 import pathlib
@@ -9,7 +9,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENG = ROOT / ".github/agent-factory/engine"
-PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
+PROTO = ROOT / ".github/agent-factory/protocols/code-review-v1/protocol.json"
 LIB_PY = ENG / "lib.py"
 import os, sys
 sys.path.insert(0, str(ENG))
@@ -25,7 +25,7 @@ def _env(state_origin, **extra):
 
 
 def _drive_to_gate(engine_env, tmp_path):
-    """Drive the code-review pipeline to the open approval gate."""
+    """Drive the code-review-v1 pipeline to the open approval gate."""
     base = dict(engine_env)
     base["PR_HEAD_SHA"] = "s1"
     base["AGENT_RUN_ID"] = "r"
@@ -79,10 +79,10 @@ def test_approve_finalizes_pipeline(engine_env, tmp_path):
     d = tmp_path / "rcz"
     subprocess.run(["git", "clone", "-q", "-b", "agentic-state",
                     engine_env["STATE_REMOTE"], str(d)], check=True)
-    gate = yaml.safe_load(open(d / "code-review" / "pr-1" / "approval.yaml"))
+    gate = yaml.safe_load(open(d / "code-review-v1" / "pr-1" / "approval.yaml"))
     assert gate["gates"]["state"] == "approved"
     # aggregate check-run completed → done
-    assert "check-run code-review" in r.stderr and "status=completed" in r.stderr
+    assert "check-run code-review-v1" in r.stderr and "status=completed" in r.stderr
     # no protocol-continue dispatched (last phase)
     assert "event_type=protocol-continue" not in r.stderr
 
@@ -152,7 +152,7 @@ def test_approve_non_last_gate_dispatches_continue(engine_env, tmp_path):
 
 def test_override_non_last_gate_dispatches_continue(engine_env, tmp_path):
     """Override a blocked gate → protocol-continue path=<next> (not run-fanout).
-    Uses the real code-review protocol: preflight(blocked) → override → review."""
+    Uses the real code-review-v1 protocol: preflight(blocked) → override → review."""
     import sys as _sys
     _sys.path.insert(0, str(ENG))
     import lib as _lib
@@ -163,15 +163,15 @@ def test_override_non_last_gate_dispatches_continue(engine_env, tmp_path):
     # Seed blocked preflight state
     subprocess.run(["python3", str(LIB_PY), "state-checkout", str(tmp_path / "seed")],
                    env=e, check=True, capture_output=True)
-    base = tmp_path / "seed" / "code-review" / "pr-50"
+    base = tmp_path / "seed" / "code-review-v1" / "pr-50"
     base.mkdir(parents=True)
     (base / "_instance.yaml").write_text(yaml.safe_dump({
-        "protocol": "code-review", "instance": "pr-50",
+        "protocol": "code-review-v1", "instance": "pr-50",
         "phase": "preflight", "head_sha": "ovsh", "joined": False,
         "halted": {"phase": "preflight", "reason": "blocked", "sha": "ovsh"},
     }))
     (base / "preflight.yaml").write_text(yaml.safe_dump({
-        "protocol": "code-review", "instance": "pr-50",
+        "protocol": "code-review-v1", "instance": "pr-50",
         "state": "failed", "iteration": 1, "gates": {}, "head_sha": "ovsh", "history": [],
     }))
     subprocess.run(["python3", str(LIB_PY), "cas-push", str(tmp_path / "seed"), "seed blocked"],
@@ -193,9 +193,9 @@ def test_override_non_last_gate_dispatches_continue(engine_env, tmp_path):
     d = tmp_path / "verify3"
     subprocess.run(["git", "clone", "-q", "-b", "agentic-state",
                     engine_env["STATE_REMOTE"], str(d)], check=True)
-    inst = yaml.safe_load(open(d / "code-review" / "pr-50" / "_instance.yaml"))
+    inst = yaml.safe_load(open(d / "code-review-v1" / "pr-50" / "_instance.yaml"))
     assert inst["phase"] == "review", f"phase mismatch: {inst}"
     assert "halted" not in inst
     assert inst.get("overrides") == [{"phase": "preflight", "actor": "alice", "reason": "ship it"}]
     # review fan-out legs NOT seeded yet (seeding is deferred to the continue dispatch)
-    assert not (d / "code-review" / "pr-50" / "review.grumpy.yaml").exists()
+    assert not (d / "code-review-v1" / "pr-50" / "review.grumpy.yaml").exists()

@@ -12,7 +12,7 @@ ENGINE = ROOT / ".github/agent-factory/engine"
 NEXT_PY = ENGINE / "next.py"
 ADVANCE_PY = ENGINE / "advance.py"
 LIB_PY = ENGINE / "lib.py"
-PIPELINE_PROTO = ROOT / ".github/agent-factory/protocols/code-review/protocol.json"
+PIPELINE_PROTO = ROOT / ".github/agent-factory/protocols/code-review-v1/protocol.json"
 PID = json.load(open(PIPELINE_PROTO))["name"]
 REVIEW_BRANCHES = [
     b["id"]
@@ -245,7 +245,7 @@ def test_override_reason_is_inert_data(state_origin, tmp_path):
 def test_override_trigger_maps_to_command():
     out = subprocess.run(
         ["python3", str(LIB_PY), "match-trigger", str(PIPELINE_PROTO),
-         "issue_comment", "", "/override please"],
+         "issue_comment", "", "/v1-override please"],
         text=True, capture_output=True,
     ).stdout.strip()
     assert out == "override"
@@ -254,7 +254,7 @@ def test_override_trigger_maps_to_command():
 def test_override_routes_unambiguously():
     protocols_dir = str(ROOT / ".github/agent-factory/protocols")
     r = subprocess.run(
-        ["python3", str(LIB_PY), "route", protocols_dir, "issue_comment", "", "/override", "", "true"],
+        ["python3", str(LIB_PY), "route", protocols_dir, "issue_comment", "", "/v1-override", "", "true"],
         text=True, capture_output=True,
     )
     assert r.returncode == 0, r.stderr  # no ambiguity raised
@@ -265,7 +265,7 @@ def test_override_routes_unambiguously():
 def test_review_still_routes_after_adding_override():
     protocols_dir = str(ROOT / ".github/agent-factory/protocols")
     r = subprocess.run(
-        ["python3", str(LIB_PY), "route", protocols_dir, "issue_comment", "", "/review", "", "true"],
+        ["python3", str(LIB_PY), "route", protocols_dir, "issue_comment", "", "/v1-review", "", "true"],
         text=True, capture_output=True,
     )
     assert r.returncode == 0, r.stderr

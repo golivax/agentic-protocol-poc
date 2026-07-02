@@ -113,12 +113,23 @@ def enter_node(proto, path, command, emit=True):
                            "sub_state": first, "iteration": 1, "gates": {}, "history": []})
         return enter_node(proto, path + [first], command, emit=emit)
     if kind == "fanout":
-        # Top fanout (len 1) keeps the legacy _instance.yaml `joined` mechanism the
-        # callers own. Only NESTED fanouts (len > 1) get a path-keyed __join.yaml
-        # marker (a top fanout marker would be a new file under the instance dir →
-        # breaks byte-identity). The file path routes through state_path.
+        # Reset the join barrier on ENTERING this fanout so its own join can fire.
+        # NESTED fanouts (len > 1) use a path-keyed __join.yaml marker. A TOP-level
+        # fanout (len 1) uses the instance-wide _instance.yaml `joined` flag — which a
+        # PRIOR top-level fanout (e.g. `review` before `post-fix`) leaves latched True;
+        # without this reset join.py would no-op the second fanout's barrier and the
+        # pipeline would stall (the next phase, e.g. mrp, never dispatched). Idempotent
+        # for the first fanout (joined already absent/False). The change is staged with
+        # the seeded legs and CAS-pushed by the fanout-entry caller.
         if len(path) > 1:
             lib.write_join(DIR, PID, INSTANCE, lib.state_path(proto, path), {"joined": False})
+        else:
+            inf = lib.instance_file(DIR, PID, INSTANCE)
+            if os.path.isfile(inf):
+                _inst = lib.load_yaml(inf)
+                if _inst.get("joined"):
+                    _inst["joined"] = False
+                    lib.dump_yaml(inf, _inst)
         if node.get("expand"):
             # --- DYNAMIC fanout: materialize legs from the expander manifest. ---
             each = node.get("each", {})

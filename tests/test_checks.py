@@ -99,10 +99,12 @@ from conftest import FIXTURES, PROTOCOLS, run_check
 # Paths
 # ---------------------------------------------------------------------------
 
-GRUMPY_CHECKS = PROTOCOLS / "code-review/checks"
+GRUMPY_CHECKS = PROTOCOLS / "code-review-v1/checks"
 SCHEMA_VALID = GRUMPY_CHECKS / "schema-valid.py"
 RUBRIC_COVERAGE = GRUMPY_CHECKS / "rubric-coverage.py"
 TRACES = GRUMPY_CHECKS / "traces-exist-in-diff.py"
+
+FIX_SCHEMA_VALID = PROTOCOLS / "code-review/checks/fix-schema-valid.py"
 
 # Default grumpy rubric (matches the bash export at the top of test-checks.sh)
 DEFAULT_PARAMS = {"categories": ["naming", "error-handling", "performance", "duplication", "security"]}
@@ -576,3 +578,42 @@ def test_traces_deleted_file_examined(tmp_path):
     ]}]}))
     r = chk(TRACES, ev, diff=DIFF_PR3, files=FILES_PR3)
     assert r["pass"] is True
+
+
+# ===========================================================================
+# fix-schema-valid.py — optional original_line guard
+# ===========================================================================
+
+def _minimal_fix_ev(**extra):
+    """Build a minimal valid fix evidence, merging extra keys into the first fix."""
+    fix = {"cluster_id": "c1", "path": "a.py", "line": 1,
+           "rationale": "r", "suggested_patch": "x = 1"}
+    fix.update(extra)
+    return {"mode": "suggest", "fixes": [fix]}
+
+
+def _run_fix_schema_valid(tmp_path, evidence_dict):
+    """Write evidence to a temp file and run fix-schema-valid.py against it."""
+    ev = tmp_path / "fix-ev.json"
+    ev.write_text(json.dumps(evidence_dict))
+    # fix-schema-valid is a check; pass dummy diff/files (it ignores them)
+    dummy = tmp_path / "dummy.txt"
+    dummy.write_text("")
+    return run_check(FIX_SCHEMA_VALID, ev, dummy, dummy, check_params=None)
+
+
+# 40
+def test_fix_schema_valid_optional_original_line(tmp_path):
+    """original_line is optional: absent → pass; non-empty string → pass; empty string → fail."""
+    # absent original_line: must pass
+    r = _run_fix_schema_valid(tmp_path, _minimal_fix_ev())
+    assert r["pass"] is True, f"absent original_line should pass, got: {r['feedback']}"
+
+    # non-empty string original_line: must pass
+    r = _run_fix_schema_valid(tmp_path, _minimal_fix_ev(original_line="x = 0"))
+    assert r["pass"] is True, f"non-empty original_line should pass, got: {r['feedback']}"
+
+    # empty string original_line: must fail with specific message
+    r = _run_fix_schema_valid(tmp_path, _minimal_fix_ev(original_line=""))
+    assert r["pass"] is False
+    assert "original_line must be a non-empty string when present" in r["feedback"]

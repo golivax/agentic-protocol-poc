@@ -79,14 +79,14 @@ from conftest import FIXTURES, PROTOCOLS, ENGINE as ENGINE_CONST, run_engine
 # ---------------------------------------------------------------------------
 
 # The single-agent / fanout-mini fixtures were deleted with the legacy engine; the
-# code-review protocol carries the identical schema-valid / rubric-coverage /
+# code-review-v1 protocol carries the identical schema-valid / rubric-coverage /
 # traces-exist-in-diff checks under its `review` fanout (grumpy: all three;
 # security: schema-valid + traces). run-checks.py resolves the `review` fanout's
 # grumpy branch checks, so the resolution tests pass branch="grumpy".
-GRUMPY_PROTO = PROTOCOLS / "code-review/protocol.json"
-MULTI_GRUMPY_PROTO = PROTOCOLS / "code-review/protocol.json"
-GRUMPY_CHECKS_DIR = PROTOCOLS / "code-review/checks"
-GRUMPY_PDIR = PROTOCOLS / "code-review"
+GRUMPY_PROTO = PROTOCOLS / "code-review-v1/protocol.json"
+MULTI_GRUMPY_PROTO = PROTOCOLS / "code-review-v1/protocol.json"
+GRUMPY_CHECKS_DIR = PROTOCOLS / "code-review-v1/checks"
+GRUMPY_PDIR = PROTOCOLS / "code-review-v1"
 
 EV_COMPLETE = FIXTURES / "evidence-complete.json"
 EV_LAZY = FIXTURES / "evidence-lazy.json"
@@ -157,7 +157,7 @@ def test_runner_lazy_schema_valid_passes():
 
 @pytest.fixture
 def temp_proto_in_grumpy(tmp_path):
-    """Write a temp protocol.json inside the code-review protocol dir (so the
+    """Write a temp protocol.json inside the code-review-v1 protocol dir (so the
     resolver finds checks/ relative to it); clean up after. The returned object
     is a (path, write) pair — `write(checks)` writes a minimal single-`review`-
     agent protocol carrying the given check entries."""
@@ -570,3 +570,31 @@ def test_node_path_unresolvable_errors_not_silent_empty():
     assert not (out and out.get("results") == []), \
         "unresolvable NODE_PATH silently produced empty verdicts"
     assert "does not resolve" in stderr
+
+
+# ===========================================================================
+# Task 2: importable surface test
+# Verifies that plan-spec-coverage, _trace, and _coherence expose their
+# callable interfaces so judge-coverage can re-use them.
+# ===========================================================================
+
+CHECKS = PROTOCOLS / "code-review/checks"
+
+
+def test_evaluate_is_importable_and_pure():
+    import importlib.util
+
+    def load(stem):
+        spec = importlib.util.spec_from_file_location(
+            stem.replace("-", "_"), CHECKS / f"{stem}.py"
+        )
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    ps = load("plan-spec-coverage")
+    assert callable(ps.evaluate)
+    tr = load("_trace")
+    assert callable(tr.findings_anchor_errors)
+    coh = load("_coherence")
+    assert coh.finding_refs({"items": [{"path": "docs/a.md", "status": "missing"}]}) == ["docs/a.md"]
