@@ -1,15 +1,17 @@
 """Unit coverage for the mrp assembler's smm_compliance surfacing: the real
-mm-compliance leg evidence is normalized into the custody pack shape, and the DEMO
-placeholder is used only as a fallback when the leg is absent."""
+mm-compliance leg evidence is normalized into the pack shape (null when the leg is
+absent), and to-evidence surfaces smm_compliance into the engine evidence too."""
 import importlib.util
+import json
 
 from conftest import PROTOCOLS
 
 ASSEMBLE = PROTOCOLS / "code-review/scripts/mrp/assemble-mrp.py"
+TO_EVIDENCE = PROTOCOLS / "code-review/scripts/mrp/to-evidence.py"
 
 
-def _load():
-    spec = importlib.util.spec_from_file_location("assemble_mrp", ASSEMBLE)
+def _load(path=ASSEMBLE, name="assemble_mrp"):
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -63,3 +65,24 @@ def test_assemble_smm_compliance_null_when_leg_absent():
     mod = _load()
     pack = mod.assemble({"pr": 7, "inputs": {}}, agent={}, pr={})
     assert pack["smm_compliance"] is None
+
+
+def test_to_evidence_surfaces_smm_compliance(tmp_path):
+    asm = _load()
+    ev = _load(TO_EVIDENCE, "to_evidence")
+    pack = asm.assemble({"pr": 7, "inputs": {"mm-compliance": MM_EVIDENCE}}, agent={}, pr={})
+    p = tmp_path / "mrp.json"
+    p.write_text(json.dumps(pack))
+    evidence = ev.evidence_from_pack(str(p))
+    assert evidence["smm_compliance"]["verdict"] == "diverges"
+    assert evidence["smm_compliance"]["divergences"][0]["mm_doc"] == "ADR-001 master/worker split"
+
+
+def test_to_evidence_smm_compliance_null_when_leg_absent(tmp_path):
+    asm = _load()
+    ev = _load(TO_EVIDENCE, "to_evidence")
+    pack = asm.assemble({"pr": 7, "inputs": {}}, agent={}, pr={})
+    p = tmp_path / "mrp.json"
+    p.write_text(json.dumps(pack))
+    evidence = ev.evidence_from_pack(str(p))
+    assert evidence["smm_compliance"] is None
