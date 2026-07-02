@@ -1,0 +1,9 @@
+{
+  "finding_id": "sample/calc.py:5:1",
+  "keep": true,
+  "anchor": { "side": "RIGHT", "line": 5 },
+  "reason": "The snippet is confirmed at RIGHT line 5 in the diff; passing an empty list to `average` causes a ZeroDivisionError at runtime, which is a genuine bug worth flagging.",
+  "path": "sample/calc.py",
+  "existing_code": "    return total / len(nums)",
+  "comment": "ZeroDivisionError when `nums` is an empty list: `len(nums)` returns 0 and the division raises at runtime. The function should guard against an empty input (e.g., `if not nums: return 0.0` or raise a ValueError with a descriptive message)."
+}
