@@ -1,0 +1,9 @@
+{
+  "finding_id": "sample/calc.py:5:1",
+  "keep": true,
+  "anchor": { "side": "RIGHT", "line": 5 },
+  "reason": "Confirmed division-by-zero bug: `    return total / len(nums)` is present at RIGHT line 5 and will raise ZeroDivisionError when nums is empty.",
+  "path": "sample/calc.py",
+  "existing_code": "    return total / len(nums)",
+  "comment": "Division by zero when `nums` is empty: `len(nums)` is used as divisor with no guard. `average([])` raises `ZeroDivisionError`. Add an early return or raise a descriptive error for the empty-list case."
+}
