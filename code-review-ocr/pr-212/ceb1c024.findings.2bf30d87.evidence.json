@@ -1,0 +1,9 @@
+{
+  "finding_id": "sample/calc.py:9:1",
+  "keep": true,
+  "anchor": { "side": "RIGHT", "line": 9 },
+  "reason": "The snippet is confirmed at RIGHT line 9 in the diff; missing bounds validation on `pct` is a real correctness issue — negative values silently inflate the price and values above 100 produce a negative result.",
+  "path": "sample/calc.py",
+  "existing_code": "    return price - price * pct / 100",
+  "comment": "No bounds validation on `pct`: a negative value silently inflates the price (price + |discount|) and a value above 100 produces a negative result. Add a guard such as `if not 0 <= pct <= 100: raise ValueError(f'pct must be 0–100, got {pct}')` before the calculation."
+}
