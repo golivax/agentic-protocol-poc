@@ -1359,6 +1359,106 @@ def test_filter_verdict_valid(ev, ok, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Task 5b — fix the code-review-ocr checks that were mis-copied from
+# code-review (a RUBRIC files->verdicts->category shape) so they actually
+# validate OCR's FLAT evidence shapes: a new dependency-free
+# evidence-schema-valid.py (driven by CHECK_PARAMS.schema) replaces the
+# rubric-only schema-valid.py, and traces-exist-in-diff.py is adapted to read
+# OCR's flat files->findings shape directly (it used to iterate `verdicts`
+# only, so on OCR evidence it always found zero and vacuously passed —
+# proven below by a genuinely-mismatched anchor now failing).
+# ---------------------------------------------------------------------------
+
+ESVCHECK = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/checks/evidence-schema-valid.py")
+OCR_TRACES = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/checks/traces-exist-in-diff.py")
+
+_PLAN_SCHEMA_PARAMS = {"schema": "plan.evidence.schema.json"}
+_MAIN_REVIEW_SCHEMA_PARAMS = {"schema": "main-review.evidence.schema.json"}
+_FILTER_SCHEMA_PARAMS = {"schema": "filter.evidence.schema.json"}
+
+_VALID_PLAN_EV = {"examined": ["src/foo.py"], "plan_items": ["check auth"]}
+_VALID_MAIN_REVIEW_EV = {"files": [{"path": "src/foo.py", "findings": [
+    {"finding_id": "f1", "existing_code": "x = 1", "side": "RIGHT", "line": 2, "comment": "looks off"}]}]}
+_VALID_FILTER_EV = {"finding_id": "f1", "keep": True}
+
+
+@pytest.mark.parametrize("ev,params,ok", [
+    (_VALID_PLAN_EV, _PLAN_SCHEMA_PARAMS, True),
+    ({"plan_items": ["x"]}, _PLAN_SCHEMA_PARAMS, False),              # missing required `examined`
+    (_VALID_MAIN_REVIEW_EV, _MAIN_REVIEW_SCHEMA_PARAMS, True),
+    ({"files": [{"path": "a.py"}]}, _MAIN_REVIEW_SCHEMA_PARAMS, False),  # file entry missing `findings`
+    (_VALID_FILTER_EV, _FILTER_SCHEMA_PARAMS, True),
+    ({"keep": True}, _FILTER_SCHEMA_PARAMS, False),                   # missing required `finding_id`
+])
+def test_evidence_schema_valid_validates_ocr_flat_shapes(ev, params, ok, tmp_path):
+    p = tmp_path / "e.json"; P = tmp_path / "d.txt"; C = tmp_path / "c.txt"
+    P.write_text(""); C.write_text("")
+    json.dump(ev, open(p, "w"))
+    r = run_check(ESVCHECK, p, P, C, check_params=params)
+    assert r["check"] == "evidence-schema-valid"
+    assert r["pass"] is ok
+
+
+@pytest.mark.parametrize("garbage", [[], None, "x", 42])
+def test_evidence_schema_valid_exits_0_on_garbage(garbage, tmp_path):
+    p = tmp_path / "e.json"; P = tmp_path / "d.txt"; C = tmp_path / "c.txt"
+    P.write_text(""); C.write_text("")
+    json.dump(garbage, open(p, "w"))
+    r = run_check(ESVCHECK, p, P, C, check_params=_MAIN_REVIEW_SCHEMA_PARAMS)
+    assert r["check"] == "evidence-schema-valid"
+    assert r["pass"] is False
+
+
+def test_evidence_schema_valid_no_schema_param_fails_not_crashes(tmp_path):
+    """No params.schema in CHECK_PARAMS -> a failing verdict (exit 0), not a crash."""
+    p = tmp_path / "e.json"; P = tmp_path / "d.txt"; C = tmp_path / "c.txt"
+    P.write_text(""); C.write_text("")
+    json.dump(_VALID_MAIN_REVIEW_EV, open(p, "w"))
+    r = run_check(ESVCHECK, p, P, C, check_params={})
+    assert r["check"] == "evidence-schema-valid"
+    assert r["pass"] is False
+
+
+_OCR_DIFF = """diff --git a/src/foo.py b/src/foo.py
+index abc..def 100644
+--- a/src/foo.py
++++ b/src/foo.py
+@@ -1,2 +1,3 @@
+ def foo():
++    x = 1
+     return x
+"""
+
+
+def test_traces_exist_in_diff_ocr_flat_pass_and_fail(tmp_path):
+    """GENUINE proof this now validates OCR's flat files->findings shape (the
+    pre-fix copy iterated `entry["verdicts"]`, found none on OCR evidence, and
+    vacuously passed every time — it never actually checked an anchor). Here a
+    finding whose existing_code/side/line MATCH the diff passes, and a finding
+    whose anchor does NOT match fails — proving real validation now happens."""
+    diff = tmp_path / "d.txt"; diff.write_text(_OCR_DIFF)
+    files = tmp_path / "c.txt"; files.write_text("src/foo.py\n")
+
+    good_ev = tmp_path / "good.json"
+    json.dump({"files": [{"path": "src/foo.py", "findings": [
+        {"finding_id": "f1", "existing_code": "x = 1", "side": "RIGHT", "line": 2, "comment": "c"}]}]},
+        open(good_ev, "w"))
+    r_good = run_check(OCR_TRACES, good_ev, diff, files)
+    assert r_good["check"] == "traces-exist-in-diff"
+    assert r_good["pass"] is True, r_good["feedback"]
+
+    bad_ev = tmp_path / "bad.json"
+    json.dump({"files": [{"path": "src/foo.py", "findings": [
+        {"finding_id": "f1", "existing_code": "this is not on that line", "side": "RIGHT", "line": 2,
+         "comment": "c"}]}]},
+        open(bad_ev, "w"))
+    r_bad = run_check(OCR_TRACES, bad_ev, diff, files)
+    assert r_bad["check"] == "traces-exist-in-diff"
+    assert r_bad["pass"] is False
+    assert "does not match" in r_bad["feedback"]
+
+
+# ---------------------------------------------------------------------------
 # Task 6 — code-review-ocr publish: per-file `reduce-file` + top `post-review`
 # (reuses code-review/publish/_review.py verbatim) + a full offline OCR walk
 # against the REAL code-review-ocr/protocol.json (not a test fixture).

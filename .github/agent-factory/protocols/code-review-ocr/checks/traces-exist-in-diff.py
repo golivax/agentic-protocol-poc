@@ -10,6 +10,14 @@ must now name the exact line(s) it critiques (RIGHT = new-file line numbers,
 LEFT = old-file line numbers), and we verify the snippet sits there. Anchors that
 pass here are valid GitHub review positions, so the publish hook can post them in
 a single review without the all-or-nothing reviews API 422-ing.
+
+code-review-ocr adaptation: OCR's main-review evidence is FLAT —
+`files:[{path, findings:[...]}]` (no `verdicts`/`category` nesting; see
+main-review.evidence.schema.json). This copy iterates `entry["findings"]`
+DIRECTLY when present, falling back to the nested `verdicts -> findings` shape
+otherwise (so it still works if ever fed the code-review rubric shape). Only
+the iteration to REACH the findings differs from the code-review original —
+the per-finding anchor validation below (verify_finding) is unchanged.
 """
 import json
 import re
@@ -149,6 +157,20 @@ def main():
         blob = "\n".join(
             c for (c, _h) in list(fmap["RIGHT"].values()) + list(fmap["LEFT"].values())
         )
+        if isinstance(entry.get("findings"), list):
+            # OCR flat shape: files -> findings directly (no verdicts/category
+            # nesting). Reach the findings straight from the file entry.
+            cat = None
+            for f in entry["findings"]:
+                err = verify_finding(f, fmap, path, cat)
+                if err:
+                    bad.append(err)
+            for ident in (entry.get("examined") or []):
+                if ident not in blob:
+                    bad.append(
+                        f"examined identifier not in {path}'s diff: {ident!r}"
+                    )
+            continue
         for verdict in (entry.get("verdicts") or []):
             if not isinstance(verdict, dict):
                 continue
