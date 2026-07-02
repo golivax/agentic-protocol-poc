@@ -1,9 +1,0 @@
-{
-  "finding_id": "sample/parse.py:4:1",
-  "keep": true,
-  "anchor": { "side": "RIGHT", "line": 4 },
-  "reason": "Mutable default argument `defaults={}` is confirmed at RIGHT line 4 in the diff; this is a real, well-known Python anti-pattern that warrants a reviewer comment.",
-  "path": "sample/parse.py",
-  "existing_code": "def load_config(path, defaults={}):",
-  "comment": "Mutable default argument: `defaults={}` is a classic Python anti-pattern. The `{}` dict is created once at function-definition time and shared across every call that omits the argument. While this implementation only reads from `defaults` (it writes to `data`, not `defaults`), the pattern is dangerous: any future edit that mutates `defaults` will cause silent state leakage between calls and very hard-to-diagnose bugs. Use `None` as the sentinel: `def load_config(path, defaults=None): if defaults is None: defaults = {}`."
-}
