@@ -1,0 +1,9 @@
+{
+  "finding_id": "sample/calc.py:9:1",
+  "keep": true,
+  "anchor": { "side": "RIGHT", "line": 9 },
+  "reason": "The existing_code snippet is confirmed at RIGHT line 9 in the diff, and the missing bounds check on pct is a real correctness issue in a pricing function where pct > 100 yields a negative price and negative pct silently inflates the price.",
+  "path": "sample/calc.py",
+  "existing_code": "    return price - price * pct / 100",
+  "comment": "No bounds check on `pct`: values greater than 100 yield a negative return value (price refund), and negative `pct` values silently increase the price. Callers have no indication that invalid percentages are rejected; the function should validate `0 <= pct <= 100` and raise ValueError for out-of-range inputs."
+}
