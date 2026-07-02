@@ -1,0 +1,10 @@
+{
+  "examined": ["sample/calc.py"],
+  "plan_items": [
+    "average(nums): divides by len(nums) with no guard for empty input — ZeroDivisionError risk",
+    "average(nums): no type validation; non-numeric elements in the list will cause a silent sum or TypeError",
+    "discount(price, pct): pct is unconstrained — negative values or values > 100 are accepted without error",
+    "discount(price, pct): no check that price is non-negative; negative price input produces a silently wrong result",
+    "Both functions are newly added (file did not exist before); review the full function bodies, not just changed lines"
+  ]
+}
