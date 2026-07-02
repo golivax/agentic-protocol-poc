@@ -1,7 +1,13 @@
 protocol: code-review-ocr
 instance: pr-212
-state: review
+state: done
 iteration: 1
 gates: {}
 head_sha: a4dd617c7e5b2657080fd25aa7cb7fe00d8e382c
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28610498421'
+  checks:
+    evidence-schema-valid: pass
+    traces-exist-in-diff: pass
+  feedback: ''
