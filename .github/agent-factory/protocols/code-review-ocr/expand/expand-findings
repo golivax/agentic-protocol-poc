@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""OCR per-finding expander. Reads the per-file main-review evidence and emits one
+item per candidate finding: {finding_id, path, existing_code, side, line[,start_line],
+comment}. id_from: $.finding_id. Fails loud on malformed evidence.
+
+Live: the engine surfaces the sibling main-review evidence path via the fanout's
+input wiring; here we read EXPAND_FINDINGS_EVIDENCE (test/ENGINE_LOCAL fixture) or
+the conventional per-leg main-review evidence file (live — resolved by the plan job,
+passed in env). See docs/superpowers/sdd/task-4-report.md for the live-wiring design
+this task deliberately scoped OUT (a Task 8 concern)."""
+import json, os, sys
+
+def _load():
+    p = os.environ.get("EXPAND_FINDINGS_EVIDENCE")
+    if not p or not os.path.isfile(p):
+        raise SystemExit(f"expand-findings: no main-review evidence at {p!r}")
+    with open(p) as f:
+        return json.load(f)
+
+def main():
+    ev = _load()
+    items = []
+    for fobj in ev.get("files", []):
+        path = fobj.get("path", "")
+        for fi in fobj.get("findings", []):
+            it = {"finding_id": fi["finding_id"], "path": path,
+                  "existing_code": fi.get("existing_code", ""), "side": fi.get("side", "RIGHT"),
+                  "line": fi.get("line"), "comment": fi.get("comment", "")}
+            if "start_line" in fi:
+                it["start_line"] = fi["start_line"]
+            items.append(it)
+    print(json.dumps({"items": items}))
+
+if __name__ == "__main__":
+    main()

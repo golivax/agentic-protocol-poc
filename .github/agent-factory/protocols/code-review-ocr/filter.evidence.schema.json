@@ -1,0 +1,7 @@
+{ "$schema": "http://json-schema.org/draft-07/schema#", "type": "object",
+  "required": ["finding_id", "keep"],
+  "properties": {
+    "finding_id": {"type": "string"}, "keep": {"type": "boolean"},
+    "anchor": { "type": "object", "properties": {
+      "side": {"enum": ["LEFT","RIGHT"]}, "line": {"type": "integer"}, "start_line": {"type": "integer"} } },
+    "reason": {"type": "string"} } }

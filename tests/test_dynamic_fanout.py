@@ -1288,3 +1288,46 @@ def test_ocr_protocol_validates_and_within_depth():
     proto = json.load(open(ROOT / ".github/agent-factory/protocols/code-review-ocr/protocol.json"))
     lib.validate_protocol(proto)   # must not raise
     lib.check_depth(proto)         # must not raise (depth 4 <= max_depth 5)
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — code-review-ocr evidence schemas + expand-findings expander
+# ---------------------------------------------------------------------------
+
+EXPF = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/expand/expand-findings")
+
+
+def test_expand_findings_one_item_per_finding(tmp_path):
+    ev = tmp_path / "main.json"
+    json.dump({"files": [{"path": "a.py", "findings": [
+        {"finding_id": "a.py:1", "existing_code": "x=1", "side": "RIGHT", "line": 1, "comment": "c1"},
+        {"finding_id": "a.py:2", "existing_code": "y=2", "side": "RIGHT", "line": 2, "comment": "c2"}]}]}, open(ev, "w"))
+    r = subprocess.run([EXPF, str(tmp_path), "pr-1"], capture_output=True, text=True,
+                       env={**os.environ, "EXPAND_FINDINGS_EVIDENCE": str(ev)})
+    assert r.returncode == 0, r.stderr
+    items = json.loads(r.stdout)["items"]
+    assert [i["finding_id"] for i in items] == ["a.py:1", "a.py:2"]
+    assert items[0]["path"] == "a.py" and items[0]["comment"] == "c1"
+
+
+def test_expand_findings_no_evidence_fails_loud(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "EXPAND_FINDINGS_EVIDENCE"}
+    r = subprocess.run([EXPF, str(tmp_path), "pr-1"], capture_output=True, text=True, env=env)
+    assert r.returncode != 0
+    assert "expand-findings" in r.stderr
+
+
+def test_expand_findings_engine_local_reads_fixture(tmp_path):
+    fixture = ROOT / ".github/agent-factory/protocols/code-review-ocr/expand/findings.fixture.json"
+    r = subprocess.run([EXPF, str(tmp_path), "pr-1"], capture_output=True, text=True,
+                       env={**os.environ, "EXPAND_FINDINGS_EVIDENCE": str(fixture)})
+    assert r.returncode == 0, r.stderr
+    items = json.loads(r.stdout)["items"]
+    assert len(items) >= 1 and all("finding_id" in i for i in items)
+
+
+def test_ocr_evidence_schemas_are_valid_json():
+    for name in ("plan.evidence.schema.json", "main-review.evidence.schema.json", "filter.evidence.schema.json"):
+        schema = json.load(open(ROOT / f".github/agent-factory/protocols/code-review-ocr/{name}"))
+        assert schema["$schema"] == "http://json-schema.org/draft-07/schema#"
+        assert schema["type"] == "object"

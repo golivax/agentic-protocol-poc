@@ -1,0 +1,4 @@
+{"files": [{"path": "a.py", "findings": [
+  {"finding_id": "a.py:1", "existing_code": "x=1", "side": "RIGHT", "line": 1, "comment": "c1"},
+  {"finding_id": "a.py:2", "existing_code": "y=2", "side": "RIGHT", "line": 2, "comment": "c2"}
+]}]}
