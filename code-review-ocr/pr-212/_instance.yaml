@@ -1,7 +1,7 @@
 protocol: code-review-ocr
 instance: pr-212
 head_sha: a4dd617c7e5b2657080fd25aa7cb7fe00d8e382c
-phase: review
-joined: false
-phase_label: Review
+phase: merge
+joined: true
+phase_label: Merge
 status_comment_id: 4867209083
