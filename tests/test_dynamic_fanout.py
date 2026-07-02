@@ -2017,3 +2017,23 @@ def test_dynamic_fanout_agents_have_per_cid_concurrency():
         "dynamic-fanout agents with a SHARED concurrency group (siblings will cancel "
         "each other + drop results) — set a per-cid `concurrency` in the .md:\n  "
         + "\n  ".join(offenders))
+
+
+def test_dynamic_fanout_subpipeline_agent_inputs_found_by_node_path():
+    """A sub-pipeline agent inside a DYNAMIC fanout (e.g. code-review-ocr's main-review
+    with `inputs:[{from:plan}]`) must have its declared inputs discovered so the continue
+    dispatch delivers them. lib.state_inputs only scans top-level states + a STATIC
+    fanout's branches[], so it MISSES a dynamic `each.states` sub-pipeline (returns []) —
+    the bug that left the agent guessing its file. node_at_path (each-aware, what next.py
+    now uses) finds them. Fixed during Task-8 live debug."""
+    import json as _json
+    lib = _load_lib()
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("paths", ENGINE / "paths.py")
+    paths = _ilu.module_from_spec(spec); spec.loader.exec_module(paths)
+    proto = _json.load(open(ROOT / ".github/agent-factory/protocols/code-review-ocr/protocol.json"))
+    # the OLD lookup silently misses the dynamic each's sub-pipeline agent:
+    assert lib.state_inputs(proto, "main-review") == []
+    # the FIX: node_at_path resolves the runtime leg to the each template and finds it:
+    node = paths.node_at_path(proto, ["review", "abcd1234", "main-review"])
+    assert node.get("inputs") == [{"from": "plan", "as": "plan"}]

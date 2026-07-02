@@ -745,7 +745,12 @@ if COMMAND == "continue" and NODE_PATH:
         act = {"action": "run-agent", "iteration": 1, "feedback": "",
                "reason": f"continue:{NODE_PATH}", "path": NODE_PATH,
                "workflow": node.get("workflow")}
-        declared = lib.state_inputs(proto_data, _p[-1])
+        # Declared inputs come from the node AT THIS PATH — node_at_path is each-aware,
+        # so it finds a DYNAMIC fanout's `each.states` sub-pipeline agent's inputs (e.g.
+        # OCR main-review's `from: plan`). lib.state_inputs only scans top-level states +
+        # a STATIC fanout's branches[], so it silently returns [] for a dynamic each →
+        # the agent would receive empty inputs and not know which item it owns.
+        declared = node.get("inputs", [])
         if declared:
             # Path-aware: resolve each `from` OUTERMOST-search relative to this
             # node's tree path, so a nested agent's inputs reach an earlier
