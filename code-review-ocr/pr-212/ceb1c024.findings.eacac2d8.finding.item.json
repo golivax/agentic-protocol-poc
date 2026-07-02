@@ -1,1 +1,0 @@
-{"finding_id": "sample/parse.py:5:1", "path": "sample/parse.py", "existing_code": "    data = json.load(open(path))", "side": "RIGHT", "line": 5, "comment": "File handle returned by `open(path)` is never closed. If `json.load` raises (e.g., malformed JSON or missing file), the handle leaks. Use a context manager: `with open(path) as f: data = json.load(f)`."}
