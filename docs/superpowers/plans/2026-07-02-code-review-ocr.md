@@ -278,7 +278,7 @@ Replace the phase/resolve_inputs setup + the `from_fanout` loop body:
                 fo_tree_path = list(consuming_path[:-1]) + [fo_id]
             else:
                 fo_tree_path = [fo_id]
-            fo_node = paths.node_at_path(proto, fo_tree_path)   # nested fanout is NOT a top-level state
+            fo_node = _paths.node_at_path(proto, fo_tree_path)   # nested fanout is NOT a top-level state
             if fo_node is None or not os.path.isfile(manifest_file(dir_, pid, instance, fo_tree_path)):
                 raise ValueError(
                     f"merge from_fanout='{fo_id}': no manifest at {'.'.join(fo_tree_path)} "
@@ -290,37 +290,46 @@ Replace the phase/resolve_inputs setup + the `from_fanout` loop body:
                 json.dump(rows, f)
     ...
 ```
-(Add `import paths` at the top of `lib.py` if not present — grep first; lib already imports paths as `_paths` in some builds, reuse that name if so.)
+(`lib.py` already imports `paths as _paths` at the top — use `_paths.node_at_path`, do NOT add a new `import paths`.)
 
-- [ ] **Step 5: Merge arm — leg-terminal vs instance-terminal** (`next.py` merge arm ~line 768)
+- [ ] **Step 5: Merge arm — leg-terminal (nested) vs instance-terminal (top)** (`next.py` merge arm ~line 768)
+
+**The exact leg-terminal pattern to mirror already exists** — `advance.py::complete_sequence` (marks the leg cursor `done`, updates status, cas_push, then `fire_join`) and `join.py` (lines ~106-110): the enclosing-fanout join is fired **path-less when the enclosing fanout is TOP-level** (`len(efp) == 1`) and **path-keyed only when nested** (`len(efp) > 1`), via `_paths.enclosing_fanout_path`. For OCR the per-file `reduce`'s enclosing fanout is `review` (top-level → **path-less** join). Note `lib.py` imports `paths` as **`_paths`** — in `lib.run_merge_hook` use `_paths.node_at_path`; in `next.py` use its own `paths` import (grep `next.py` for `import paths`).
 
 Find `res = lib.run_merge_hook(DIR, PID, INSTANCE, PROTO, node)` and the instance-finalize block after it. Replace with:
 ```python
         node = paths.node_at_path(proto_data, _p)
         res = lib.run_merge_hook(DIR, PID, INSTANCE, PROTO, node, consuming_path=_p)
         if len(_p) > 1:
-            # NESTED merge (a per-file reduce): leg-terminal. Write the merge's output
-            # as this leg's evidence (so the enclosing fanout's from_fanout collects it),
-            # mark the leg done, and dispatch protocol-continue so the enclosing join runs.
-            sf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, _p))
-            st = lib.load_yaml(sf) if os.path.isfile(sf) else {}
-            st["state"] = "done"
-            lib.dump_yaml(sf, st)
+            # NESTED merge (a per-file `reduce`): LEG-TERMINAL, mirroring
+            # advance.complete_sequence. (1) persist the merge result as THIS leg's
+            # output evidence so the enclosing fanout's from_fanout collects the
+            # survivors; (2) mark the file-leg SEQUENCE CURSOR done; (3) fire the
+            # enclosing fanout's join exactly as join.py does (path-less for a
+            # top-level enclosing fanout, path-keyed if nested).
+            leg_path = _p[:-1]                       # the file-leg sub-pipeline cursor
             ev = lib.output_artifact_path(DIR, PID, INSTANCE, path=lib.state_path(proto_data, _p))
+            os.makedirs(os.path.dirname(ev), exist_ok=True)
             with open(ev, "w") as f:
-                json.dump(res, f)
+                json.dump(res, f)                    # res carries {conclusion, summary, survivors}
+            cursor_sf = lib.state_file(DIR, PID, INSTANCE, path=lib.state_path(proto_data, leg_path))
+            cur = lib.load_yaml(cursor_sf) if os.path.isfile(cursor_sf) else {}
+            cur["state"] = "done"
+            lib.dump_yaml(cursor_sf, cur)
             lib.cas_push(DIR, f"{INSTANCE}: nested merge {'.'.join(_p)} → leg done")
-            # re-dispatch the enclosing fanout's join (parent path) so the barrier re-evaluates
-            lib._gh_dispatch("protocol-join", {"protocol": PID, "instance": INSTANCE,
-                                               "path": ".".join(_p[:-2])})   # the enclosing fanout id path
+            efp = paths.enclosing_fanout_path(proto_data, _p)
+            fields = {"protocol": PID, "instance": INSTANCE}
+            if efp and len(efp) > 1:
+                fields["path"] = ".".join(efp)
+            lib._gh_dispatch("protocol-join", fields)
             print(json.dumps({"action": "noop", "iteration": 0, "feedback": "",
                               "reason": f"nested-merge-done:{'.'.join(_p)}"}))
             sys.exit(0)
-        # TOP merge (existing behavior): finalize the instance.
+        # TOP merge (existing behavior, unchanged): finalize the instance.
         inf = lib.instance_file(DIR, PID, INSTANCE)
         ...
 ```
-(The exact join re-dispatch fields must match `protocol-join.yml`'s expected `client_payload` — confirm against the existing join dispatch in `join.py` `_gh_dispatch("protocol-join", ...)`; mirror its field names. If join re-dispatch differs, use the same call `join.py` uses when a leg completes.)
+Verify against the real functions before implementing: `advance.py::complete_sequence` (leg-terminal shape), `join.py` lines ~106-110 (the `efp`/path-less-vs-keyed `_gh_dispatch("protocol-join", fields)`), and `_paths.enclosing_fanout_path`. The offline walk (Step 7) is the behavioral pin — it must show a per-file `reduce` completing → the `review` join re-evaluating → the top `merge` running.
 
 - [ ] **Step 6: Validator — nested from_fanout in scope** (`lib.py` `_validate_sequence`)
 
