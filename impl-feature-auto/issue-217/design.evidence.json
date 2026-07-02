@@ -1,0 +1,66 @@
+{
+  "spec_path": "docs/superpowers/specs/2026-07-02-is-terminal-state-design.md",
+  "plan_path": "docs/superpowers/plans/2026-07-02-is-terminal-state.md",
+  "summary": "Add `lib.is_terminal_state(state) -> bool` to `.github/agent-factory/engine/lib.py` returning True for exactly \"done\", \"failed\", \"blocked\" and False for all other inputs (including non-strings and None). Place the helper immediately after `PHASE_LABEL_DEFAULTS` (line 809) where the terminal label keys already live. A new `tests/test_is_terminal_state.py` with 11 focused unit tests covers all acceptance criteria. No existing code is modified.",
+  "run_id": "28616987955",
+  "ledger": [
+    {
+      "id": "L1",
+      "category": "DECISION",
+      "what": "Placement in lib.py: immediately after PHASE_LABEL_DEFAULTS block (line 809)",
+      "why": "The issue does not specify placement; the function needs a logical home near the terminal-state label definitions",
+      "what_i_did": "The three terminal states are exactly the non-\"setup\" keys of PHASE_LABEL_DEFAULTS — placing the helper there makes the coupling to label definitions explicit and readable",
+      "confidence": "high",
+      "blast_radius": {"level": "low", "why": "Pure new function, zero existing lines modified"},
+      "reversibility": {"level": "reversible", "why": "Moving a function is a trivial edit with no behavioral change"},
+      "revisit_if": "Reviewer prefers a different placement (e.g. near decide())"
+    },
+    {
+      "id": "L2",
+      "category": "DECISION",
+      "what": "Hardcode {\"done\", \"failed\", \"blocked\"} as a module-level frozenset rather than deriving dynamically from PHASE_LABEL_DEFAULTS",
+      "why": "Issue says stdlib only, pure function; deriving from the label dict would couple the terminal-state predicate to the label rendering concern",
+      "what_i_did": "Defined module-level _TERMINAL_STATES = frozenset({\"done\", \"failed\", \"blocked\"}) in the Phase labels section for co-location with PHASE_LABEL_DEFAULTS",
+      "confidence": "high",
+      "blast_radius": {"level": "low", "why": "No behavioral change to any existing code"},
+      "reversibility": {"level": "reversible", "why": "Could switch to dynamic derivation with a trivial edit"},
+      "revisit_if": "Reviewer prefers dynamic derivation from PHASE_LABEL_DEFAULTS"
+    },
+    {
+      "id": "L3",
+      "category": "ASSUMPTION",
+      "what": "\"blocked\" is a genuine terminal (non-resumable) engine state",
+      "why": "The issue explicitly lists it; needed to verify it corresponds to a real engine stopping condition",
+      "what_i_did": "Read lib.py:803-808 (PHASE_LABEL_DEFAULTS) and advance.py:578-600: \"blocked\" is the halted.reason written when a gate with on_blocked:halt fires — the pipeline will not resume. Confirmed terminal.",
+      "confidence": "high",
+      "blast_radius": {"level": "low", "why": "Verified; no residual risk"},
+      "reversibility": {"level": "reversible", "why": "Removing a state from the frozenset is a trivial edit"},
+      "revisit_if": "Engine semantics of \"blocked\" change",
+      "verified": true
+    },
+    {
+      "id": "L4",
+      "category": "ASSUMPTION",
+      "what": "\"setup\" must NOT be in the terminal set",
+      "why": "The issue does not mention \"setup\"; including it would be incorrect",
+      "what_i_did": "Read PHASE_LABEL_DEFAULTS:803-808: \"setup\" is the lifecycle label applied before any agent runs — it transitions forward, never a stopping state",
+      "confidence": "high",
+      "blast_radius": {"level": "low", "why": "Verified; no residual risk"},
+      "reversibility": {"level": "reversible", "why": "Adding a state to the frozenset is a trivial edit"},
+      "revisit_if": "Engine introduces a new meaning for \"setup\" as a terminal condition",
+      "verified": true
+    },
+    {
+      "id": "L5",
+      "category": "DECISION",
+      "what": "New dedicated test file tests/test_is_terminal_state.py",
+      "why": "Issue asks for focused unit tests; existing pattern is test_<concept>.py (e.g. test_decide.py for lib.decide())",
+      "what_i_did": "Follow established naming pattern; dedicated file is easy to locate and keeps test_engine.py uncluttered",
+      "confidence": "high",
+      "blast_radius": {"level": "low", "why": "New file only; no existing tests modified"},
+      "reversibility": {"level": "reversible", "why": "Moving tests to another file is trivial"},
+      "revisit_if": "Project switches to consolidated test file style"
+    }
+  ],
+  "read_these_first": ["L1", "L2", "L3", "L4", "L5"]
+}
