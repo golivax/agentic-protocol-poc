@@ -1125,3 +1125,134 @@ def test_matrix_fields_trims_leg_inputs_full_item_still_staged(engine_env, tmp_p
     d = str(tmp_path / "state") + "/dyn-fanout-flat/pr-1"
     staged = _json.load(open(d + "/" + read_state_yaml(d + "/review.__manifest.yaml")["legs"][0]["id"] + ".file.item.json"))
     assert "diff" in staged and staged["diff"]
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — nested from_fanout resolution + leg-terminal nested merge (ocr-nested)
+# ---------------------------------------------------------------------------
+
+OCR_NESTED_PROTO = ROOT / "tests/fixtures/ocr-nested/protocol.json"
+
+
+def _proto_load(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def test_nested_from_fanout_reduces_over_nested_legs(tmp_path):
+    """The collector is path-general: a NESTED findings fanout (keyed by the full
+    tree path) yields its own legs, not a top fanout's."""
+    lib = _load_lib()
+    paths = _load_paths()
+    d, pid, inst = str(tmp_path), "ocr-nested", "pr-1"
+    proto = str(OCR_NESTED_PROTO)
+    proto_data = _proto_load(proto)
+    fileleg = "abc123de"   # a synthetic file leg id
+    findings_path = ["review", fileleg, "findings"]
+    lib.write_manifest(d, pid, inst, findings_path,
+        {"count": 2, "legs": [{"id": "f1", "key": "f1", "item": {"fid": "f1"}},
+                              {"id": "f2", "key": "f2", "item": {"fid": "f2"}}]})
+    # per-leg evidence + state files, keyed by the NESTED tree path.
+    for fid, keep in [("f1", True), ("f2", False)]:
+        sf = lib.state_file(d, pid, inst, path=lib.state_path(proto_data, findings_path + [fid]))
+        os.makedirs(os.path.dirname(sf), exist_ok=True)
+        lib.dump_yaml(sf, {"state": "done"})
+        ev = lib.output_artifact_path(d, pid, inst, path=lib.state_path(proto_data, findings_path + [fid]))
+        with open(ev, "w") as f:
+            json.dump({"fid": fid, "keep": keep}, f)
+    fo_node = paths.node_at_path(proto_data, findings_path)
+    rows = lib.collect_fanout_evidence(d, pid, inst, findings_path, fo_node)
+    assert {r["leg_id"] for r in rows} == {"f1", "f2"}   # NESTED legs, not a top fanout
+
+
+def test_run_merge_hook_nested_from_fanout_resolves(tmp_path):
+    """A per-file `reduce` (a nested merge) resolves its from_fanout RELATIVE to
+    its node-path: consuming_path[:-1] + [findings], NOT the top-level [findings].
+    Before the fix this raised 'nested from_fanout is not supported yet'."""
+    lib = _load_lib()
+    d, pid, inst = str(tmp_path), "ocr-nested", "pr-1"
+    proto = str(OCR_NESTED_PROTO)
+    proto_data = _proto_load(proto)
+    fileleg = "abc123de"
+    findings_path = ["review", fileleg, "findings"]
+    consuming_path = ["review", fileleg, "reduce"]
+    lib.write_manifest(d, pid, inst, findings_path,
+        {"count": 2, "legs": [{"id": "f1", "key": "f1", "item": {"fid": "f1"}},
+                              {"id": "f2", "key": "f2", "item": {"fid": "f2"}}]})
+    reduce_state = next(s for s in proto_data["states"][0]["each"]["states"]
+                        if s.get("id") == "reduce")
+    res = lib.run_merge_hook(d, pid, inst, proto, reduce_state, consuming_path=consuming_path)
+    assert res["conclusion"] == "success"
+    assert "findings" in res["summary"]
+
+
+def test_validate_accepts_nested_from_fanout(tmp_path):
+    """Rule 6 validates a merge's from_fanout against a sibling fanout AT ITS OWN
+    LEVEL (a nested sub-pipeline), not only a top-level state."""
+    lib = _load_lib()
+    proto = _proto_load(OCR_NESTED_PROTO)
+    lib.validate_protocol(proto)   # must not raise: `reduce` ← `findings` (nested sibling)
+
+
+def test_ocr_nested_walk_reduces_and_merges(engine_env, tmp_path):
+    """Full offline walk: file fanout -> per file (main -> findings fanout -> jf ->
+    reduce) -> jr -> merge. A per-file `reduce` is LEG-TERMINAL: it marks the file
+    leg done and fires the enclosing (top-level → path-less) `review` join; the top
+    `merge` then reduces over both file legs."""
+    run, reclone, ry = _walker(engine_env, tmp_path, "ocr-nested")
+    v, ev = _pass_verdicts_t10(tmp_path)
+
+    # 1. start → per-file review legs, each a sub-pipeline at sub_state `main`.
+    run(NEXT, tmp_path / "s1", "pr-1", OCR_NESTED_PROTO, "start", "abc123")
+    man = ry(reclone("1") / "review.__manifest.yaml")
+    rlids = [leg["id"] for leg in man["legs"]]
+    assert len(rlids) == 2
+
+    for L in rlids:
+        # main → enter findings fanout (next sibling is a FANOUT).
+        run(ADVANCE, tmp_path / f"am-{L}", "pr-1", OCR_NESTED_PROTO, v, ev,
+            NODE_PATH=f"review.{L}.main")
+        run(NEXT, tmp_path / f"cf-{L}", "pr-1", OCR_NESTED_PROTO, "continue",
+            NODE_PATH=f"review.{L}.findings")
+        fman = ry(reclone(f"fm-{L}") / f"review.{L}.findings.__manifest.yaml")
+        flids = [leg["id"] for leg in fman["legs"]]
+        assert len(flids) == 2
+
+        # drive every finding leg to done → each fires the nested findings join.
+        for fid in flids:
+            rfv = run(ADVANCE, tmp_path / f"af-{L}-{fid}", "pr-1", OCR_NESTED_PROTO, v, ev,
+                      NODE_PATH=f"review.{L}.findings.{fid}")
+            assert f"client_payload[path]=review.{L}.findings" in rfv.stderr
+        dfd = reclone(f"fd-{L}")
+        for fid in flids:
+            assert ry(dfd / f"{L}.findings.{fid}.yaml")["state"] == "done"
+
+        # nested findings join (policy `any`) clears → `.next` is `reduce`: dispatch
+        # a path-continue onto the merge sub-state.
+        rj = run(JOIN, tmp_path / f"jf-{L}", "pr-1", OCR_NESTED_PROTO,
+                 NODE_PATH=f"review.{L}.findings")
+        assert f"client_payload[path]=review.{L}.reduce" in rj.stderr
+        assert ry(reclone(f"jfd-{L}") / f"{L}.findings.__join.yaml")["joined"] is True
+
+        # continue onto the per-file `reduce` merge → LEG-TERMINAL: run reduce hook,
+        # persist leg evidence, mark the file-leg cursor done, fire the (path-less)
+        # enclosing `review` join.
+        rr = run(NEXT, tmp_path / f"rd-{L}", "pr-1", OCR_NESTED_PROTO, "continue",
+                 NODE_PATH=f"review.{L}.reduce")
+        assert "event_type=protocol-join" in rr.stderr
+        assert "client_payload[path]=" not in rr.stderr   # enclosing review is TOP-level
+        drd = reclone(f"rd-{L}")
+        assert ry(drd / f"{L}.yaml")["state"] == "done"    # file leg cursor terminal
+        assert (drd / f"{L}.reduce.evidence.json").is_file()   # reduce leg evidence
+
+    # 2. top `review` join → policy `any`, both file legs done → advance to `merge`.
+    rtj = run(JOIN, tmp_path / "tj", "pr-1", OCR_NESTED_PROTO)
+    assert "client_payload[path]=merge" in rtj.stderr
+    assert ry(reclone("tj") / "_instance.yaml")["joined"] is True
+
+    # 3. continue onto the top `merge` → reduce over both file legs, finalize.
+    run(NEXT, tmp_path / "m", "pr-1", OCR_NESTED_PROTO, "continue", NODE_PATH="merge")
+    final = reclone("final")
+    inst = ry(final / "_instance.yaml")
+    assert inst["joined"] is True
+    assert inst["phase"] == "merge"

@@ -1593,34 +1593,54 @@ def check_matrix_size(legs):
             f"(large fields stay on the state branch; the agent re-fetches them)")
 
 
-def run_merge_hook(dir_, pid, instance, proto_path, merge_state):
+def run_merge_hook(dir_, pid, instance, proto_path, merge_state, consuming_path=None):
     """Resolve+materialize a merge state's inputs and run its trusted reduce hook.
-    Returns {conclusion, summary}; neutral fallback on any resolution/exec error."""
+    Returns {conclusion, summary}; neutral fallback on any resolution/exec error.
+
+    `consuming_path` is the merge node's TREE path. For a NESTED merge (a per-file
+    `reduce` inside a sub-pipeline leg — path length > 1), a `from_fanout` resolves
+    RELATIVE to that path: the fanout is the merge's sibling in the same
+    (sub-)sequence, i.e. `consuming_path[:-1] + [fanout_id]`; plain `from` inputs
+    resolve path-aware from the same scope. For the TOP merge (consuming_path None
+    or length 1) resolution is byte-identical to the pre-nesting behavior: the
+    fanout is the top-level `[fanout_id]` and plain inputs use the legacy 3-case
+    resolver (consuming_path suppressed)."""
     pdir = os.path.dirname(os.path.abspath(proto_path))
     with open(proto_path) as f:
         proto = json.load(f)
     fo = _fanout_state(proto)
     phase = fo["id"] if (fo and is_multiphase(proto)) else None
     merge_inputs = merge_state.get("inputs", [])
+    # A nested merge (its tree path has more than one element) resolves inputs
+    # relative to its own scope; a top merge (None or length 1) stays legacy.
+    nested = bool(consuming_path) and len(consuming_path) > 1
+    cp_for_inputs = consuming_path if nested else None
     # from_fanout inputs have no `from` key — resolve_inputs only understands
     # `from`, so keep them out of that call and handle them in the loop below.
     plain_inputs = [inp for inp in merge_inputs if "from" in inp]
     # Branch-id refs resolve against branch leg outputs (Plan 2 resolve_inputs).
     resolved = resolve_inputs(proto, dir_, pid, instance,
                               consuming_branch=None, consuming_phase=phase,
-                              inputs=plain_inputs)
+                              inputs=plain_inputs, consuming_path=cp_for_inputs)
     workdir = tempfile.mkdtemp(prefix="merge-")
     materialize_inputs(resolved, workdir)
     for inp in merge_inputs:
         if inp.get("from_fanout"):
             fo_id = inp["from_fanout"]
-            fo_node = state_by_id(proto, fo_id)
-            fo_tree_path = [fo_id]  # top fanout; nested merges pass full path (milestone 2)
-            if not os.path.isfile(manifest_file(dir_, pid, instance, fo_tree_path)):
+            # Resolve the fanout RELATIVE TO the merge's node-path: it is the
+            # merge's sibling in the same (sub-)sequence → parent-of-merge + fanout
+            # id. Top merge → the top fanout ([fo_id]).
+            if nested:
+                fo_tree_path = list(consuming_path[:-1]) + [fo_id]
+            else:
+                fo_tree_path = [fo_id]
+            # A nested fanout is NOT a top-level state, so state_by_id() would miss
+            # it — address it by full tree path.
+            fo_node = _paths.node_at_path(proto, fo_tree_path)
+            if fo_node is None or not os.path.isfile(manifest_file(dir_, pid, instance, fo_tree_path)):
                 raise ValueError(
-                    f"merge from_fanout='{inp['from_fanout']}': no manifest at "
-                    f"{'.'.join(fo_tree_path)} — the fanout has not materialized, or it is a "
-                    f"nested fanout (nested from_fanout is not supported yet)"
+                    f"merge from_fanout='{fo_id}': no manifest at {'.'.join(fo_tree_path)} "
+                    f"(fanout not materialized or misnamed)"
                 )
             rows = collect_fanout_evidence(dir_, pid, instance, fo_tree_path, fo_node)
             inputs_dir = os.path.join(workdir, "inputs")
