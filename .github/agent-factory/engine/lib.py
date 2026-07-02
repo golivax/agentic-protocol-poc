@@ -1204,8 +1204,11 @@ def _validate_sequence(states, path_hint):
     Rule 4 — fanout branches[] XOR expand+each (dynamic fan-out)
         A fanout has exactly one of a static `branches[]` or a dynamic
         `expand`+`each` pair. `expand` must carry hook/as/id_from/max_legs
-        (max_legs an int in [1,256]); `each` is a flat leg (`workflow`) XOR a
-        sub-pipeline (`states`), validated recursively like a static branch.
+        (max_legs an int in [1,256]); `expand.matrix_fields`, when present, must
+        be an array of non-empty strings (the subset of item keys inlined into
+        matrix.leg.inputs — unset means the full item, see project_matrix_item).
+        `each` is a flat leg (`workflow`) XOR a sub-pipeline (`states`),
+        validated recursively like a static branch.
 
     Rule 5 — join.policy must parse
         A join's optional `policy` must be accepted by `join_policy_satisfied`
@@ -1288,6 +1291,11 @@ def _validate_sequence(states, path_hint):
                 if not isinstance(ml, int) or isinstance(ml, bool) or not (1 <= ml <= 256):
                     raise ValueError(
                         f"fanout '{sid}' expand.max_legs must be an int in [1,256], got {ml!r}"
+                    )
+                mf = exp.get("matrix_fields")
+                if mf is not None and (not isinstance(mf, list) or not all(isinstance(x, str) and x for x in mf)):
+                    raise ValueError(
+                        f"fanout '{sid}' expand.matrix_fields must be an array of non-empty strings"
                     )
                 each = st.get("each") or {}
                 if bool(each.get("states")) == bool(each.get("workflow")):
@@ -1557,6 +1565,32 @@ def stage_item(dir_, pid, instance, file_path, as_, item):
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     with open(dst, "w") as f:
         json.dump(item, f)
+
+
+def project_matrix_item(item, matrix_fields):
+    """Subset a dynamic leg's item to the keys that ride the GHA matrix.
+    matrix_fields None/unset -> the full item (backward-compatible). Absent keys
+    are skipped. The FULL item always stays durable on the state branch (stage_item);
+    this only trims what is inlined into matrix.leg.inputs."""
+    if not matrix_fields:
+        return item
+    return {k: item[k] for k in matrix_fields if k in item}
+
+
+# GHA strategy.matrix / $GITHUB_OUTPUT practical ceiling; keep well under 1 MB.
+_MATRIX_BYTES_CAP = 900_000
+
+
+def check_matrix_size(legs):
+    """Fail loud if the serialized matrix legs would exceed the GHA output/matrix
+    cap. A protocol author who forgot `matrix_fields` gets a clear error, never a
+    silent truncation (same discipline as max_legs over-cap)."""
+    n = len(json.dumps(legs))
+    if n > _MATRIX_BYTES_CAP:
+        raise ValueError(
+            f"matrix legs serialize to {n} bytes (> {_MATRIX_BYTES_CAP}); "
+            f"set the fanout's expand.matrix_fields to inline only small keys "
+            f"(large fields stay on the state branch; the agent re-fetches them)")
 
 
 def run_merge_hook(dir_, pid, instance, proto_path, merge_state):

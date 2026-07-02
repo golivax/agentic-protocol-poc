@@ -1078,3 +1078,50 @@ def test_status_body_renders_dynamic_legs(engine_env, tmp_path):
     man = read_state_yaml(d + "/review.__manifest.yaml")
     for leg in man["legs"]:                    # both dynamic leg ids appear (zero pre-fix)
         assert leg["id"] in body
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (M2 Spec B) — expand.matrix_fields declarative matrix projection +
+# fail-loud size guard.
+# ---------------------------------------------------------------------------
+
+
+def test_project_matrix_item_subsets_when_fields_given():
+    lib = _load_lib()
+    item = {"path": "src/a.py", "diff": "x" * 10000}
+    assert lib.project_matrix_item(item, ["path"]) == {"path": "src/a.py"}
+    assert lib.project_matrix_item(item, None) == item          # default = full item
+    assert lib.project_matrix_item(item, ["path", "missing"]) == {"path": "src/a.py"}  # skip absent
+
+
+def test_check_matrix_size_raises_over_cap():
+    lib = _load_lib()
+    big = [{"path": "l", "workflow": "w", "inputs": {"f": {"diff": "x" * 900_000}}} for _ in range(3)]
+    try:
+        lib.check_matrix_size(big); assert False, "expected ValueError"
+    except ValueError as e:
+        assert "matrix" in str(e).lower()
+    lib.check_matrix_size([{"path": "l", "workflow": "w", "inputs": {"f": {"path": "a"}}}])  # small: ok
+
+
+def test_matrix_fields_trims_leg_inputs_full_item_still_staged(engine_env, tmp_path):
+    # A dyn fixture whose expand sets matrix_fields:["path"] but items also carry "diff".
+    import shutil, json as _json, pathlib
+    from conftest import run_engine, read_state_yaml
+    src = ROOT / "tests/fixtures/dyn-fanout-flat"
+    dst = tmp_path / "proto"; shutil.copytree(src, dst)
+    proto = _json.load(open(dst / "protocol.json"))
+    proto["states"][0]["expand"]["matrix_fields"] = ["path"]
+    _json.dump(proto, open(dst / "protocol.json", "w"))
+    # items carry an extra big field
+    items = [{"path": "src/a.go", "diff": "X" * 5000}, {"path": "src/b.go", "diff": "Y" * 5000}]
+    _json.dump(items, open(dst / "expand" / "items.json", "w"))
+    out, err, rc = run_engine("next.py", str(tmp_path / "state"), "pr-1", str(dst / "protocol.json"), "start", env=engine_env)
+    assert rc == 0, err
+    action = json.loads(out.strip().splitlines()[-1])
+    for leg in action["legs"]:
+        assert set(leg["inputs"]["file"].keys()) == {"path"}          # trimmed for the matrix
+    # full item (with diff) is still staged on the state branch
+    d = str(tmp_path / "state") + "/dyn-fanout-flat/pr-1"
+    staged = _json.load(open(d + "/" + read_state_yaml(d + "/review.__manifest.yaml")["legs"][0]["id"] + ".file.item.json"))
+    assert "diff" in staged and staged["diff"]

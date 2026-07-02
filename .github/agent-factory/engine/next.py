@@ -84,6 +84,7 @@ def _fanout_action(proto, path, branches):
             leg["inputs"] = b["inputs"]
         legs.append(leg)
     act["legs"] = legs
+    lib.check_matrix_size(legs)
     return act
 
 
@@ -132,7 +133,8 @@ def enter_node(proto, path, command, emit=True):
                 seeded = _seed_child(proto, path + [leg["id"]], cfg)
                 lib.stage_item(DIR, PID, INSTANCE, lib.state_path(proto, path + [leg["id"]]),
                                node["expand"]["as"], leg["item"])
-                seeded["inputs"] = {node["expand"]["as"]: leg["item"]}
+                seeded["inputs"] = {node["expand"]["as"]:
+                                    lib.project_matrix_item(leg["item"], node["expand"].get("matrix_fields"))}
                 branches.append(seeded)
             # zero legs → branches == [] falls through the shared tail unchanged (vacuous fanout)
         else:
