@@ -1,0 +1,23 @@
+{
+  "files": [
+    {
+      "path": "sample/parse.py",
+      "findings": [
+        {
+          "finding_id": "sample/parse.py:4:1",
+          "existing_code": "def load_config(path, defaults={}):",
+          "side": "RIGHT",
+          "line": 4,
+          "comment": "Mutable default argument: `defaults={}` creates a single dict object that is shared across all calls. If any caller or future code mutates the returned `data` dict in a way that bleeds back, or if the function body is extended to write to `defaults`, the mutation persists silently between calls. Use `defaults=None` and replace with `if defaults is None: defaults = {}` at the top of the function body."
+        },
+        {
+          "finding_id": "sample/parse.py:5:1",
+          "existing_code": "    data = json.load(open(path))",
+          "side": "RIGHT",
+          "line": 5,
+          "comment": "File handle leak: `open(path)` is passed directly to `json.load` without a `with` statement, so the file descriptor is never explicitly closed. CPython's reference counting closes it promptly, but other Python implementations (PyPy, Jython) may not, leaking the file descriptor under load. Use `with open(path) as fh: data = json.load(fh)` instead."
+        }
+      ]
+    }
+  ]
+}
