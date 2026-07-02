@@ -1472,27 +1472,19 @@ def test_post_review_approves_with_no_survivors(tmp_path):
     assert out["conclusion"] == "success"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DOCUMENTED GAP #2 (Task-6 scope is the publish hooks, not this wiring -- "
-    "expand-findings.py's own docstring already flags the live per-leg evidence "
-    "path as a Task-8 concern): next.py's enter_node materializes a dynamic "
-    "fanout via lib.run_expander, which builds the expander subprocess's env "
-    "from a hardcoded security allowlist (_ALLOW) that does not include "
-    "EXPAND_FINDINGS_EVIDENCE -- so even though expand-findings.py supports an "
-    "ENGINE_LOCAL/test fixture via that env var (proven directly in "
-    "test_expand_findings_one_item_per_finding, a bare-subprocess invocation "
-    "bypassing run_expander), the real engine `continue` path strips it before "
-    "the hook ever sees it. strict=True so this starts failing loudly the "
-    "moment the live-wiring lands."))
 def test_run_expander_does_not_forward_expand_findings_evidence(engine_env, tmp_path):
     """Minimal repro, through the REAL engine: start a review leg, drive it to
     main-review with crafted findings evidence, then `continue` onto the nested
     `findings` fanout with EXPAND_FINDINGS_EVIDENCE pointed at that evidence.
-    Expected (once Task 8 wires live per-leg evidence through, or ENGINE_LOCAL
-    is added to run_expander's allowlist): the findings manifest materializes.
-    Actual today: `_walker.run`'s own rc==0 assertion fails, because
-    run_expander's allowlist drops the env var and expand-findings.py fails
-    loud ("no main-review evidence at None")."""
+    run_expander's env allowlist (_ALLOW) still does NOT forward
+    EXPAND_FINDINGS_EVIDENCE (deliberately left untouched — a Task-8 concern),
+    so the hook never sees the crafted main-review evidence pointed to by that
+    var. FIXED (Task 6b, offline-only): expand-findings now falls back to its
+    beside-script findings.fixture.json when ENGINE_LOCAL is set and
+    EXPAND_FINDINGS_EVIDENCE is unusable — and ENGINE_LOCAL IS in run_expander's
+    allowlist, so the real engine `continue` path now materializes the findings
+    fanout offline (from the fixture, not the crafted evidence) instead of
+    failing loud."""
     run, reclone, ry = _walker(engine_env, tmp_path, "code-review-ocr")
     v, ev = _pass_verdicts_t10(tmp_path)
     run(NEXT, tmp_path / "s1", "pr-1", CODE_REVIEW_OCR_PROTO, "start", "abc123")
@@ -1508,6 +1500,15 @@ def test_run_expander_does_not_forward_expand_findings_evidence(engine_env, tmp_
         NODE_PATH=f"review.{L}.main-review")
     run(NEXT, tmp_path / "cf", "pr-1", CODE_REVIEW_OCR_PROTO, "continue",
         NODE_PATH=f"review.{L}.findings", EXPAND_FINDINGS_EVIDENCE=str(main_ev))
+
+    # The findings fanout materialized (via run_expander -> ENGINE_LOCAL ->
+    # the beside-script fixture, since EXPAND_FINDINGS_EVIDENCE never reached
+    # the subprocess): the manifest now has real legs, one per fixture finding.
+    fman = ry(reclone("fm") / f"review.{L}.findings.__manifest.yaml")
+    fixture = json.load(open(ROOT / ".github/agent-factory/protocols/code-review-ocr/expand/findings.fixture.json"))
+    fixture_ids = {fi["finding_id"] for fobj in fixture["files"] for fi in fobj["findings"]}
+    assert fman["count"] == len(fixture_ids)
+    assert {leg["item"]["finding_id"] for leg in fman["legs"]} == fixture_ids
 
 
 def _seed_findings_fanout_directly(engine_env, workdir, pid, inst_key, proto_data, findings_path, items):
@@ -1720,27 +1721,18 @@ def test_ocr_real_protocol_walk_files_to_reduce(engine_env, tmp_path):
         assert ry(final / f"{L}.yaml")["state"] == "done"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DOCUMENTED ENGINE GAP (Task 6 scope explicitly forbids touching engine "
-    "files): collect_fanout_evidence resolves a from_fanout leg's evidence path "
-    "as state_path(proto, tree_path+[lid]) -- correct for a FLAT fanout leg, but "
-    "for a DYNAMIC sub-pipeline `each` (states ending in a per-leg `reduce`) the "
-    "leg's real output evidence lives one level deeper, at "
-    "tree_path+[lid,'reduce'] -- exactly what next.py's nested-merge arm writes. "
-    "_resolve_input_ref_pathaware already has the analogous fix for plain `from` "
-    "refs on a STATIC (`branches:`) sub-pipeline (it appends "
-    "branch_cfg['states'][-1]['id']); collect_fanout_evidence has no equivalent "
-    "for a DYNAMIC (`expand`/`each`) sub-pipeline leg. This xfail pins the exact "
-    "root cause of code-review-ocr's top merge always seeing empty survivors "
-    "(test_ocr_real_protocol_walk_files_to_reduce) until an engine task fixes it "
-    "-- strict=True so it starts failing loudly the moment that fix lands."))
 def test_collect_fanout_evidence_missing_subpipeline_terminal_substate(tmp_path):
     """Minimal repro at the lib.collect_fanout_evidence level: a single review
     leg whose per-file `reduce` genuinely completed (leg cursor done + real
     evidence at <lid>.reduce.evidence.json, exactly as next.py's LEG-TERMINAL
     nested-merge arm writes it) must be visible to collect_fanout_evidence as
     that leg's `evidence` when collecting the ENCLOSING `review` fanout for the
-    top merge's from_fanout. It currently is not."""
+    top merge's from_fanout. FIXED (Task 6b): collect_fanout_evidence now
+    appends the sub-pipeline `each`'s terminal sub-state id (here 'reduce') to
+    the leg's evidence lookup path, while still resolving the leg's `state`
+    from its own (unaugmented) sequence-cursor path — mirroring the analogous
+    fix already in _resolve_input_ref_pathaware for STATIC sub-pipeline `from`
+    refs."""
     lib = _load_lib()
     paths = _load_paths()
     d, pid, inst = str(tmp_path), "ocr-nested", "pr-1"
@@ -1762,5 +1754,5 @@ def test_collect_fanout_evidence_missing_subpipeline_terminal_substate(tmp_path)
 
     review_node = paths.node_at_path(proto_data, ["review"])
     rows = lib.collect_fanout_evidence(d, pid, inst, ["review"], review_node, proto=proto_data)
-    assert rows[0]["state"] == "done"             # the leg cursor DOES resolve correctly
-    assert rows[0]["evidence"] is not None         # the reduce evidence currently does not
+    assert rows[0]["state"] == "done"              # the leg cursor resolves correctly
+    assert rows[0]["evidence"] == {"conclusion": "success", "survivors": [{"finding_id": "x"}]}

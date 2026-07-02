@@ -146,17 +146,26 @@ def collect_fanout_evidence(dir_, pid, instance, tree_path, fanout_node, proto=N
     `tree_path` is the fanout's TREE path (e.g. ['review'] for the top fanout, or
     ['review', '<fileleg>', 'findings'] for a nested findings fanout). When `proto`
     is given, each leg is resolved by its FULL tree path (tree_path + [lid]) via
-    state_path — nested-aware. When `proto` is None (back-compat), legs are
-    resolved FLAT (branch=leg-id, no path prefix), matching the historical
-    single-phase file layout used before nested from_fanout support."""
+    state_path — nested-aware. If the fanout's `each` is itself a sub-pipeline
+    (has `states`), the leg's real OUTPUT evidence lives one level deeper, at its
+    terminal sub-state (tree_path + [lid, <last each.states id>]) — the leg
+    cursor file at tree_path + [lid] is just the sequence cursor and carries no
+    evidence. A flat leg fanout (`each` has no `states`) or a static fanout
+    (`branches:`, no `each`) is unaffected. When `proto` is None (back-compat),
+    legs are resolved FLAT (branch=leg-id, no path prefix), matching the
+    historical single-phase file layout used before nested from_fanout support."""
     man = read_manifest(dir_, pid, instance, tree_path)
+    each = (fanout_node or {}).get("each", {})
+    out_sub = each["states"][-1]["id"] if isinstance(each, dict) and each.get("states") else None
     rows = []
     for leg in man.get("legs", []):
         lid = leg["id"]
         if proto is not None:
             leg_fp = state_path(proto, list(tree_path) + [lid])
-            sf = state_file(dir_, pid, instance, path=leg_fp)
-            evid_path = output_artifact_path(dir_, pid, instance, path=leg_fp)
+            sf = state_file(dir_, pid, instance, path=leg_fp)          # leg SEQUENCE CURSOR
+            evid_tree = list(tree_path) + [lid] + ([out_sub] if out_sub else [])
+            evid_fp = state_path(proto, evid_tree)
+            evid_path = output_artifact_path(dir_, pid, instance, path=evid_fp)
         else:
             sf = state_file(dir_, pid, instance, lid)          # single-phase leg file
             evid_path = output_artifact_path(dir_, pid, instance, branch=lid, kind="evidence")
