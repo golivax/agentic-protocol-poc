@@ -1,0 +1,10 @@
+{
+  "examined": ["sample/calc.py"],
+  "plan_items": [
+    "Check `average` for division-by-zero when `nums` is empty — no guard exists before `len(nums)` in the denominator",
+    "Check `average` for use of manual summation loop instead of built-in `sum()` — potential correctness and style concern",
+    "Check `discount` operator-precedence: `price * pct / 100` is left-to-right correct, but verify the formula produces the right result (e.g. pct=50, price=100 → 50.0)",
+    "Check `discount` for missing bounds validation — no check that `pct` is in [0, 100] or that `price` is non-negative",
+    "Both functions are new (new file, no prior version) — focus on correctness of the happy path and obvious edge cases"
+  ]
+}
