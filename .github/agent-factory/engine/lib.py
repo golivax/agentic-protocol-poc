@@ -808,6 +808,18 @@ PHASE_LABEL_DEFAULTS = {
 }
 PHASE_LABEL_COLOR = "5319e7"  # one color for every engine-managed phase label
 
+_TERMINAL_STATES = frozenset({"done", "failed", "blocked"})
+
+
+def is_terminal_state(state):
+    """Return True iff state is a terminal (non-resumable) engine state.
+
+    Terminal states: "done" (success), "failed" (exhausted/gate-blocked),
+    "blocked" (pipeline halted by on_blocked:halt gate). Non-string or None
+    arguments return False without raising.
+    """
+    return isinstance(state, str) and state in _TERMINAL_STATES
+
 
 def _humanize_state_id(state_id):
     return state_id.replace("-", " ").replace("_", " ").strip().capitalize()
