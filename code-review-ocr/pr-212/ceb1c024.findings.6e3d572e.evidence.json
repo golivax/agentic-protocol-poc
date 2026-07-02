@@ -1,0 +1,9 @@
+{
+  "finding_id": "sample/calc.py:5:1",
+  "keep": true,
+  "anchor": { "side": "RIGHT", "line": 5 },
+  "reason": "Confirmed real bug: calling average([]) raises ZeroDivisionError because len([]) is 0; the snippet is present at the verified anchor location.",
+  "path": "sample/calc.py",
+  "existing_code": "    return total / len(nums)",
+  "comment": "Division-by-zero when `nums` is empty: `len(nums)` is 0, raising ZeroDivisionError at runtime. Add an early guard, e.g. `if not nums: return 0` (or raise ValueError, depending on the desired semantics)."
+}
