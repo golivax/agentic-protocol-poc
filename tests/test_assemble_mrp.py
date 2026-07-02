@@ -37,7 +37,8 @@ def test_normalize_compliance_maps_engine_evidence_to_custody_shape():
     assert dv["decision"] == "ADR-001 master/worker split"
     assert dv["contradiction"] == "adds a second scheduler in the worker"
     assert dv["evidence_path"] == "worker/sched.py:42"
-    assert dv["mm_doc"] == "worker/sched.py:42"
+    # mm_doc points at the MM decision/doc (the ADR ref), NOT the code path
+    assert dv["mm_doc"] == "ADR-001 master/worker split"
     assert dv["fix"] == "route through the master scheduler"
     # examined is trace-only and dropped from the pack shape
     assert "examined" not in out

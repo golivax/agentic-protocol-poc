@@ -50,7 +50,7 @@ def _normalize_compliance(mm):
         decision = dv.get("decision") or ""
         evidence = dv.get("evidence") or ""
         divergences.append({
-            "mm_doc": evidence or decision,
+            "mm_doc": decision or evidence,
             "decision": decision,
             "contradiction": dv.get("detail") or "",
             "evidence_path": evidence,
