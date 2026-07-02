@@ -149,16 +149,38 @@ def enter_node(proto, path, command, emit=True):
     if kind == "agent":
         sf = lib.state_file(DIR, PID, INSTANCE, path=fpath)
         os.makedirs(os.path.dirname(sf), exist_ok=True)
-        lib.dump_yaml(sf, {"protocol": PID, "instance": INSTANCE, "state": life or path[-1],
-                           "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []})
+        node_state = life or path[-1]
+        # Preserve an in-flight iterate. An iterate re-dispatch is a `continue` onto
+        # the SAME agent phase that advance already advanced (iteration N + a history
+        # entry carrying the failed round's feedback). Re-seeding it to
+        # iteration:1/history:[] would reset the bounded iterate loop into an INFINITE
+        # one (the counter never reaches max_iterations) and drop the feedback the
+        # agent needs to converge. So only a FRESH entry (no state file, or a prior
+        # terminal, or a non-continue command) seeds; an in-flight continue preserves.
+        existing = lib.load_yaml(sf) if os.path.exists(sf) else None
+        preserve = bool(command == "continue" and existing
+                        and existing.get("state") == node_state)
+        if preserve:
+            st = existing
+        else:
+            st = {"protocol": PID, "instance": INSTANCE, "state": node_state,
+                  "iteration": 1, "gates": {}, "head_sha": HEAD_SHA, "history": []}
+            lib.dump_yaml(sf, st)
+        it = int(st.get("iteration", 1))
+        _hist = st.get("history") or []
+        fb = _hist[-1].get("feedback", "") if _hist else ""
         if emit:
-            act = {"action": "run-agent", "iteration": 1, "feedback": "",
+            act = {"action": "run-agent", "iteration": it, "feedback": fb,
                    "reason": f"phase:{path[-1]}", "path": ".".join(path),
                    "workflow": paths.node_at_path(proto, path).get("workflow")}
             if lib.is_multiphase(proto):
                 act["phase"] = path[-1]
             print(json.dumps(act))
-        return {"id": path[-1], "workflow": node.get("workflow"), "iteration": 1, "feedback": ""}
+        # `seeded` tells a `continue` caller whether new state was written (so it must
+        # cas_push it) or an in-flight iterate was preserved (nothing new → an empty
+        # cas_push would fail loudly).
+        return {"id": path[-1], "workflow": node.get("workflow"),
+                "iteration": it, "feedback": fb, "seeded": not preserve}
     if kind == "gate":
         pr = lib.pr_from_instance(INSTANCE)
         lib.open_gate(DIR, PID, INSTANCE, PROTO, path[-1], HEAD_SHA, pr,
@@ -735,14 +757,20 @@ if COMMAND == "continue" and NODE_PATH:
         print(json.dumps(_fanout_action(proto_data, _p, branches)))
         sys.exit(0)
     if _kind == "agent":
-        # A `continue` onto an AGENT sub-state of a sub-pipeline leg (e.g. the
-        # `report` sub-state after a nested join bubbled the cursor forward).
-        # Seed its state file, cas_push so the dispatched agent finds it, then
-        # emit a path-qualified run-agent action. Same seed→cas_push→emit order.
+        # A `continue` onto an AGENT node. Two shapes:
+        #  - FRESH entry: a sub-pipeline sub-state (e.g. `report` after a nested join
+        #    bubbled the cursor forward) — enter_node seeds it; cas_push so the
+        #    dispatched agent finds it. iteration:1, feedback:"".
+        #  - ITERATE re-dispatch: advance already advanced the SAME agent phase
+        #    (iteration N + feedback history) and pushed it; enter_node PRESERVES it,
+        #    so there is nothing new to push (an empty cas_push fails loudly). Carry
+        #    the preserved iteration + last-failure feedback into the run-agent action.
         node = paths.node_at_path(proto_data, _p)
-        enter_node(proto_data, _p, "continue", emit=False)
-        lib.cas_push(DIR, f"{PID}/{INSTANCE}: continue agent {NODE_PATH}")
-        act = {"action": "run-agent", "iteration": 1, "feedback": "",
+        seq = enter_node(proto_data, _p, "continue", emit=False)
+        if seq.get("seeded", True):
+            lib.cas_push(DIR, f"{PID}/{INSTANCE}: continue agent {NODE_PATH}")
+        act = {"action": "run-agent",
+               "iteration": seq.get("iteration", 1), "feedback": seq.get("feedback", ""),
                "reason": f"continue:{NODE_PATH}", "path": NODE_PATH,
                "workflow": node.get("workflow")}
         # Declared inputs come from the node AT THIS PATH — node_at_path is each-aware,

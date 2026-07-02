@@ -169,3 +169,49 @@ def test_advance_fail_exhausts_to_failed(engine_env, tmp_path):
     fdir3 = _reclone(engine_env, tmp_path, "failed")
     sf3 = _yaml(fdir3.parent / "pr-1.yaml")
     assert sf3.get("state") == "failed", f"state must be failed after exhaustion, got: {sf3}"
+
+
+# ---------------------------------------------------------------------------
+# Test 4: continue onto an in-flight agent phase PRESERVES iteration + feedback
+# (regression for the live-found infinite iterate loop — the continue-agent arm
+# re-seeded iteration:1/history:[]/feedback:"" every retry, so a root-child agent
+# phase that failed checks never exhausted max_iterations. Offline tests missed it
+# because they drive advance.py directly, never the next.py `continue` round-trip.)
+# ---------------------------------------------------------------------------
+
+def test_continue_iterate_preserves_iteration_and_feedback(engine_env, tmp_path):
+    base = dict(engine_env)
+    base["PR_HEAD_SHA"] = "sha1"
+    base["AGENT_RUN_ID"] = "r1"
+
+    # 1. start → seeds solo at iteration 1
+    r = _run(NEXT, tmp_path / "s1", "pr-1", PROTO, "start", "sha1", env=base)
+    assert r.returncode == 0, r.stderr
+
+    # 2. advance with FAILING verdicts → iterate: increments to iteration 2, appends a
+    #    history entry carrying the failure feedback, cas_pushes, re-dispatches continue
+    fv, fev = _fail_verdicts(tmp_path, "f1")
+    r2 = _run(ADVANCE, tmp_path / "a1", "pr-1", PROTO, fv, fev,
+              env=base, NODE_PATH="solo")
+    assert r2.returncode == 0, r2.stderr
+    assert "event_type=protocol-continue" in r2.stderr, "advance should re-dispatch the iterate"
+    sf1 = _yaml(_reclone(engine_env, tmp_path, "afteradv").parent / "pr-1.yaml")
+    assert sf1.get("iteration") == 2, f"advance must increment iteration: {sf1}"
+
+    # 3. the iterate re-dispatch is a next.py `continue` NODE_PATH=solo. It must PRESERVE
+    #    iteration 2 + surface the last-failure feedback — NOT re-seed to iteration 1.
+    r3 = _run(NEXT, tmp_path / "c1", "pr-1", PROTO, "continue", "sha1",
+              env=base, NODE_PATH="solo")
+    assert r3.returncode == 0, r3.stderr
+    act = json.loads(r3.stdout)
+    assert act.get("action") == "run-agent", act
+    assert act.get("iteration") == 2, (
+        f"continue must PRESERVE the advanced iteration (2), got {act.get('iteration')!r} — "
+        "re-seeding to 1 makes the bounded iterate loop never exhaust (infinite loop)")
+    assert act.get("feedback"), (
+        "continue must surface the last-failure feedback to the agent, got empty")
+
+    # 4. the on-disk state must not be wiped back to iteration 1 / empty history
+    sf2 = _yaml(_reclone(engine_env, tmp_path, "aftercont").parent / "pr-1.yaml")
+    assert sf2.get("iteration") == 2, f"continue must not reset state iteration: {sf2}"
+    assert sf2.get("history"), "continue must not wipe the feedback history"
