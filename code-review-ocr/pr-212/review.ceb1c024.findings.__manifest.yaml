@@ -1,0 +1,25 @@
+count: 2
+legs:
+- id: 6e3d572e
+  key: sample/calc.py:5:1
+  item:
+    finding_id: sample/calc.py:5:1
+    path: sample/calc.py
+    existing_code: '    return total / len(nums)'
+    side: RIGHT
+    line: 5
+    comment: 'Division-by-zero when `nums` is empty: `len(nums)` is 0, raising ZeroDivisionError
+      at runtime. Add an early guard, e.g. `if not nums: return 0` (or raise ValueError,
+      depending on the desired semantics).'
+- id: 2bf30d87
+  key: sample/calc.py:9:1
+  item:
+    finding_id: sample/calc.py:9:1
+    path: sample/calc.py
+    existing_code: '    return price - price * pct / 100'
+    side: RIGHT
+    line: 9
+    comment: "No bounds validation on `pct`: a negative value silently inflates the\
+      \ price (price + |discount|) and a value above 100 produces a negative result.\
+      \ Add a guard such as `if not 0 <= pct <= 100: raise ValueError(f'pct must be\
+      \ 0\u2013100, got {pct}')` before the calculation."
