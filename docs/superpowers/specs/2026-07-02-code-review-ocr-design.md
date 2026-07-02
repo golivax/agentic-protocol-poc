@@ -43,8 +43,9 @@ analog) and its `_review.py` single-review publication mechanism.
 - Judging the *substance* of a finding (unchanged engine thesis: checks verify the
   *form* of evidence — the anchor resolves, the schema is filled — never whether the
   critique is correct).
-- Changing the four-trust-zone model, or the DSL/JSON-schema (no new protocol fields;
-  flag any temptation to the user first).
+- Changing the four-trust-zone model. (One deliberate, user-approved DSL/JSON-schema
+  addition is in scope: the optional `expand.matrix_fields` key — see §4.2. It is
+  additive and backward-compatible; no other schema change.)
 - A human approval gate (§6) — OCR is fully automated.
 
 ## 2. The protocol tree
@@ -112,28 +113,37 @@ than silently mis-reducing. This spec implements the real resolution:
 
 Spec A threads each dynamic leg's full item (`{path, diff}`) into `matrix.leg.inputs`
 → the plan job's `legs` output (a `$GITHUB_OUTPUT`, ~1 MB cap) and `strategy.matrix`.
-For a real PR (many files × large diffs) this overflows. Change:
+For a real PR (many files × large diffs) this overflows. The two fanouts have opposite
+needs: a file's big field (`diff`) is **re-fetchable** (`gh pr diff -- <path>`) so only
+`path` need ride the matrix; a finding is small but **not** re-fetchable (it came from
+`main-review`'s evidence, not the diff) so it must be inlined in full. A single rigid
+rule cannot serve both, so the item's matrix projection is made **declarative** — a
+**user-approved DSL addition**:
 
-- `expand-files`'s items stay `{path, diff}` on the state branch (the manifest/staged
-  item — durable, no size limit there), but the **file-leg matrix input carries only
-  `{path}`**. Concretely: `_fanout_action` (or a projection step) strips the leg
-  `inputs` to the `id_from`-keyed minimal field (the `path`) for a file leg, so the
-  matrix output stays small.
+- **New optional schema key `expand.matrix_fields: [<item keys>]`** — the subset of an
+  item's keys to inline into `matrix.leg.inputs`. **Default (unset) = the full item**
+  (today's Spec A behavior — backward-compatible; every existing dynamic protocol is
+  byte-unchanged). `expand-files` sets `matrix_fields: ["path"]`; the `findings` fanout
+  omits it (findings are small and must ship whole).
+- **Projection point:** `_fanout_action`/`enter_node`, when building `legs[].inputs`
+  for a dynamic leg, projects the staged item down to `matrix_fields` (when set). The
+  **full item always stays durable on the state branch** (the manifest/staged item) —
+  `matrix_fields` only trims what rides the matrix, never what is persisted.
+- **Fail-loud size guard:** after projection, if a fanout's serialized `legs` output
+  would still exceed a safe cap, the engine **raises** (same discipline as `max_legs`
+  over-cap) — a protocol author who forgot to trim gets a clear error, never a silent
+  truncation.
 - The per-file agents (`ocr-plan-agent`, `ocr-main-agent`) receive `inputs.file.path`
-  and **re-fetch** their diff themselves: `gh pr diff -- <path>` (they already run in a
-  repo checkout with a read token). This is the OCR agent model (each subtask fetches
-  its own file context).
-- The **per-finding** `findings` legs carry the small finding object inline (no size
-  concern) — unchanged Spec A mechanism.
+  and **re-fetch** their diff: `gh pr diff -- <path>` (they run in a repo checkout with
+  a read token) — the OCR agent model (each subtask fetches its own file context).
+- The **per-finding** `findings` legs carry the small finding object inline (no
+  `matrix_fields`) — unchanged Spec A mechanism.
 
-Design note: rather than special-casing "file leg vs finding leg" in the engine, the
-cleanest cut is a per-fanout `matrix_fields` hint (which item keys to inline into the
-matrix; default = all, `expand-files` sets `["path"]`). **This is a candidate DSL
-addition — flag to the user before adding a schema field.** Fallback if the user
-prefers no DSL change: the agent ignores any inlined `diff` and always re-fetches, and
-we cap `expand-files`'s inlined diff by threading only `path` in the item's matrix
-projection via a generic "inline only `id_from` field" rule (no new schema key). The
-plan will resolve this in its first task with the user's steer.
+Schema/validator: add `matrix_fields` (optional array of non-empty strings) to the
+`expand` object in `protocol.schema.json`; `lib.validate_protocol` checks it is an
+array of strings when present. (No `id_from`-subset constraint: the leg id/key is
+already derived and stored in the manifest at expand time, so the matrix projection is
+purely about what the agent receives.) This is the ONLY DSL change in Spec B.
 
 ## 5. Evidence schemas + deterministic checks
 
@@ -243,7 +253,7 @@ increments:
 ## 11. Where things are (implementation map)
 
 - Engine: `.github/agent-factory/engine/{lib.py (run_merge_hook, validate_protocol),
-  next.py (matrix projection), paths.py}`.
+  next.py (matrix projection), paths.py, protocol.schema.json (`matrix_fields`)}`.
 - Protocol (new): `.github/agent-factory/protocols/code-review-ocr/` (protocol.json,
   `expand/expand-files` [copied from Spec A], `expand/expand-findings`,
   `*.evidence.schema.json`, `checks/*` [reuse `traces-exist-in-diff`, `schema-valid`;
@@ -257,10 +267,11 @@ increments:
 
 ## 12. Risks / open questions (resolve during planning)
 
-- **R1 — matrix projection mechanism (§4.2).** Per-fanout `matrix_fields` hint (a DSL
-  addition — needs user sign-off) vs. a generic "inline only the `id_from` field" rule
-  (no schema change) vs. "agent always re-fetches, ignore inlined diff". Resolve in
-  plan Task 1 with the user; default to the no-DSL-change option.
+- **R1 — matrix projection mechanism (§4.2). RESOLVED (user-approved):** add the
+  optional `expand.matrix_fields` schema key (default = full item, backward-compatible)
+  + a fail-loud size guard. `expand-files` sets `["path"]`; the findings fanout ships
+  the whole item. Chosen over a rigid `id_from`-only rule (breaks findings) and over
+  silent size-based auto-trim (implicit, against the fail-loud house style).
 - **R2 — depth budget.** The `filter` leaf is at depth 4; if any wrapping (e.g. a
   per-file preflight) is added later it risks `max_depth` 5. Keep the tree flat as
   designed; the validator will catch violations.
