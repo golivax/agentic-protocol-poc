@@ -1,0 +1,9 @@
+{
+  "finding_id": "sample/parse.py:5:1",
+  "keep": true,
+  "anchor": { "side": "RIGHT", "line": 5 },
+  "reason": "The unclosed file handle from open(path) is a real resource-management bug that leaks on any json.load exception; the anchor is exact.",
+  "path": "sample/parse.py",
+  "existing_code": "    data = json.load(open(path))",
+  "comment": "File handle returned by `open(path)` is never closed. If `json.load` raises (e.g., malformed JSON or missing file), the handle leaks. Use a context manager: `with open(path) as f: data = json.load(f)`."
+}

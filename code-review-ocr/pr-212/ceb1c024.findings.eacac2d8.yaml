@@ -1,6 +1,12 @@
 protocol: code-review-ocr
 instance: pr-212
-state: findings
+state: done
 iteration: 1
 gates: {}
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28608420111'
+  checks:
+    evidence-schema-valid: pass
+    filter-verdict-valid: pass
+  feedback: ''
