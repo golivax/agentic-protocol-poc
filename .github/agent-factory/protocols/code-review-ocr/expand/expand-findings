@@ -22,6 +22,9 @@ deliberately scoped OUT (a Task 8 concern)."""
 import json, os, sys
 
 def _load():
+    # 1) explicit test injection wins; 2) ENGINE_LOCAL fixture keeps the offline
+    # engine walk deterministic; 3) EXPAND_PRIOR_EVIDENCE_PATH is the LIVE per-leg
+    # main-review evidence path exported by lib.run_expander (Task-8 wiring).
     p = os.environ.get("EXPAND_FINDINGS_EVIDENCE")
     if p and os.path.isfile(p):
         with open(p) as f:
@@ -30,7 +33,12 @@ def _load():
         here = os.path.dirname(os.path.abspath(__file__))
         with open(os.path.join(here, "findings.fixture.json")) as f:
             return json.load(f)
-    raise SystemExit(f"expand-findings: no main-review evidence at {p!r}")
+    prior = os.environ.get("EXPAND_PRIOR_EVIDENCE_PATH")
+    if prior and os.path.isfile(prior):
+        with open(prior) as f:
+            return json.load(f)
+    raise SystemExit("expand-findings: no main-review evidence "
+                     "(EXPAND_FINDINGS_EVIDENCE / EXPAND_PRIOR_EVIDENCE_PATH unset, not ENGINE_LOCAL)")
 
 def main():
     ev = _load()

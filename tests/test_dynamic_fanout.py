@@ -1876,3 +1876,40 @@ def test_collect_fanout_evidence_resolves_subpipeline_terminal_substate(tmp_path
     rows = lib.collect_fanout_evidence(d, pid, inst, ["review"], review_node, proto=proto_data)
     assert rows[0]["state"] == "done"              # the leg cursor resolves correctly
     assert rows[0]["evidence"] == {"conclusion": "success", "survivors": [{"finding_id": "x"}]}
+
+
+def test_run_expander_exports_prior_evidence_path(tmp_path, monkeypatch):
+    """Live nested-fanout wiring: run_expander surfaces the enclosing sub-pipeline's
+    PREDECESSOR sub-state evidence path as EXPAND_PRIOR_EVIDENCE_PATH (how expand-findings
+    reaches its file leg's main-review evidence live). Fixed during Task-8 live debug."""
+    lib = _load_lib()
+    pdir = tmp_path / "proto"
+    (pdir / "expand").mkdir(parents=True)
+    _write_exec(pdir / "expand" / "probe.py", textwrap.dedent("""\
+        #!/usr/bin/env python3
+        import json, os, sys
+        open(os.path.join(sys.argv[1], "envprobe.json"), "w").write(json.dumps(dict(os.environ)))
+        print(json.dumps({"items": [{"x": "1"}]}))
+    """))
+    proto = {"name": "pp", "states": [
+        {"id": "review", "kind": "fanout",
+         "expand": {"hook": "e", "as": "f", "id_from": "$.p", "max_legs": 8},
+         "each": {"states": [
+             {"id": "prep", "kind": "agent", "workflow": "w", "next": "fan"},
+             {"id": "fan", "kind": "fanout",
+              "expand": {"hook": "probe", "as": "x", "id_from": "$.x", "max_legs": 8},
+              "each": {"workflow": "w2"}}]},
+         "next": "j"},
+        {"id": "j", "kind": "join", "of": "review"}]}
+    ppath = pdir / "protocol.json"; ppath.write_text(json.dumps(proto))
+    d, pid, inst, L = str(tmp_path), "pp", "pr-1", "leg9"
+    ev = lib.output_artifact_path(d, pid, inst, path=lib.state_path(proto, ["review", L, "prep"]))
+    os.makedirs(os.path.dirname(ev), exist_ok=True)
+    with open(ev, "w") as f:
+        json.dump({"ok": True}, f)
+    monkeypatch.setenv("NODE_PATH", f"review.{L}.fan")
+    fan_node = proto["states"][0]["each"]["states"][1]
+    lib.run_expander(d, pid, inst, str(ppath), fan_node)
+    seen = json.loads((tmp_path / "envprobe.json").read_text())
+    assert seen.get("EXPAND_PRIOR_EVIDENCE_PATH", "").endswith(".prep.evidence.json")
+    assert os.path.isfile(seen["EXPAND_PRIOR_EVIDENCE_PATH"])

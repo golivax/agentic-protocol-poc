@@ -249,6 +249,28 @@ def run_expander(dir_, pid, instance, proto_path, fanout_node):
     if tok:
         env["GH_TOKEN"] = tok                       # read-only; never the state/publish PAT
     env["EXPAND_PARAMS"] = json.dumps(fanout_node.get("expand", {}))
+    # Nested-fanout live wiring: surface the enclosing sub-pipeline's PREDECESSOR
+    # sub-state evidence path (e.g. `main-review` for a `findings` fanout) so an
+    # expander that derives items from a prior phase's evidence can read it. Best
+    # effort, nested-only, and only when the evidence actually exists — a top-level
+    # fanout (NODE_PATH of length 1) or a missing predecessor leaves it unset. This
+    # is a computed PATH, not a secret, so it does not weaken the token allowlist.
+    node_path_str = os.environ.get("NODE_PATH", "")
+    if node_path_str and "." in node_path_str:
+        try:
+            with open(proto_path) as _pf:
+                _proto = json.load(_pf)
+            tp = node_path_str.split(".")
+            seq_node = _paths.node_at_path(_proto, tp[:-1])
+            sub_ids = [s["id"] for s in (seq_node.get("states", []) if seq_node else [])]
+            if tp[-1] in sub_ids and sub_ids.index(tp[-1]) > 0:
+                prev_id = sub_ids[sub_ids.index(tp[-1]) - 1]
+                prev_ev = output_artifact_path(dir_, pid, instance,
+                                               path=state_path(_proto, tp[:-1] + [prev_id]))
+                if os.path.isfile(prev_ev):
+                    env["EXPAND_PRIOR_EVIDENCE_PATH"] = prev_ev
+        except Exception:
+            pass  # best effort; the expander fails loud if it genuinely needs this
     r = subprocess.run([path, dir_, instance], text=True, capture_output=True, env=env)
     if r.returncode != 0:
         raise ValueError(f"expander '{expand.get('hook')}' failed (exit {r.returncode}): {r.stderr.strip()}")
