@@ -1,0 +1,10 @@
+{
+  "examined": ["sample/parse.py"],
+  "plan_items": [
+    "Mutable default argument: `defaults={}` is a classic Python bug — the dict is created once and shared across all calls, so callers that rely on the default may observe state left by previous calls.",
+    "File handle leak: `open(path)` is called without a context manager (`with` statement), so the file descriptor may not be closed on error or normal exit.",
+    "No error handling: the function raises unguarded exceptions on missing file (`FileNotFoundError`), bad JSON (`json.JSONDecodeError`), or permission errors — callers get raw exceptions with no context.",
+    "Input mutation risk: the function mutates `data` (the loaded dict) in-place; if callers retain a reference they should not expect it to change.",
+    "No type annotations on function signature — minor but worth noting for a new file."
+  ]
+}
