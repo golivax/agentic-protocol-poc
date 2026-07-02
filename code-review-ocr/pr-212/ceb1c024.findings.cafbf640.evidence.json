@@ -1,0 +1,9 @@
+{
+  "finding_id": "sample/parse.py:4:1",
+  "keep": true,
+  "anchor": { "side": "RIGHT", "line": 4 },
+  "reason": "The mutable default argument `defaults={}` is present at the confirmed anchor and represents a real Python footgun with practical contamination risk across calls.",
+  "path": "sample/parse.py",
+  "existing_code": "def load_config(path, defaults={}):",
+  "comment": "Mutable default argument `defaults={}`: Python creates this dict once at function-definition time and reuses it across every call that omits the argument. If a caller ever mutates the returned value or passes a reference back, the shared default is contaminated for all subsequent calls. Use `defaults=None` and initialize with `if defaults is None: defaults = {}` inside the body."
+}
