@@ -1,0 +1,1 @@
+{"finding_id": "sample/calc.py:5:1", "path": "sample/calc.py", "existing_code": "    return total / len(nums)", "side": "RIGHT", "line": 5, "comment": "Division by zero when `nums` is empty: `len(nums)` is used as divisor with no guard. `average([])` raises `ZeroDivisionError`. Add an early return or raise a descriptive error for the empty-list case."}
