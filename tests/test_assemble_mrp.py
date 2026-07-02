@@ -86,3 +86,24 @@ def test_to_evidence_smm_compliance_null_when_leg_absent(tmp_path):
     p.write_text(json.dumps(pack))
     evidence = ev.evidence_from_pack(str(p))
     assert evidence["smm_compliance"] is None
+
+
+def test_to_evidence_surfaces_routed_spots(tmp_path):
+    asm = _load()
+    ev = _load(TO_EVIDENCE, "to_evidence")
+    spots = [{"spot_id": "s1", "cohort": "core", "diff_hunk_pointer": "a.py:10", "risk_source": "critique"}]
+    pack = asm.assemble({"pr": 7, "inputs": {}}, agent={"routed_spots": spots}, pr={})
+    p = tmp_path / "mrp.json"
+    p.write_text(json.dumps(pack))
+    evidence = ev.evidence_from_pack(str(p))
+    assert evidence["routed_spots"] == spots
+
+
+def test_to_evidence_routed_spots_empty_when_absent(tmp_path):
+    asm = _load()
+    ev = _load(TO_EVIDENCE, "to_evidence")
+    pack = asm.assemble({"pr": 7, "inputs": {}}, agent={}, pr={})
+    p = tmp_path / "mrp.json"
+    p.write_text(json.dumps(pack))
+    evidence = ev.evidence_from_pack(str(p))
+    assert evidence["routed_spots"] == []
