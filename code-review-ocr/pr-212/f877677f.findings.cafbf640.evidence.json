@@ -1,9 +1,0 @@
-{
-  "finding_id": "sample/parse.py:4:1",
-  "keep": true,
-  "anchor": { "side": "RIGHT", "line": 4 },
-  "reason": "Genuine Python antipattern: mutable default argument `defaults={}` is shared across all calls and could lead to silent state bleed if the function is extended to mutate it; the anchor resolves correctly to line 4 RIGHT in the diff.",
-  "path": "sample/parse.py",
-  "existing_code": "def load_config(path, defaults={}):",
-  "comment": "Mutable default argument: `defaults={}` creates a single dict object that is shared across all calls. If any caller or future code mutates the returned `data` dict in a way that bleeds back, or if the function body is extended to write to `defaults`, the mutation persists silently between calls. Use `defaults=None` and replace with `if defaults is None: defaults = {}` at the top of the function body."
-}

@@ -1,9 +1,0 @@
-{
-  "finding_id": "sample/parse.py:5:1",
-  "keep": true,
-  "anchor": { "side": "RIGHT", "line": 5 },
-  "reason": "The file handle leak is real and verifiable at RIGHT line 5; the pattern is a known portability hazard on non-CPython runtimes and the fix is unambiguous.",
-  "path": "sample/parse.py",
-  "existing_code": "    data = json.load(open(path))",
-  "comment": "File handle leak: `open(path)` is passed directly to `json.load` without a `with` statement, so the file descriptor is never explicitly closed. CPython's reference counting closes it promptly, but other Python implementations (PyPy, Jython) may not, leaking the file descriptor under load. Use `with open(path) as fh: data = json.load(fh)` instead."
-}
