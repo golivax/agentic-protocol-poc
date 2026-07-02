@@ -1,5 +1,8 @@
 ---
 name: "OCR Plan Agent (protocol state: review.<file>.plan)"
+concurrency:
+  group: "ocr-plan-${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}"
+  cancel-in-progress: false
 run-name: "OCR Plan Agent · cid:[${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}]"
 on:
   workflow_dispatch:

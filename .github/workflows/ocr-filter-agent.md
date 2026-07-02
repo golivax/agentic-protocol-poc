@@ -1,5 +1,8 @@
 ---
 name: "OCR Filter Agent (protocol state: review.<file>.findings.<finding>)"
+concurrency:
+  group: "ocr-filter-${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}"
+  cancel-in-progress: false
 run-name: "OCR Filter Agent · cid:[${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}]"
 on:
   workflow_dispatch:

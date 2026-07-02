@@ -1,5 +1,8 @@
 ---
 name: "OCR Main Review Agent (protocol state: review.<file>.main-review)"
+concurrency:
+  group: "ocr-main-${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}"
+  cancel-in-progress: false
 run-name: "OCR Main Review Agent · cid:[${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}]"
 on:
   workflow_dispatch:
