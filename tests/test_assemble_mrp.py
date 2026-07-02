@@ -30,7 +30,7 @@ MM_EVIDENCE = {
 def test_normalize_compliance_maps_engine_evidence_to_custody_shape():
     mod = _load()
     out = mod._normalize_compliance(MM_EVIDENCE)
-    assert out["demo"] is False
+    assert "demo" not in out
     assert out["verdict"] == "diverges"
     dv = out["divergences"][0]
     # engine {decision, detail, evidence, fix} -> custody {mm_doc, decision, contradiction, evidence_path, fix}
@@ -53,13 +53,12 @@ def test_assemble_uses_real_compliance_when_present():
     mod = _load()
     task_ctx = {"pr": 7, "inputs": {"mm-compliance": MM_EVIDENCE}}
     pack = mod.assemble(task_ctx, agent={}, pr={})
-    assert pack["smm_compliance"]["demo"] is False
+    assert "demo" not in pack["smm_compliance"]
     assert pack["smm_compliance"]["verdict"] == "diverges"
     assert pack["smm_compliance"]["divergences"][0]["contradiction"] == "adds a second scheduler in the worker"
 
 
-def test_assemble_falls_back_to_demo_when_leg_absent():
+def test_assemble_smm_compliance_null_when_leg_absent():
     mod = _load()
     pack = mod.assemble({"pr": 7, "inputs": {}}, agent={}, pr={})
-    assert pack["smm_compliance"] == mod.DEMO_COMPLIANCE
-    assert pack["smm_compliance"]["demo"] is True
+    assert pack["smm_compliance"] is None
