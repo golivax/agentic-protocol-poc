@@ -1938,3 +1938,82 @@ def test_set_check_run_prefers_check_run_token(monkeypatch):
     monkeypatch.delenv("CHECK_RUN_TOKEN")
     lib.set_check_run("code-review-ocr", "abc123", "completed", "success", "t", "s")
     assert captured["env"]["GH_TOKEN"] == "pat-token"          # falls back to PUBLISH_TOKEN
+
+
+# --- Guard: dynamic-fanout agents must not share a concurrency group ---------
+def _collect_workflows(node):
+    """Every `workflow` field reachable under `node`."""
+    wf = set()
+    if isinstance(node, dict):
+        if node.get("workflow"):
+            wf.add(node["workflow"])
+        for v in node.values():
+            wf |= _collect_workflows(v)
+    elif isinstance(node, list):
+        for it in node:
+            wf |= _collect_workflows(it)
+    return wf
+
+
+def _dynamic_leg_workflows(proto):
+    """Workflows that run once per leg (concurrently) inside a DYNAMIC fanout —
+    these need a per-dispatch concurrency group or gh-aw's shared default group
+    (`gh-aw-<workflow>`) makes sibling legs cancel each other."""
+    out = set()
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("kind") == "fanout" and node.get("expand"):
+                out.update(_collect_workflows(node.get("each", {})))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for it in node:
+                walk(it)
+    walk(proto.get("states", []))
+    return out
+
+
+def _lock_concurrency_group(lock_path):
+    """The TOP-LEVEL concurrency group string of a compiled gh-aw lock, or None."""
+    import re
+    top = False
+    for line in open(lock_path):
+        if line.startswith("concurrency:"):
+            top = True
+            continue
+        if top:
+            m = re.match(r"\s+group:\s*[\"']?(.*?)[\"']?\s*$", line)
+            if m:
+                return m.group(1)
+            if not line.startswith(" "):
+                break
+    return None
+
+
+def test_dynamic_fanout_agents_have_per_cid_concurrency():
+    """Any agent used as a leg of a DYNAMIC fanout runs concurrently once per leg.
+    gh-aw's default concurrency group is `gh-aw-<workflow>` (shared across all runs
+    of that workflow), so sibling legs would CANCEL each other and silently drop
+    results. Such an agent's .md MUST set a per-dispatch concurrency group keyed on
+    the aw_context cid. This guard fails loudly if a fan-out agent lacks it.
+    (code-review is safe because its legs use DIFFERENT workflows; this catches the
+    single-`each.workflow` case — see docs/AUTHORING.md.)"""
+    import json as _json
+    wf_dir = ROOT / ".github/workflows"
+    offenders = []
+    checked = 0
+    for proto_json in (ROOT / ".github/agent-factory/protocols").glob("*/protocol.json"):
+        proto = _json.load(open(proto_json))
+        for wf in _dynamic_leg_workflows(proto):
+            lock = wf_dir / f"{wf}.lock.yml"
+            if not lock.is_file():
+                continue  # e.g. an uncompiled/stub agent; not this guard's concern
+            checked += 1
+            group = _lock_concurrency_group(lock)
+            if not group or ("aw_context" not in group and ".cid" not in group):
+                offenders.append(f"{proto_json.parent.name}:{wf} → group={group!r}")
+    assert checked > 0, "no dynamic-fanout agent locks found to check"
+    assert not offenders, (
+        "dynamic-fanout agents with a SHARED concurrency group (siblings will cancel "
+        "each other + drop results) — set a per-cid `concurrency` in the .md:\n  "
+        + "\n  ".join(offenders))

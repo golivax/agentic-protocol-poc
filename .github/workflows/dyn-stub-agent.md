@@ -1,5 +1,8 @@
 ---
 name: "Dyn Stub Agent (protocol state: review)"
+concurrency:
+  group: "dyn-stub-${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}"
+  cancel-in-progress: false
 run-name: "Dyn Stub Agent · cid:[${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}]"
 on:
   workflow_dispatch:
