@@ -25,7 +25,6 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 COPIES = [
     ROOT / ".github/agent-factory/protocols/code-review/publish/conclude-fix.py",
-    ROOT / ".github/agent-factory/protocols/code-review-factory/publish/conclude-fix.py",
     ROOT / ".github/agent-factory/protocols/code-review-reviewonly/publish/conclude-fix.py",
 ]
 
