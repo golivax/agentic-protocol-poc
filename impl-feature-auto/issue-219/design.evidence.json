@@ -1,0 +1,79 @@
+{
+  "spec_path": "docs/superpowers/specs/2026-07-02-is-terminal-state-helper-design.md",
+  "plan_path": "docs/superpowers/plans/2026-07-02-is-terminal-state-helper.md",
+  "summary": "Spec and plan for adding lib.is_terminal_state(state) -> bool to .github/agent-factory/engine/lib.py. The function returns True for exactly 'done', 'failed', 'blocked' and False for any other value (including None and non-strings) without raising. Placed after has_fanout (~line 1388) to group all is_X state-query predicates together. Tests in a new focused file tests/test_is_terminal_state.py covering all 8 acceptance criteria.",
+  "run_id": "28618406330",
+  "ledger": [
+    {
+      "id": "L1",
+      "category": "DECISION",
+      "what": "Placement of is_terminal_state in lib.py",
+      "why": "lib.py is long (~1800 lines); the new function should sit near related state-query helpers (is_multiphase, has_fanout) for discoverability",
+      "what_i_did": "Placed after has_fanout (line ~1387), before _render_leg_section. This keeps all is_X state-query predicates together without splitting any logical block",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Pure addition, no surrounding code changes"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "A function can be removed without side effects on any existing caller"
+      },
+      "revisit_if": "The placement check fails or maintainers request a different location"
+    },
+    {
+      "id": "L2",
+      "category": "ASSUMPTION",
+      "what": "'blocked' is a terminal process state alongside 'done' and 'failed'",
+      "why": "The issue explicitly lists it; verified it is used consistently in the engine as a terminal halt state",
+      "what_i_did": "Verified: PHASE_LABEL_DEFAULTS lists 'blocked' as a terminal-label key (lib.py:803-808); next.py writes halted.reason='blocked' when an approval gate is rejected/overridden; not used as an intermediate state in any protocol fixture",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Affects only the set literal inside the new function; existing code is unchanged"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "The set literal in is_terminal_state can be updated if a new terminal state is added"
+      },
+      "revisit_if": "The engine acquires a fourth terminal state; the function would need updating",
+      "verified": true
+    },
+    {
+      "id": "L3",
+      "category": "DECISION",
+      "what": "New dedicated test file tests/test_is_terminal_state.py rather than appending to test_engine.py or test_decide.py",
+      "why": "The issue asks for focused pytest unit tests; test_decide.py tests the decide() fold; test_engine.py covers path-CLI and CAS",
+      "what_i_did": "Created tests/test_is_terminal_state.py with one test per acceptance criterion, mirroring the test-per-concern pattern used by test_correlation.py and test_decide.py",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "New file only; no existing test file is modified"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Can be merged into test_engine.py later without any functional change"
+      },
+      "revisit_if": "Repo style guide requests consolidation of small-helper tests"
+    },
+    {
+      "id": "L4",
+      "category": "ASSUMPTION",
+      "what": "No CLI subcommand needed for is_terminal_state",
+      "why": "The issue makes no mention of a CLI subcommand; existing CLI-exposed functions are called from bash in GHA workflows; this predicate has no such use case today",
+      "what_i_did": "Omit CLI registration. Verified no existing .yml file has a plausible call site for this predicate",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Omission only; nothing is removed or changed"
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Adding a CLI subcommand later is a small, isolated change in _cli()"
+      },
+      "revisit_if": "A GHA workflow step needs to call is_terminal_state from bash",
+      "verified": true
+    }
+  ],
+  "read_these_first": ["L2", "L1", "L3", "L4"]
+}
