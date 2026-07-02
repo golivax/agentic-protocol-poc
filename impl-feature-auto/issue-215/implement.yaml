@@ -1,7 +1,12 @@
 protocol: impl-feature-auto
 instance: issue-215
-state: implement
+state: failed
 iteration: 1
 gates: {}
 head_sha: 000c71542da6011d8a40b8aa9ac10528fe26bc5d
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28615046486'
+  checks:
+    implement-schema-valid: fail
+  feedback: summary missing/trivial; pr_branch '' not of form impl-feature-auto/issue-<N>
