@@ -991,6 +991,11 @@ def decide(results, iterations_remaining):
     return process, block_fail
 
 
+def is_terminal_state(state):
+    """Return True iff *state* is a terminal engine state (done/failed/blocked)."""
+    return state in {"done", "failed", "blocked"}
+
+
 def upsert_status_comment(sf, pr, body):
     """
     upsert_status_comment <state_file> <pr> <body>

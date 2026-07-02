@@ -173,3 +173,26 @@ def test_lib_instance_file(tmp_path):
                          extra_env={"STATE_REMOTE": str(tmp_path)})
     assert rc == 0
     assert out == "/s/fanout-mini/pr-5/_instance.yaml"
+
+
+# ===========================================================================
+# Section: is_terminal_state
+# ===========================================================================
+
+import sys as _sys
+_sys.path.insert(0, str(ENGINE))
+from lib import is_terminal_state  # noqa: E402
+
+
+@pytest.mark.parametrize("state,expected", [
+    ("done",    True),
+    ("failed",  True),
+    ("blocked", True),
+    ("design",  False),
+    ("",        False),
+    ("iterate", False),
+    (None,      False),
+    (42,        False),
+])
+def test_is_terminal_state(state, expected):
+    assert is_terminal_state(state) == expected
