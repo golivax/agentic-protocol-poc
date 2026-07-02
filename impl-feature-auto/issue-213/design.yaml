@@ -1,7 +1,16 @@
 protocol: impl-feature-auto
 instance: issue-213
 state: design
-iteration: 1
+iteration: 2
 gates: {}
 head_sha: ba9a0b70f72ab3e2bc387bd0b20dfbb136644c1b
-history: []
+history:
+- iteration: 1
+  agent_run_id: '28612590813'
+  checks:
+    ledger-wellformed: fail
+    ledger-consistent: pass
+    read-these-first-consistent: pass
+    spec-present: pass
+    plan-present: pass
+  feedback: 'L4: ASSUMPTION must carry verified:true (verify the code fact)'
