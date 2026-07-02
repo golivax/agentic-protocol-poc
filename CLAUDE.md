@@ -47,7 +47,20 @@ Four protocols ship under `.github/agent-factory/protocols/`:
   three agent steps — `phase1` (build the Question Tree) → `answering` (auto-answer
   the OPEN leaves via code/web research) → `phase2` (synthesize docs). The combine
   hook (`publish/push-mental-model.py`) is the only place that writes a
-  non-`agentic-state` branch.
+  non-`agentic-state` branch. This is the **non-interactive** pathway.
+- **`recover-mental-model-interactive`** — the **interactive** pathway: identical to
+  `recover-mental-model` except socratic `answering` is a human **gate**
+  (`kind:gate`, `channel:issue`) instead of an agent. When it opens, the engine
+  posts a dedicated GitHub **issue** with the OPEN questions in a parseable YAML
+  block + a machine marker `<!-- agentic-mm: protocol=… instance=… gate=… -->`. A
+  human answers with `/answer <id>: <value>` comments on that issue;
+  `mm-interactive-resume.yml` (which owns answer-comments on marked issues — the
+  orchestrator skips non-PR issue comments) drives the engine's `answer` command,
+  which closes the issue and resumes `phase2` once every question is answered.
+  Selected by the UI passing `protocol=recover-mental-model-interactive` to the
+  same `workflow_dispatch`. The issue-channel gate lives in `lib.open_gate`
+  (`create_issue`/`close_issue`); `phase2` uses `mm-socratic-phase2-interactive-agent`
+  (consumes the gate's answers instead of an answering agent's artifact).
 - **`deep-review-stub`** — a depth-4 nested fan-out/sub-pipeline tree
   (`/deep-review`), exercising the recursive engine. Stub agents.
 
@@ -61,7 +74,7 @@ Two other distribution-facing components live beside the engine:
   (`dist/README.md`).
 - **`api/`** — a read-only FastAPI visibility service (live status/stats of a
   `<protocol, PR>` run). It reads state as a data contract; it never imports the
-  engine. Under active development on `feat/protocol-visibility-api`.
+  engine. Merged to `main` (`api/README.md` has run instructions).
 
 Minimal engine shapes used in capability/regression testing live under
 `tests/fixtures/` (e.g. `cap-single-agent/`, `simple-fanout/`,

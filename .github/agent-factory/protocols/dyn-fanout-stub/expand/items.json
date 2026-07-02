@@ -1,0 +1,4 @@
+[
+  { "path": "src/example_one.py", "diff": "diff --git a/src/example_one.py b/src/example_one.py\n@@ -1 +1 @@\n-old\n+new\n" },
+  { "path": "src/example_two.py", "diff": "diff --git a/src/example_two.py b/src/example_two.py\n@@ -1 +1 @@\n-old\n+new\n" }
+]

@@ -72,6 +72,31 @@ either PR-targeted (code-review, unchanged) or ref-targeted (this).
 - **Still required to actually push** the branch: the `PUBLISH_TOKEN`/PAT wiring
   noted above.
 
+### Interactive pathway — `recover-mental-model-interactive` (2026-06-29)
+
+A second protocol for an **interactive** recovery (the non-interactive one above is
+unchanged). It is byte-identical except the socratic `answering` node is a human
+**gate** (`kind:gate`, `questions_from:phase1`, `channel:issue`) instead of an agent
+— reviving the original stub's `clarify`-gate idea, now over a dedicated issue.
+
+- **Issue-channel gate:** `lib.open_gate(channel="issue")` calls a new `lib.create_issue`
+  to open an issue whose body is `lib.issue_question_body(...)` — a machine marker
+  `<!-- agentic-mm: protocol=<id> instance=<inst> gate=<path> -->` + a parseable
+  ```yaml`questions:`` block + the `/answer` instructions. The issue number is stored
+  on `gates.issue`. `advance.py` passes the gate node's `channel` (new optional schema
+  field, default `comment`).
+- **Resume:** `mm-interactive-resume.yml` (`on:issue_comment`) owns answer-comments on
+  marked issues (the orchestrator + `lib.route` still skip non-PR issue comments, which
+  is now correct). It reads the marker → runs `next.py … answer` for that instance.
+  `do_answer` posts feedback to the issue, and on full coverage `lib.close_issue`s it
+  and dispatches the `phase2` continue. **Selection:** the UI passes
+  `protocol=recover-mental-model-interactive` to the same `workflow_dispatch`.
+- **phase2 variant:** `mm-socratic-phase2-interactive-agent` consumes the gate's answers
+  (`inputs.answers`) applied onto the restored phase-1 tree, instead of an answering
+  agent's artifact. `phase1` (shared) now re-emits `questions[]` (harmless to the
+  non-interactive path, whose answering agent ignores it).
+- **Token:** issue create/close needs `issues: write` — covered by `POC_DISPATCH_TOKEN`.
+
 The historical sections below still say `recover-mental-model-stub` — they are a
 dated record from when it was a stub and are left unchanged.
 
@@ -135,6 +160,68 @@ The v1/v2/v3/v4 milestone sections below are a dated record of what was built
 in sequence. Protocol names (`grumpy-review`, `multi-grumpy`) inside those
 clearly-historical sections refer to the protocols as they existed at that
 milestone; they are now retired.
+
+## Dynamic (data-driven) fan-out — engine capability, offline-only (2026-06-30)
+
+Design: `docs/superpowers/specs/2026-06-30-dynamic-fanout-design.md`. DSL
+reference: `docs/PROTOCOL-DSL.md` (Dynamic fan-out).
+
+A `fanout` node can now derive its legs **at runtime** from a trusted expander
+hook (`expand`+`each`) instead of a static `branches[]` array — a persisted
+`<tree-path>.__manifest.yaml` is the durable, runtime-computed analog of
+`branches[]` (leg ids/keys/items), read (not re-derived) on re-entry. `join`
+gained an optional `policy` (`all`/`any`/`quorum:N`) deciding the barrier's
+success/fail verdict once every leg is terminal; a `merge` input gained
+`from_fanout` to reduce over every leg's persisted evidence at once. Additive
+and backward-compatible: every existing protocol/fixture is byte-unchanged, and
+`policy` defaults to `all` (today's strict AND, unchanged).
+
+What is / isn't covered here:
+- **Engine-testable (pytest, `ENGINE_LOCAL`), and done:** expansion + keying +
+  fail-loud over-cap/expander-failure/collision handling, manifest persistence
+  and CAS, `resolve_leg_ids`/`join_policy_satisfied`/`collect_fanout_evidence`
+  (the `from_fanout` reducer), validator rules (Rules 4-6 in
+  `lib._validate_sequence`), the JSON Schema, and
+  offline walks over four OCR-shaped fixtures (`tests/fixtures/dyn-fanout-flat`,
+  `dyn-fanout-subpipeline`, `dyn-nested`, `dyn-fanout-badcap`) covering flat legs,
+  a sub-pipeline `each`, nested dynamic fan-out, and the over-cap guard.
+- **Milestone 2 Spec A (live wiring), done:** live GitHub-Actions
+  runtime-matrix wiring for a manifest-expanded leg set (the planner emits one
+  matrix leg per manifest entry); staging the per-leg item to the agent via
+  `matrix.leg.inputs` → `aw_context.inputs` (inline-context mechanism, not a
+  filesystem `inputs/<as>.json`); verified offline via walks over the minimal
+  `dyn-fanout-stub` protocol (a real diff-parsing `expand-files` expander, `/dyn-stub`
+  trigger), and **live-verified end-to-end on PR #196**: `/dyn-stub` fanned out
+  over the 2 changed files → one `dyn-stub-agent` per leg (each received its own
+  file via `matrix.leg.inputs`) → both legs' `examined-file` checks passed →
+  `join(all)` → `done`, with the PR status comment rendering both dynamic legs.
+  Zero live-only functional bugs (one cosmetic follow-up: gh-aw's default
+  no-safe-output issue, suppressed via `dyn-stub-agent`'s `noop.report-as-issue:false`).
+- **Milestone 2 Spec B (`code-review-ocr` protocol), done + live-verified:** the
+  full nested open-code-review mimic — `review` fanout over changed files →
+  per-file `plan → main-review → findings`(nested dynamic fanout over findings) `→
+  join-findings → reduce` → top `join-review → merge` (cross-file dedup + one
+  posted GitHub review), fully automated, join policy `any`. Delivered the two
+  deferred infra pieces: **nested `from_fanout`** (`lib.run_merge_hook` resolves a
+  nested fanout's tree-path; `collect_fanout_evidence` resolves a sub-pipeline
+  leg's terminal sub-state evidence) + a **leg-terminal nested merge**
+  (`next.py`), and the **matrix leg-input size** fix via the `expand.matrix_fields`
+  DSL key (files inline only `path`; agents re-fetch their diff). OCR-native checks
+  (`evidence-schema-valid` + flat-shape `traces-exist-in-diff` + `filter-verdict-valid`)
+  and three read-only agents. **Live-verified end-to-end on PR #212**: `/ocr-review`
+  found 4 real issues across 2 files, filtered per-finding, and posted one inline
+  GitHub review. One live-only bug fixed (`run_expander` now exports the enclosing
+  sub-pipeline's predecessor-phase evidence path as `EXPAND_PRIOR_EVIDENCE_PATH` so
+  `expand-findings` reaches its file leg's `main-review` evidence). Minor cosmetic
+  backlog: the terminal-merge phase label reads `Merge` rather than a `done` label.
+- **Expander credential-scoping (design spec §14), enforced:** `lib.run_expander`
+  now builds the subprocess env from a strict allowlist, handing the expander
+  only a read-only token (`EXPANDER_TOKEN`), never `STATE_REMOTE` /
+  `PUBLISH_TOKEN` / the broad dispatch/state PAT.
+- **Status-comment and protocol-lint dynamic-leg rendering, done:** both
+  `lib.render_fanout_status_body` and the protocol-lint tree renderer now read
+  the manifest when `expand` is present, so dynamic legs render correctly in the
+  human-readable status comment and the tree visualization.
 
 ## Nested sub-workflow branches + data-carrying gate (engine — in progress, 2026-06-22)
 

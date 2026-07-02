@@ -90,6 +90,33 @@ drift from them:
 Full detail and the security rationale: [`HOW-IT-WORKS.md` §4.3 / §4.7](HOW-IT-WORKS.md#43-writing-a-deterministic-check)
 and the **Contracts (ABIs)** section of [`../CLAUDE.md`](../CLAUDE.md).
 
+### Gotcha: a fan-out agent needs a per-dispatch concurrency group
+
+When several legs of a fan-out use the **same** agent workflow — always the case for
+a **dynamic** fanout (`expand` + `each.workflow`), and for a nested fan-out over
+findings — those legs' agent runs would collide on gh-aw's **default** concurrency
+group, `gh-aw-${{ github.workflow }}` (shared by every run of that workflow). GitHub
+then **cancels the sibling legs** ("higher priority waiting request exists"), and
+their evidence is silently lost — the join still completes (policy `any`), so you
+get a passing run with *dropped* results and a spurious "Review failed" on the
+cancelled leg's check.
+
+The engine already hands each leg a unique correlation id (`aw_context.cid`); the
+agent must key its concurrency group on it. In the agent's `*.md` frontmatter add:
+
+```yaml
+concurrency:
+  group: "<agent-name>-${{ fromJSON(github.event.inputs.aw_context || '{}').cid }}"
+  cancel-in-progress: false
+```
+
+`concurrency` is a first-class gh-aw frontmatter field (it compiles straight into the
+lock). The engine cannot inject this at dispatch time — the group lives in the
+compiled workflow file — so it is an **authoring requirement**, enforced by
+`tests/test_dynamic_fanout.py::test_dynamic_fanout_agents_have_per_cid_concurrency`
+(a fan-out agent left on the shared default fails that guard). `code-review` avoids
+the issue only because its two legs use *different* workflows (grumpy vs security).
+
 ---
 
 ## 4. Validate & visualize your protocol

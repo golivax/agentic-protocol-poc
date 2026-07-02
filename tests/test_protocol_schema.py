@@ -53,3 +53,29 @@ def test_schema_rejects_a_typo(validator):
         "states": [{"id": "solo", "kind": "agent", "wokflow": "solo-agent"}],
     }
     assert list(validator.iter_errors(bad)), "schema should reject 'wokflow' typo"
+
+
+def test_trigger_target_field_allowed():
+    """The trigger schema must accept an optional `target` of pr|issue."""
+    import json, pathlib, jsonschema
+    root = pathlib.Path(__file__).resolve().parent.parent
+    schema = json.load(open(root / ".github/agent-factory/engine/protocol.schema.json"))
+    proto = {
+        "name": "t",
+        "triggers": [
+            {"on": "issue_comment", "comment_prefix": "/x", "command": "start", "target": "issue"}
+        ],
+        "states": [{"id": "a", "kind": "agent", "workflow": "w"}],
+    }
+    jsonschema.validate(proto, schema)  # must not raise
+
+
+def test_trigger_target_rejects_unknown_value():
+    import json, pathlib, jsonschema, pytest
+    root = pathlib.Path(__file__).resolve().parent.parent
+    schema = json.load(open(root / ".github/agent-factory/engine/protocol.schema.json"))
+    proto = {"name": "t",
+             "triggers": [{"on": "issue_comment", "command": "start", "target": "wat"}],
+             "states": [{"id": "a", "kind": "agent", "workflow": "w"}]}
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(proto, schema)

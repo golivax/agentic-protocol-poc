@@ -1,0 +1,23 @@
+{
+  "$schema": "../../../.github/agent-factory/engine/protocol.schema.json",
+  "name": "ocr-nested",
+  "states": [
+    { "id": "review", "kind": "fanout",
+      "expand": { "hook": "expand-files", "as": "file", "id_from": "$.path", "max_legs": 8, "matrix_fields": ["path"] },
+      "each": { "states": [
+        { "id": "main", "kind": "agent", "workflow": "main-agent",
+          "evidence": "leg.evidence.schema.json", "checks": [ { "run": "schema-valid" } ], "next": "findings" },
+        { "id": "findings", "kind": "fanout",
+          "expand": { "hook": "expand-findings", "as": "finding", "id_from": "$.fid", "max_legs": 8 },
+          "each": { "workflow": "filter-agent", "evidence": "leg.evidence.schema.json",
+                    "checks": [ { "run": "schema-valid" } ] },
+          "next": "jf" },
+        { "id": "jf", "kind": "join", "of": "findings", "policy": "any", "next": "reduce" },
+        { "id": "reduce", "kind": "merge", "hook": "reduce-file",
+          "inputs": [ { "from_fanout": "findings", "as": "findings" } ] }
+      ] },
+      "next": "jr" },
+    { "id": "jr", "kind": "join", "of": "review", "policy": "any", "next": "merge" },
+    { "id": "merge", "kind": "merge", "hook": "post", "inputs": [ { "from_fanout": "review", "as": "files" } ] }
+  ]
+}

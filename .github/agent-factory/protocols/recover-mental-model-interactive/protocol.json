@@ -1,0 +1,92 @@
+{
+  "$schema": "../../engine/protocol.schema.json",
+  "name": "recover-mental-model-interactive",
+  "version": "1.0.0",
+  "min_engine_version": "1.0.0",
+  "triggers": [
+    { "on": "issue_comment", "comment_prefix": "/answer", "command": "answer" }
+  ],
+  "states": [
+    {
+      "id": "recover",
+      "kind": "fanout",
+      "label": "recover mental model (interactive)",
+      "branches": [
+        {
+          "id": "legion",
+          "label": "codebase overview",
+          "workflow": "mm-legion-agent",
+          "evidence": "legion.evidence.schema.json",
+          "max_iterations": 1,
+          "checks": [{ "run": "legion-artifacts", "on_fail": "block" }]
+        },
+        {
+          "id": "codeset",
+          "label": "per-file context and co-change analysis",
+          "workflow": "mm-codeset-agent",
+          "evidence": "codeset.evidence.schema.json",
+          "max_iterations": 1,
+          "checks": [{ "run": "codeset-artifacts", "on_fail": "block" }]
+        },
+        {
+          "id": "ubiquitous-language",
+          "label": "domain modelling",
+          "workflow": "mm-ubiquitous-language-agent",
+          "evidence": "ubiquitous-language.evidence.schema.json",
+          "max_iterations": 1,
+          "checks": [{ "run": "ubiquitous-language-present", "on_fail": "block" }]
+        },
+        {
+          "id": "socratic",
+          "label": "architecture decision record",
+          "states": [
+            {
+              "id": "phase1",
+              "kind": "agent",
+              "workflow": "mm-socratic-phase1-agent",
+              "evidence": "socratic-phase1.evidence.schema.json",
+              "max_iterations": 1,
+              "checks": [
+                { "run": "socratic-phase1-present", "on_fail": "block" },
+                { "run": "questions-present", "on_fail": "block" }
+              ]
+            },
+            {
+              "id": "answering",
+              "kind": "gate",
+              "questions_from": "phase1",
+              "channel": "issue",
+              "checks": [{ "run": "answers-coverage", "on_fail": "iterate" }]
+            },
+            {
+              "id": "phase2",
+              "kind": "agent",
+              "workflow": "mm-socratic-phase2-interactive-agent",
+              "evidence": "socratic-phase2.evidence.schema.json",
+              "max_iterations": 1,
+              "inputs": [
+                { "from": "phase1", "as": "tree" },
+                { "from": "answering", "as": "answers" }
+              ],
+              "checks": [{ "run": "socratic-docs-present", "on_fail": "block" }]
+            }
+          ]
+        }
+      ],
+      "next": "join"
+    },
+    { "id": "join", "kind": "join", "of": "recover", "next": "combine" },
+    {
+      "id": "combine",
+      "kind": "merge",
+      "hook": "push-mental-model",
+      "inputs": [
+        { "from": "legion", "as": "legion" },
+        { "from": "codeset", "as": "codeset" },
+        { "from": "ubiquitous-language", "as": "ubiquitous-language" },
+        { "from": "socratic", "as": "socratic" }
+      ],
+      "next": "done"
+    }
+  ]
+}

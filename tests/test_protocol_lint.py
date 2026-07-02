@@ -290,3 +290,9 @@ def test_semantic_only_when_jsonschema_absent(monkeypatch):
                            jsonschema_module=None)
     assert report.ok
     assert report.schema_skipped
+
+
+def test_impl_feature_auto_protocol_lints_clean():
+    proto = PROTOCOLS / "impl-feature-auto/protocol.json"
+    out, err, rc = _run(proto)
+    assert rc == 0, f"lint failed:\n{out}\n{err}"

@@ -84,7 +84,8 @@ scanning every protocol's `triggers` block.
 |----------|-------|----------|----------------------|
 | **`code-review`** | `preflight` fan-out (6 legs: `spec-solves-issue` ∥ `plan-implements-spec` ∥ `code-implements-plan` ∥ `mm-compliance` ∥ `docs-updated-appropriately` ∥ `tests-updated-appropriately`) → `join-preflight` → `preflight-gate` → `overview` (+risk) → `review` fan-out (5 dimensions) → `join-review` → `triage` → `fix` → `post-fix` fan-out (`context` ∥ `mm-updater`→`mm-gate`) → `join-post-fix` → `mrp` → done | `/review` · `/override` · `/mm-answer` | The production pipeline, migrated from the custody-story gh-aw flow and live-verified end-to-end: a deep multi-phase DAG with a 6-leg preflight fan-out, a 5-leg review fan-out, a parallel mental-model-update phase, and cross-phase `inputs[]`, on Codex agents. |
 | **`code-review-v1`** | `preflight` → `review` fan-out (`grumpy` ∥ `security`) → `join` (AND-barrier) → `approval` (human gate) → done | `/v1-review`, then `/approve` · `/request-changes` · `/reject` · `/v1-override` | The original simpler example, preserved: parallel agents with bounded iterate-and-publish, a strict join gate, and a pause-and-require human approval gate. |
-| **`recover-mental-model`** | four parallel recovery methods (`legion` ∥ `codeset` ∥ `ubiquitous-language` ∥ `socratic` sub-pipeline) → join → merge that pushes a `_mental_model` branch | `workflow_dispatch` (UI/API, against a branch/ref) | A real multi-method pipeline: parallel agents and a fully-automated sub-pipeline (socratic `phase1 → answering → phase2`, all agent steps), joined into a merge hook that collects all four outputs into one orphan `_mental_model` branch. Started by a UI with a token; status is polled from the visibility API by a supplied instance id. |
+| **`recover-mental-model`** | four parallel recovery methods (`legion` ∥ `codeset` ∥ `ubiquitous-language` ∥ `socratic` sub-pipeline) → join → merge that pushes a `_mental_model` branch | `workflow_dispatch` (UI/API, against a branch/ref) | The **non-interactive** path: parallel agents and a fully-automated socratic sub-pipeline (`phase1 → answering → phase2`), joined into a merge hook that collects all four outputs into one orphan `_mental_model` branch. Status polled from the visibility API by a supplied instance id. |
+| **`recover-mental-model-interactive`** | same as above, but socratic `answering` is a human **issue gate** | `workflow_dispatch`, then `/answer <id>: <value>` on the question issue | The **interactive** path: at `answering` the engine opens a GitHub issue with the OPEN questions (parseable + a routing marker); a human answers via issue comments; `mm-interactive-resume.yml` resumes the run and auto-closes the issue. |
 | **`deep-review-stub`** | depth-4 nested fan-out / sub-pipeline tree | `/deep-review` | The recursive engine: arbitrarily-nested fan-outs and sub-pipelines on one `NODE_PATH` coordinate, bounded by `max_depth`. |
 
 The `-stub` protocol (`deep-review-stub`) uses trivial stand-in agents — it exists to
@@ -165,9 +166,18 @@ visibility into the engine: which protocols are installed, the live status and
 stats of a `<protocol, PR>` run, open gates, and engine-wide aggregates. It reads
 the GitHub REST API at request time and **interprets the state-YAML as a
 read-only data contract** — it never imports the engine and never writes to the
-state branch. _Under active development on the `feat/protocol-visibility-api`
-branch (with its design spec and `docs/API-BACKLOG.md`); not yet merged to
-`main`._
+state branch. See `api/README.md` for how to run it and `docs/API-BACKLOG.md`
+for known limitations.
+
+```bash
+export API_BEARER_TOKEN=...   # token clients must send
+export GITHUB_TOKEN=...       # server-side GitHub token (repo read)
+export GITHUB_REPO=owner/repo
+uv run uvicorn api.main:app --port 8000
+```
+
+OpenAPI docs at `/docs`; every endpoint except `/healthz` needs
+`Authorization: Bearer $API_BEARER_TOKEN`.
 
 ---
 

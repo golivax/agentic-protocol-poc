@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../.github/agent-factory/engine/protocol.schema.json",
+  "name": "dyn-nested",
+  "states": [
+    { "id": "review", "kind": "fanout",
+      "expand": { "hook": "expand-items", "as": "file", "id_from": "$.path", "max_legs": 8 },
+      "each": { "states": [
+        { "id": "prep", "kind": "agent", "workflow": "prep-agent",
+          "evidence": "leg.evidence.schema.json", "checks": [ { "run": "schema-valid" } ], "next": "comments" },
+        { "id": "comments", "kind": "fanout",
+          "expand": { "hook": "expand-comments", "as": "comment", "id_from": "$.cid", "max_legs": 8 },
+          "each": { "workflow": "comment-agent",
+                    "evidence": "leg.evidence.schema.json", "checks": [ { "run": "schema-valid" } ] },
+          "next": "cjoin" },
+        { "id": "cjoin", "kind": "join", "of": "comments", "policy": "any" }
+      ] },
+      "next": "join" },
+    { "id": "join", "kind": "join", "of": "review", "policy": "any", "next": "done" }
+  ]
+}

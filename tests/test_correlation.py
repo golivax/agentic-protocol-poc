@@ -86,3 +86,14 @@ def test_delimiter_prefix_does_not_false_match():
 def test_null_display_title_does_not_abort_match():
     """Bash assertion 6: null displayTitle does not abort the match."""
     assert lib.match_run_by_cid(NULLT, "42-1-grumpy") == "8"
+
+
+def test_pr_from_instance_handles_pr_issue_and_passthrough():
+    import sys, pathlib
+    eng = pathlib.Path(__file__).resolve().parent.parent / ".github/agent-factory/engine"
+    sys.path.insert(0, str(eng))
+    import lib
+    assert lib.pr_from_instance("pr-5") == "5"
+    assert lib.pr_from_instance("issue-42") == "42"
+    assert lib.pr_from_instance("ref-feat-x") == "ref-feat-x"
+    assert lib.pr_from_instance("ui-abc") == "ui-abc"
