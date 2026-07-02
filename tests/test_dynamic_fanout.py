@@ -1331,3 +1331,28 @@ def test_ocr_evidence_schemas_are_valid_json():
         schema = json.load(open(ROOT / f".github/agent-factory/protocols/code-review-ocr/{name}"))
         assert schema["$schema"] == "http://json-schema.org/draft-07/schema#"
         assert schema["type"] == "object"
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — code-review-ocr checks: schema-valid + traces-exist-in-diff (reused)
+# + filter-verdict-valid (new)
+# ---------------------------------------------------------------------------
+
+FVCHECK = str(ROOT / ".github/agent-factory/protocols/code-review-ocr/checks/filter-verdict-valid.py")
+
+
+@pytest.mark.parametrize("ev,ok", [
+    ({"finding_id": "a.py:1", "keep": True, "anchor": {"side": "RIGHT", "line": 3}}, True),
+    ({"finding_id": "a.py:1", "keep": False}, True),                 # dropped: no anchor needed
+    ({"finding_id": "a.py:1", "keep": True}, False),                 # kept but no anchor
+    ({"keep": True, "anchor": {"side": "RIGHT", "line": 3}}, False), # no finding_id
+    ([], False), ("x", False), ({"finding_id": "a", "keep": "yes"}, False),  # garbage / non-bool
+])
+def test_filter_verdict_valid(ev, ok, tmp_path):
+    from conftest import run_check
+    p = tmp_path / "e.json"; P = tmp_path / "d.txt"; C = tmp_path / "c.txt"
+    P.write_text(""); C.write_text("")
+    json.dump(ev, open(p, "w"))
+    r = run_check(FVCHECK, p, P, C)     # raises if the check crashed / non-JSON stdout
+    assert r["check"] == "filter-verdict-valid"
+    assert r["pass"] is ok
