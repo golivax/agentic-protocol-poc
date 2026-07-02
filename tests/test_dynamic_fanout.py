@@ -1913,3 +1913,28 @@ def test_run_expander_exports_prior_evidence_path(tmp_path, monkeypatch):
     seen = json.loads((tmp_path / "envprobe.json").read_text())
     assert seen.get("EXPAND_PRIOR_EVIDENCE_PATH", "").endswith(".prep.evidence.json")
     assert os.path.isfile(seen["EXPAND_PRIOR_EVIDENCE_PATH"])
+
+
+def test_set_check_run_prefers_check_run_token(monkeypatch):
+    """A terminal `merge` completes the aggregate check-run from the plan job, where
+    PUBLISH_TOKEN is the dispatch PAT (which cannot create Actions check-runs).
+    set_check_run must prefer CHECK_RUN_TOKEN (the Actions GITHUB_TOKEN), falling
+    back to PUBLISH_TOKEN for advance/join callers. Fixed during Task-8 live debug."""
+    lib = _load_lib()
+    captured = {}
+    class _R:
+        returncode = 0
+        stderr = ""
+    def _fake_run(args, **kw):
+        captured["env"] = kw.get("env", {})
+        return _R()
+    monkeypatch.setattr(lib.subprocess, "run", _fake_run)
+    monkeypatch.delenv("ENGINE_LOCAL", raising=False)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PUBLISH_TOKEN", "pat-token")
+    monkeypatch.setenv("CHECK_RUN_TOKEN", "actions-token")
+    lib.set_check_run("code-review-ocr", "abc123", "completed", "success", "t", "s")
+    assert captured["env"]["GH_TOKEN"] == "actions-token"      # Actions token preferred
+    monkeypatch.delenv("CHECK_RUN_TOKEN")
+    lib.set_check_run("code-review-ocr", "abc123", "completed", "success", "t", "s")
+    assert captured["env"]["GH_TOKEN"] == "pat-token"          # falls back to PUBLISH_TOKEN

@@ -775,10 +775,17 @@ def set_check_run(name, sha, status, conclusion, title, summary):
     if conclusion:
         args += ["-f", f"conclusion={conclusion}"]
     repo = os.environ.get("GITHUB_REPOSITORY", "")
-    publish_token = os.environ.get("PUBLISH_TOKEN", "")
+    # Check-runs must be created by the ACTIONS token (github-actions[bot]) — a
+    # classic PAT cannot create/supersede an Actions-app check-run. Prefer a
+    # dedicated CHECK_RUN_TOKEN (the workflow's GITHUB_TOKEN, which the job grants
+    # `checks: write`); fall back to PUBLISH_TOKEN for callers whose PUBLISH_TOKEN
+    # already IS the Actions token (advance/join jobs). This matters for a protocol
+    # that finalizes at a terminal `merge` in the plan job, where PUBLISH_TOKEN is
+    # the dispatch PAT (which can post the review but cannot complete the check-run).
+    check_token = os.environ.get("CHECK_RUN_TOKEN") or os.environ.get("PUBLISH_TOKEN", "")
     env = dict(os.environ)
-    if publish_token:
-        env["GH_TOKEN"] = publish_token
+    if check_token:
+        env["GH_TOKEN"] = check_token
     result = subprocess.run(
         ["gh", "api", "-X", "POST", f"repos/{repo}/check-runs"] + args,
         text=True, capture_output=True, env=env
@@ -786,7 +793,7 @@ def set_check_run(name, sha, status, conclusion, title, summary):
     if result.returncode != 0:
         sys.stderr.write(
             "[engine] check-run create failed (needs checks:write + Actions token; "
-            "merge-gating needs branch protection)\n"
+            f"merge-gating needs branch protection): {result.stderr.strip()}\n"
         )
 
 
