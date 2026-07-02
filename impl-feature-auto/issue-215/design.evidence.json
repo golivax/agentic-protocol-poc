@@ -1,0 +1,79 @@
+{
+  "spec_path": "docs/superpowers/specs/2026-07-02-is-terminal-state-design.md",
+  "plan_path": "docs/superpowers/plans/2026-07-02-is-terminal-state.md",
+  "summary": "Design for lib.is_terminal_state(state) -> bool: a pure helper returning True for 'done', 'failed', 'blocked'; False for everything else including None and non-string. Two files changed: lib.py (one function after decide()) and tests/test_engine.py (8 parametrized cases in a new section).",
+  "run_id": "28614469239",
+  "ledger": [
+    {
+      "id": "L1",
+      "category": "ASSUMPTION",
+      "what": "The terminal state set is exactly {\"done\", \"failed\", \"blocked\"}",
+      "why": "The issue mandates this set. decide() (lib.py ~line 963-991) defines 'done'/'failed' as the process-axis terminal values; PHASE_LABEL_DEFAULTS (~line 805-808) lists all three as stable end-labels; 'blocked' is what the engine writes for a gate node that cannot proceed. 'iterate' is in-flight, not terminal.",
+      "what_i_did": "Verified in lib.py lines 805-808 (PHASE_LABEL_DEFAULTS) and 963-991 (decide() docstring and return paths). Confirmed against the issue specification.",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "A pure reader function — no state mutations, no file writes, no external calls."
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "A one-function addition is trivially deleted or extended."
+      },
+      "revisit_if": "A new terminal state is introduced to the engine (e.g. 'abandoned'); the set would need expanding.",
+      "verified": true
+    },
+    {
+      "id": "L2",
+      "category": "DECISION",
+      "what": "Unit tests go in tests/test_engine.py (new section at the end), not a new file",
+      "why": "test_engine.py is the established home for protocol-agnostic lib.py surface tests (its own module docstring says so). The feature is a trivial addition to that surface; a separate file would add navigation overhead with no benefit.",
+      "what_i_did": "Chose test_engine.py and a new '# Section: is_terminal_state' block matching the file's existing section-comment convention.",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Adding tests to an existing file cannot break existing tests."
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Tests can be moved to a dedicated file at any time."
+      },
+      "revisit_if": "The team adopts a convention of one test file per lib.py helper function."
+    },
+    {
+      "id": "L3",
+      "category": "DECISION",
+      "what": "is_terminal_state is inserted in lib.py immediately after decide() (~line 991), before upsert_status_comment",
+      "why": "decide() is where 'done' and 'failed' are canonically named for the process axis. Proximity makes the relationship obvious; 'blocked' is the third terminal state (gate nodes). Keeping related state-machine concepts adjacent aids readability.",
+      "what_i_did": "Identified decide() at lib.py lines 963-991; the insert point is the blank gap between its return statement and upsert_status_comment at ~line 994.",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "A three-line insertion in a 1803-line module does not structurally change the file or any caller."
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "The function can be moved or removed without consequence to any existing caller."
+      },
+      "revisit_if": "lib.py is reorganised into sub-modules."
+    },
+    {
+      "id": "L4",
+      "category": "ASSUMPTION",
+      "what": "No CLI subcommand exposure is needed",
+      "why": "The issue explicitly says 'pure function, stdlib only.' CLI exposure (python3 lib.py <subcommand>) is only needed when a GHA shell step must call into lib.py. No such caller is identified.",
+      "what_i_did": "Confirmed the issue text specifies 'pure function' and found no existing shell step that calls anything resembling is_terminal_state.",
+      "confidence": "high",
+      "blast_radius": {
+        "level": "low",
+        "why": "Omitting a CLI entry is additive-neutral — nothing changes for existing callers."
+      },
+      "reversibility": {
+        "level": "reversible",
+        "why": "Adding a CLI entry later is a trivial _cli() addition."
+      },
+      "revisit_if": "A GHA step needs to branch on whether a state is terminal.",
+      "verified": true
+    }
+  ],
+  "read_these_first": ["L1", "L2", "L3", "L4"]
+}
